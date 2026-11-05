@@ -2,6 +2,21 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "preset-patrin-tavern-q1f-v-0-3",
+            "type": "preset",
+            "name": "Patrin Tavern Q1F v.0.3",
+            "author": "@CMDR_Patrin",
+            "description": "Сижу через Vertex AI. Там я так понимаю и без того цензуры почти нет, но тем не менее использую свой пресет - почищенный и чуть дополненный Q1F, который ранее где-то в сети гулял. \n\nЧерез прокси цензуру не пробивает последние модели - джейлбрейк слишком агрессивный.",
+            "tags": [],
+            "models": [
+                "Gemini"
+            ],
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/presets/preset-patrin-tavern-q1f-v-0-3.json",
+            "added": "2026-11-05",
+            "hash": "bb70b85e080ef2010adaf21adebba068df3d6ae8db2d86d6e93003591bd3255f",
+            "size": 31878
+        },
+        {
             "id": "preset-nemo-engine-v11-3",
             "type": "preset",
             "name": "Nemo Engine v11.3",
@@ -34,5 +49,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-05T18:52:25.961Z"
+    "updated": "2026-11-05T18:54:42.536Z"
 }
