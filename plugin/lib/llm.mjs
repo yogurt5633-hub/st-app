@@ -221,13 +221,13 @@ export class LlmClient {
         return { api: 'chat', tier, effort, source, model, why, maxTokens: Number(models[`${tier}MaxTokens`]) || autoMax };
     }
 
-    chatBody(r, system, user) {
+    chatBody(r, system, user, messages = null) {
         const body = {
             chat_completion_source: r.source,
             model: r.model,
             messages: [
                 { role: 'system', content: system },
-                { role: 'user', content: user },
+                ...(messages ?? [{ role: 'user', content: user }]),
             ],
             max_tokens: r.maxTokens,
             stream: false,
@@ -243,10 +243,14 @@ export class LlmClient {
         return body;
     }
 
-    textBody(r, system, user) {
+    textBody(r, system, user, messages = null) {
         const text = textgenInfo(this.stSettings);
         if (!text.server) throw httpError(400, 'В SillyTavern не указан адрес сервера Text Completion');
-        const { prompt, stop } = instructPrompt(this.stSettings?.power_user?.instruct, system, user);
+        // Text Completion has no turns: a multi-step talk is written out as one request.
+        const flat = messages
+            ? messages.map(m => `${m.role === 'assistant' ? '### Твой прошлый ответ' : '### Сообщение'}\n${m.content}`).join('\n\n')
+            : user;
+        const { prompt, stop } = instructPrompt(this.stSettings?.power_user?.instruct, system, flat);
         const max = r.maxTokens;
         return {
             api_type: text.type,
@@ -268,7 +272,7 @@ export class LlmClient {
      * the provider's defaults are fine for analysis, and current Claude models
      * reject non-default temperature/top_p/top_k.
      */
-    async complete({ task, system, user, maxTokens }) {
+    async complete({ task, system, user, messages = null, maxTokens }) {
         if (!this.available) {
             throw httpError(409, 'Нет связи с сессией SillyTavern. Откройте приложение, чтобы проверка с моделью заработала');
         }
@@ -283,7 +287,7 @@ export class LlmClient {
         if (r.api === 'chat' && !r.model) throw httpError(400, 'Не задана модель для этой задачи. Укажите её в настройках');
 
         const path = r.api === 'text' ? TEXT_GENERATE_PATH : GENERATE_PATH;
-        const body = r.api === 'text' ? this.textBody(r, system, user) : this.chatBody(r, system, user);
+        const body = r.api === 'text' ? this.textBody(r, system, user, messages) : this.chatBody(r, system, user, messages);
         const label = r.model || r.source;
 
         this.calls++;

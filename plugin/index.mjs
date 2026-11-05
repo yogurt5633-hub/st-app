@@ -16,6 +16,8 @@ import { startJob, getJob, runningJob, publicJob } from './lib/jobs.mjs';
 import { notifyTermux, termuxAvailable } from './lib/notify.mjs';
 import { readBackup, restoreBackup, describeOp } from './lib/ops.mjs';
 import { touchedSince } from './lib/touched.mjs';
+import { cleanReport, reportItems } from './lib/actual.mjs';
+import { runAsk } from './lib/ask.mjs';
 import {
     addProposals, applyProposal, listProposals, makeProposal, prepareProposal,
     rejectProposal, revertProposal, fingerprint, OPEN_STATUSES,
@@ -285,6 +287,26 @@ export async function init(router) {
         }
         return { items, mode: settings.scan.mode };
     }));
+    // "Ask Korrektor": a request in plain words about one chat.
+    router.post('/ask', route(async (req, user) => {
+        const chatId = String(req.body?.chatId || '');
+        const request = String(req.body?.request || '');
+        if (!chatId) throw httpError(400, 'Нужен chatId');
+        if (!request.trim()) throw httpError(400, 'Напишите, что нужно сделать');
+        const job = startJob(user.ctx.handle, 'ask', async (log) => {
+            const llm = await llmFor(user);
+            return runAsk(user.ctx, user.store, { chatId, request, llm, stSettings: llm.stSettings, settings: llm.settings, log });
+        }, { chatId });
+        return publicJob(job);
+    }));
+
+    // Real numbers of the last request, sent by the companion extension after each reply.
+    router.post('/actual', route(async (req, user) => {
+        const report = cleanReport(req.body);
+        await user.store.saveActual(report);
+        return { ok: true };
+    }));
+
     // Mark a chat as watched (checked by the assistant) or not.
     router.post('/watch', route(async (req, user) => {
         const chatId = String(req.body?.chatId || '');
@@ -309,8 +331,18 @@ export async function init(router) {
             messages: cc.chat.messages.length,
             usage: contextUsage(cc),
             worlds: cc.worlds.map(w => w.name),
+            charMemory: cc.charMemory?.installed ? {
+                enabled: cc.charMemory.enabled,
+                retrieval: cc.charMemory.retrieval,
+                files: cc.charMemory.files.map(f => f.name),
+                count: cc.charMemory.memories?.count ?? 0,
+            } : null,
             chatWorld: cc.chatWorld,
             note: { prompt: meta.note_prompt ?? '', interval: meta.note_interval ?? null, depth: meta.note_depth ?? null },
+            actual: await (async () => {
+                const report = await user.store.getActual(cc.chatId);
+                return report ? { ...report, items: reportItems(report) } : null;
+            })(),
             summary: latestMemory(cc.chat),
         };
         if (req.query.messages) {

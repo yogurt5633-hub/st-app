@@ -23,10 +23,11 @@ const KIND = {
     prompt_reasoning: 'Рассуждения',
     prompt_html: 'HTML',
     advice: 'Совет',
+    request: 'Просьба',
     manual: 'Изменение',
 };
 const GROUP = {
-    chats: ['context', 'repetition', 'slop', 'new_fact', 'contradiction', 'rewrite'],
+    chats: ['context', 'repetition', 'slop', 'new_fact', 'contradiction', 'rewrite', 'request'],
     tokens: ['preset_bloat', 'prompt_reasoning', 'prompt_html', 'advice', 'lore_keyed', 'lore_card_dup'],
     lore: ['lore_duplicate', 'lore_keys', 'lore_bloat'],
     cards: ['card_bloat'],
@@ -51,6 +52,7 @@ const TASKS = [
     ['condenseCard', 'Сжатие карточек'],
     ['condenseEntry', 'Сжатие и слияние записей лорбука'],
     ['condensePrompt', 'Сжатие промптов пресета'],
+    ['ask', 'Просьбы к Корректору'],
 ];
 const ANALYZERS = [
     ['context', 'Переполнение контекста', 'Предлагает резюме старых сообщений'],
@@ -95,6 +97,7 @@ const state = {
     expanded: {},
     csrf: null,
     modelLists: {},
+    ask: {},
     offline: false,
     needLogin: false,
 };
@@ -442,7 +445,13 @@ function renderFeed() {
                 onclick: () => { state.filter = key; renderFeed(); },
             }, label, h('span', { class: 'mono', text: counts[key] }))));
 
-    const children = [h('p', { class: 'scanline', id: 'scanline' }), h('div', { class: 'chat-filter' }, chatSelect), filters];
+    const single = !['all', 'watched'].includes(state.feedChat);
+    const children = [
+        h('p', { class: 'scanline', id: 'scanline' }),
+        h('div', { class: 'chat-filter' }, chatSelect),
+        single ? h('a', { class: 'btn secondary small', href: `#chat/${encodeURIComponent(state.feedChat)}`, style: 'margin:0 0 12px', text: 'Попросить Корректора об этом чате' }) : null,
+        filters,
+    ].filter(Boolean);
     if (!visible.length) {
         const filtered = all.length && !items.length;
         children.push(h('div', { class: 'empty' },
@@ -813,6 +822,82 @@ async function renderChats() {
     view.replaceChildren(h('div', { style: 'margin-bottom:12px' }, search), tabs, hint, list);
 }
 
+// ---------- "Ask Korrektor" ----------
+
+function renderAsk(chatId) {
+    const st = state.ask[chatId] ||= { text: '', job: null, result: null, error: null };
+    const area = h('textarea', {
+        class: 'editor', rows: 3, style: 'min-height:96px',
+        placeholder: 'Например: добавь в лорбук запись про таверну «Сломанный рог»; перепиши #124 без штампов; что известно про Бориса?',
+        'aria-label': 'Просьба к Корректору',
+    });
+    area.value = st.text;
+    area.addEventListener('input', () => { st.text = area.value; });
+    const running = st.job?.status === 'running';
+    const send = h('button', { class: 'btn primary small', type: 'button', disabled: running, text: running ? 'Корректор думает' : 'Отправить' });
+    const out = h('div', { class: 'ask-out' });
+
+    const paint = async () => {
+        const items = [];
+        if (st.job?.status === 'running') {
+            items.push(h('p', { class: 'small secondary', style: 'margin:8px 0 0', text: st.job.log?.at(-1) || 'Читаю чат' }));
+        }
+        if (st.error) items.push(h('p', { class: 'card-error', text: st.error }));
+        if (st.result) {
+            const card = st.result.proposalId ? (state.proposals.find(x => x.id === st.result.proposalId) || await api(`/proposals/${st.result.proposalId}`).catch(() => null)) : null;
+            // The card already carries the answer as its text: do not print it twice.
+            if (!card || card.summary !== st.result.answer) items.push(h('p', { class: 'prose', style: 'margin:12px 0 0', text: st.result.answer }));
+            if (st.result.skipped?.length) items.push(h('p', { class: 'small muted', style: 'margin:4px 0 0', text: `Пропущено: ${st.result.skipped.join(', ')}` }));
+            if (card) items.push(h('div', { class: 'list', style: 'margin-top:12px' }, renderCard(card)));
+        }
+        out.replaceChildren(...items);
+    };
+
+    send.addEventListener('click', async () => {
+        if (!st.text.trim()) return area.focus();
+        st.error = null;
+        st.result = null;
+        try {
+            st.job = await api('/ask', { method: 'POST', body: { chatId, request: st.text } });
+        } catch (error) {
+            st.error = error.message;
+            paint();
+            return;
+        }
+        send.disabled = true;
+        send.textContent = 'Корректор думает';
+        paint();
+        while (st.job?.status === 'running') {
+            await new Promise(r => setTimeout(r, 1000));
+            try {
+                st.job = await api(`/jobs/${st.job.id}`);
+            } catch {
+                break;
+            }
+            paint();
+        }
+        if (st.job?.status === 'error') st.error = st.job.error;
+        if (st.job?.status === 'done') {
+            st.result = st.job.result;
+            st.text = '';
+            area.value = '';
+            await loadProposals();
+        }
+        send.disabled = false;
+        send.textContent = 'Отправить';
+        paint();
+    });
+
+    paint();
+    return h('div', { class: 'section' },
+        h('h3', { class: 'section-title', text: 'Попросить Корректора' }),
+        area,
+        h('div', { class: 'field-row', style: 'margin-top:8px' },
+            h('span', { class: 'small muted', text: 'Правки придут карточкой: вы увидите разницу и решите сами' }),
+            send),
+        out);
+}
+
 const GROUP_STYLE = {
     history: ['var(--accent)', 'История чата'],
     preset: ['var(--text)', 'Пресет и системный промпт'],
@@ -840,13 +925,31 @@ async function renderChatSheet(id) {
     const chat = state.chats.find(c => c.id === info.id) || { id: info.id, watched: info.watched };
     const reasonText = { constant: 'постоянная', key: 'по ключу', recursion: 'по цепочке' };
 
+    const a = info.actual;
+    const actualSection = a && a.total ? h('div', { class: 'section' },
+        h('h3', { class: 'section-title', text: 'Последний ответ: точно, как посчитал SillyTavern' }),
+        h('div', {}, h('span', { class: 'big', text: fmt(a.total) }), h('span', { class: 'secondary', text: a.maxContext ? ` из ${fmt(a.maxContext)} токенов` : ' токенов' })),
+        h('p', { class: 'small muted', style: 'margin:4px 0 8px', text: [a.model, a.tokenizer && `токенизатор ${a.tokenizer}`, when(a.at)].filter(Boolean).join(' · ') }),
+        h('div', { class: 'rows' }, a.items.map(item => h('div', { class: 'row' },
+            h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: item.label })),
+            h('span', { class: 'row-side', text: fmt(item.tokens) })))),
+        a.extensions?.length ? h('div', { style: 'margin-top:12px' },
+            h('span', { class: 'quote-label', text: 'Вставки расширений' }),
+            h('div', { class: 'rows' }, a.extensions.slice().sort((x, y) => y.tokens - x.tokens).map(x => h('div', { class: 'row' },
+                h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: x.name }), x.preview ? h('span', { class: 'row-sub', text: x.preview }) : null),
+                h('span', { class: 'row-side', text: fmt(x.tokens) }))))) : null,
+        a.worldInfo?.length ? h('p', { class: 'small secondary', style: 'margin:8px 0 0', text: `Сработали записи лорбука: ${a.worldInfo.map(x => x.label).filter(Boolean).slice(0, 12).join(', ')}` }) : null)
+        : h('p', { class: 'small muted', style: 'margin:12px 0 0', text: 'Точные цифры появятся после следующего ответа в этом чате, если в SillyTavern стоит расширение «Корректор: синхронизация». Ниже — оценка по файлам' });
+
     const body = [
         h('div', { class: 'field-row', style: 'align-items:flex-start' },
             h('h1', { class: 'sheet-title', text: info.title }),
             starButton(chat, () => renderChatSheet(id))),
         h('p', { class: 'small muted', style: 'margin:0', text: `${info.messages} сообщений, скрыто из контекста ${u.hiddenCount}${u.preset ? ` · пресет «${u.preset}»` : ''}` }),
+        renderAsk(info.id),
+        actualSection,
         h('div', { class: 'section' },
-            h('h3', { class: 'section-title', text: 'Контекст' }),
+            h('h3', { class: 'section-title', text: a && a.total ? 'Оценка по файлам, если отправить сейчас' : 'Контекст' }),
             u.budget
                 ? h('div', {}, h('span', { class: 'big', text: `${Math.round(u.ratio * 100)}%` }), h('span', { class: 'secondary', text: ` ≈${fmt(u.total)} из ${fmt(u.budget)} токенов` }))
                 : h('p', { class: 'secondary', style: 'margin:0', text: `≈${fmt(u.total)} токенов. Размер контекста не задан в SillyTavern` }),
@@ -868,6 +971,13 @@ async function renderChatSheet(id) {
                 ? h('p', { class: 'small', style: 'margin:8px 0 0;color:var(--del-text)', text: `Не влезли в бюджет лорбука: ${u.wi.dropped.filter(x => x.why === 'budget').map(x => x.label).join(', ')}` })
                 : null) : null,
         h('p', { class: 'small muted', style: 'margin:12px 0 0', text: 'Оценка приблизительная: токены считаются без токенизатора модели. Записи лорбука — те, что сработали бы на последнем сообщении, с бюджетом и цепочками, как в SillyTavern' }),
+        info.charMemory ? h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: 'CharMemory' }),
+            h('p', { class: 'secondary', style: 'margin:0', text: !info.charMemory.enabled
+                ? 'Расширение установлено, но выключено'
+                : info.charMemory.files.length
+                    ? `${info.charMemory.count} ${plural(info.charMemory.count, 'воспоминание', 'воспоминания', 'воспоминаний')} в ${info.charMemory.files.join(', ')}${info.charMemory.retrieval ? '' : '. Векторная память для файлов выключена: модель их не получает'}`
+                    : 'Воспоминаний у этого персонажа пока нет' })) : null,
         info.note.prompt ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: 'Заметка автора' }), h('p', { class: 'prose', text: info.note.prompt })) : null,
         info.summary ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: `Резюме (в сообщении #${info.summary.index})` }), h('p', { class: 'prose', text: info.summary.text })) : null,
         related.length ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: 'Замечания' }), h('div', { class: 'list' }, related.map(renderCard))) : null,
@@ -1144,6 +1254,10 @@ async function renderSettings(reload = true) {
                 h('div', { class: 'field' }, h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Куда сохранять резюме' }), summaryTarget)),
                 toggleField('Скрывать сжатые сообщения', 'Сообщения остаются в чате, но не идут в контекст. Вернуть: /unhide', s.summary.hideSummarized, (v) => save({ summary: { hideSummarized: v } })),
                 numberField('Не трогать последние сообщения', null, s.summary.keepRecent, (v) => save({ summary: { keepRecent: v } }), { min: 10, max: 500 }),
+                h('div', { class: 'field' },
+                    h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Если стоит CharMemory' }),
+                        seg([['skip', 'Факты не искать'], ['dedupe', 'Искать без повторов']], s.facts.withCharMemory, (v) => save({ facts: { withCharMemory: v } }, true))),
+                    h('span', { class: 'hint', text: 'CharMemory сам собирает воспоминания в Data Bank. Корректор в любом случае читает их, чтобы не предлагать то же самое и сверять противоречия' })),
                 h('div', { class: 'field' }, h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Куда добавлять факты' }), factsTarget),
                     h('span', { class: 'hint', text: 'Мемори-бук обычно подключён к чату как лорбук чата' })))),
 

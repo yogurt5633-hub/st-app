@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
         condenseCard: 'heavy',
         condenseEntry: 'heavy',
         condensePrompt: 'heavy',
+        ask: 'heavy',
     },
     scan: {
         auto: true,
@@ -59,6 +60,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
         entryTokens: 600,
         repeatMinMessages: 3,
         presetPromptTokens: 600,
+        extensionTokens: 800,
     },
     summary: {
         // 'memory' = Summarize extension, 'note' = Author's Note, 'lorebook' = chat lorebook entry
@@ -69,6 +71,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     facts: {
         // '' = chat lorebook if any, else the character's lorebook, else a new one
         targetWorld: '',
+        // If CharMemory is in use: 'skip' = leave facts to it, 'dedupe' = still look, without repeating its memories
+        withCharMemory: 'skip',
     },
     notify: {
         termux: true,
@@ -95,6 +99,7 @@ export class Store {
             settings: path.join(this.dir, 'settings.json'),
             proposals: path.join(this.dir, 'proposals.json'),
             state: path.join(this.dir, 'state.json'),
+            actual: path.join(this.dir, 'actual.json'),
         };
         this.backupsDir = path.join(this.dir, 'backups');
     }
@@ -149,6 +154,25 @@ export class Store {
             const result = await fn(state);
             await writeJson(this.files.state, state);
             return result;
+        });
+    }
+
+    /** Real numbers of the latest request per chat, sent by the companion extension. */
+    async getActual(chatId) {
+        const data = await readJson(this.files.actual, { chats: {} });
+        return chatId ? data.chats?.[chatId] ?? null : data.chats ?? {};
+    }
+
+    async saveActual(report) {
+        return this.lock('actual', async () => {
+            const data = await readJson(this.files.actual, { chats: {} });
+            data.chats = data.chats || {};
+            data.chats[report.chatId] = report;
+            const ids = Object.keys(data.chats);
+            if (ids.length > 300) {
+                ids.sort((a, b) => (data.chats[a].at < data.chats[b].at ? -1 : 1)).slice(0, ids.length - 300).forEach(id => delete data.chats[id]);
+            }
+            await writeJson(this.files.actual, data);
         });
     }
 

@@ -4,6 +4,7 @@ import { readWorld, entriesOf } from './worlds.mjs';
 import { connectionInfo, extraCharWorlds, globalWorlds } from './st-settings.mjs';
 import { estimateTokens } from './tokens.mjs';
 import { uniq } from './util.mjs';
+import { charMemoryInfo, readMemories } from './charmemory.mjs';
 
 export const PERMANENT_CARD_FIELDS = ['description', 'personality', 'scenario', 'mes_example', 'system_prompt', 'post_history_instructions', 'depth_prompt'];
 
@@ -52,10 +53,15 @@ export async function buildChatContext(ctx, chatId, stSettings) {
         }
     }
 
+    // CharMemory: memories of the (first) character, if that extension is in use.
+    const cmInfo = cards[0] ? charMemoryInfo(stSettings, cards[0].avatar) : { installed: false, enabled: false, files: [] };
+    const charMemory = { ...cmInfo, memories: cmInfo.enabled && cmInfo.files.length ? await readMemories(ctx, cmInfo) : null };
+
     return {
         chatId: chat.id,
         chat,
         title,
+        charMemory,
         cards,
         chatWorld,
         charWorld: cards[0]?.card?.data?.extensions?.world || '',

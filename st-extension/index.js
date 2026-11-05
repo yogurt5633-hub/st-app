@@ -84,5 +84,105 @@ async function poll() {
     }
 }
 
+// ---------- exact numbers of the last request ----------
+// After each reply SillyTavern itemizes the prompt it sent and counts tokens
+// with the model's tokenizer. Send that, the injections made by extensions and
+// the lorebook entries that fired, so the app can show real numbers.
+
+const REPORT_API = '/api/plugins/korrektor/actual';
+let lastWorldInfo = [];
+let itemized = null;
+
+async function itemizedModule() {
+    if (itemized !== null) return itemized;
+    try {
+        itemized = await import('../../../itemized-prompts.js');
+    } catch {
+        itemized = false;
+    }
+    return itemized;
+}
+
+async function count(ctx, text) {
+    if (!text) return 0;
+    try {
+        return await ctx.getTokenCountAsync(String(text));
+    } catch {
+        return Math.ceil(String(text).length / 3);
+    }
+}
+
+async function report() {
+    const ctx = SillyTavern.getContext();
+    const chatId = currentChatId(ctx);
+    if (!chatId || !ctx.chat?.length) return;
+    const mesId = ctx.chat.length - 1;
+    const body = { chatId, mesId, at: new Date().toISOString(), parts: {}, extensions: [], worldInfo: [] };
+
+    const module = await itemizedModule();
+    if (module?.itemizedPrompts && module.findItemizedPromptSet && module.itemizedParams) {
+        try {
+            const set = module.findItemizedPromptSet(module.itemizedPrompts, mesId);
+            if (set !== undefined) {
+                const p = await module.itemizedParams(module.itemizedPrompts, set, mesId);
+                const isChat = p.this_main_api === 'openai';
+                body.api = p.this_main_api;
+                body.model = p.modelUsed || '';
+                body.preset = p.presetName || '';
+                body.tokenizer = p.selectedTokenizer || '';
+                body.total = Number(isChat ? p.finalPromptTokens : p.totalTokensInPrompt) || 0;
+                body.maxContext = Number(p.thisPrompt_max_context) || 0;
+                body.parts = {
+                    system: Number(isChat ? p.oaiSystemTokens : p.instructionTokens) || 0,
+                    card: (Number(p.charDescriptionTokens) || 0) + (Number(p.charPersonalityTokens) || 0) + (Number(p.scenarioTextTokens) || 0),
+                    persona: Number(p.userPersonaStringTokens) || 0,
+                    examples: Number(p.examplesStringTokens) || 0,
+                    lorebook: Number(p.worldInfoStringTokens) || 0,
+                    history: Number(p.ActualChatHistoryTokens) || 0,
+                    summary: Number(p.summarizeStringTokens) || 0,
+                    authorsNote: Number(p.authorsNoteStringTokens) || 0,
+                    chatVectors: Number(p.chatVectorsStringTokens) || 0,
+                    dataBank: Number(p.dataBankVectorsStringTokens) || 0,
+                    injections: Number(p.chatInjects) || 0,
+                };
+            }
+        } catch (error) {
+            console.debug('[korrektor] itemized prompt not available', error);
+        }
+    }
+
+    // Every injection made by extensions (Summarize, Data Bank, vectors, CharMemory and others).
+    for (const [key, value] of Object.entries(ctx.extensionPrompts || {})) {
+        const text = value?.value;
+        if (!text || !String(text).trim()) continue;
+        body.extensions.push({ key, tokens: await count(ctx, text), position: value.position, depth: value.depth, preview: String(text).slice(0, 160) });
+    }
+    for (const entry of lastWorldInfo.slice(0, 60)) {
+        body.worldInfo.push({ world: entry.world, uid: entry.uid, label: entry.comment || (entry.key || []).slice(0, 3).join(', '), tokens: await count(ctx, entry.content) });
+    }
+    lastWorldInfo = [];
+
+    try {
+        await fetch(REPORT_API, { method: 'POST', headers: ctx.getRequestHeaders(), body: JSON.stringify(body) });
+    } catch {
+        // plugin not installed or server restarting
+    }
+}
+
+try {
+    const { eventSource, eventTypes } = SillyTavern.getContext();
+    eventSource.on(eventTypes.WORLD_INFO_ACTIVATED, (entries) => {
+        lastWorldInfo = Array.isArray(entries) ? entries : [];
+    });
+    let timer = null;
+    eventSource.on(eventTypes.GENERATION_ENDED, () => {
+        // Once per finished reply; give SillyTavern a moment to store the itemized prompt.
+        clearTimeout(timer);
+        timer = setTimeout(() => { report().catch(() => { }); }, 800);
+    });
+} catch (error) {
+    console.debug('[korrektor] events not available', error);
+}
+
 setInterval(poll, INTERVAL_MS);
 poll();

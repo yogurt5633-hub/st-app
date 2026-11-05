@@ -231,6 +231,13 @@ export function promptBudget(cc, stSettings) {
     const card = cc.cards.slice().sort((a, b) => estimateTokens(getCardField(b.card, 'description')) - estimateTokens(getCardField(a.card, 'description')))[0];
     if (card) {
         for (const [field, label] of CARD_PARTS) add('card', label, estimateTokens(getCardField(card.card, field)), { field, avatar: card.avatar });
+        // Aspect Evolutia: extra card fields of the active alter ego.
+        const ae = card.card?.data?.extensions?.['st-description-swap-fields'];
+        if (ae?.swapEnabled) {
+            const ego = (Array.isArray(ae.alterEgos) ? ae.alterEgos : []).find(a => a.id === (ae.activeAlterEgoId || 'base'));
+            const fields = Array.isArray(ego?.fields) ? ego.fields : Array.isArray(ae.fields) ? ae.fields : [];
+            add('card', 'Aspect Evolutia: поля карточки', fields.filter(f => f.enabled !== false).reduce((sum, f) => sum + estimateTokens(f.content), 0));
+        }
     }
 
     // Lorebooks
@@ -252,10 +259,22 @@ export function promptBudget(cc, stSettings) {
     const summarizeOff = Array.isArray(stSettings?.extension_settings?.disabledExtensions) && stSettings.extension_settings.disabledExtensions.includes('memory');
     if (memory && !summarizeOff) add('memory', 'Резюме (Summarize)', estimateTokens(memory));
     if (meta.note_prompt && meta.note_interval !== 0) add('memory', 'Заметка автора', estimateTokens(meta.note_prompt));
-    const vectors = stSettings?.extension_settings?.vectors;
+    const ext = stSettings?.extension_settings || {};
+    const vectors = ext.vectors;
     if (vectors?.enabled_chats) {
         const chunk = Number(vectors.message_chunk_size) || 400;
         add('memory', 'Векторная память чата (оценка)', (Number(vectors.insert) || 3) * estimateTokens('х'.repeat(chunk)));
+    }
+    if (vectors?.enabled_files) {
+        // Data Bank: character files, including CharMemory memories.
+        const chunk = Number(vectors.chunk_size_db) || 2500;
+        add('memory', 'Data Bank: файлы и CharMemory (оценка)', (Number(vectors.chunk_count_db) || 5) * estimateTokens('х'.repeat(chunk)), { dataBank: true });
+    }
+    // Summaryception keeps a layered summary in the chat metadata.
+    const sc = meta.summaryception;
+    if (ext.summaryception?.enabled !== false && Array.isArray(sc?.layers)) {
+        const text = sc.layers.flat().map(x => x?.text || '').join(' ');
+        add('memory', 'Summaryception', estimateTokens(text));
     }
 
     // History

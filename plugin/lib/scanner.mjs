@@ -74,7 +74,7 @@ export async function runScan(ctx, store, { chatIds = null, llm = null, backgrou
         if (a.context) chatFound.push(...(await guard('контекст', () => analyzeContext(cc, settings)) ?? []));
         if (a.repetition) chatFound.push(...(await guard('повторы', () => analyzeRepetition(cc, settings)) ?? []));
         if (a.slop) chatFound.push(...(await guard('штампы', () => analyzeSlop(cc, settings)) ?? []));
-        if (a.tokens) chatFound.push(...(await guard('токены', () => analyzeTokens(cc, settings)) ?? []));
+        if (a.tokens) chatFound.push(...(await guard('токены', async () => analyzeTokens(cc, settings, undefined, await store.getActual(cc.chatId))) ?? []));
         const chatKinds = ['context', 'repetition', 'slop', 'preset_bloat', 'prompt_reasoning', 'prompt_html', 'advice'];
         await markResolved(store, `chat:${cc.chatId}`, new Set(chatFound.map(p => p.fingerprint)), chatKinds);
         for (const p of chatFound) p.chats = [cc.chatId];
@@ -107,7 +107,9 @@ export async function runScan(ctx, store, { chatIds = null, llm = null, backgrou
             // In the background wait for a few new messages so the cheap model is not called on every reply.
             if (newCount >= (background ? 4 : 1)) {
                 let reached = since;
-                if (a.facts) {
+                const charMemoryCollects = cc.charMemory?.enabled && settings.facts.withCharMemory === 'skip';
+                if (a.facts && charMemoryCollects) log('Новые факты здесь собирает CharMemory, пропускаю');
+                if (a.facts && !charMemoryCollects) {
                     log('Ищу новые факты для лорбука');
                     const r = await guard('факты', () => analyzeFacts(cc, settings, llm, since));
                     if (r) {

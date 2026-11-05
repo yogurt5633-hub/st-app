@@ -52,7 +52,7 @@ export function newMessageIndices(cc, sinceIndex, max) {
     return visible.slice(-max);
 }
 
-function pickFactsWorld(cc, settings) {
+export function pickFactsWorld(cc, settings) {
     if (settings.facts.targetWorld) return { name: settings.facts.targetWorld, create: !cc.worlds.some(w => w.name === settings.facts.targetWorld), bind: false };
     if (cc.chatWorld) return { name: cc.chatWorld, create: false, bind: false };
     if (cc.charWorld) return { name: cc.charWorld, create: !cc.worlds.some(w => w.name === cc.charWorld), bind: false };
@@ -68,7 +68,7 @@ export async function analyzeFacts(cc, settings, llm, sinceIndex) {
     const system = [
         'Ты помощник автора ролевых чатов в SillyTavern. Ищешь в новых сообщениях факты, которые стоит сохранить в лорбук, чтобы модель не забыла их позже.',
         'Подходят: новые персонажи с именами, места, предметы, организации, отношения между персонажами, важные события, договорённости и обещания.',
-        'Не подходят: то, что уже есть в карточке или лорбуке; мимолётные детали; эмоции одной реплики.',
+        'Не подходят: то, что уже есть в карточке, лорбуке или воспоминаниях; мимолётные детали; эмоции одной реплики.',
         DATA_NOTE,
         'Ответ: только JSON без пояснений вида {"facts":[{"name":"короткое название","type":"person|place|item|group|relationship|event","keys":["слова-триггеры, которые встретятся в тексте, 2–5 шт."],"content":"2–4 предложения в третьем лице, на языке чата","messages":[номера сообщений],"importance":1-3}]}.',
         'Не больше 6 фактов, самые важные. Если сохранять нечего, верни {"facts":[]}.',
@@ -76,6 +76,7 @@ export async function analyzeFacts(cc, settings, llm, sinceIndex) {
     const user = [
         `# Карточка\n${cardSheet(cc, 3000)}`,
         existing ? `# Уже есть в лорбуках\n${existing}` : '# Лорбуков пока нет',
+        cc.charMemory?.memories?.text ? `# Уже есть в воспоминаниях CharMemory\n${truncate(cc.charMemory.memories.text, 8000)}` : '',
         `# Новые сообщения\n${transcript(cc.chat, indices)}`,
     ].join('\n\n');
 
@@ -136,7 +137,7 @@ export async function analyzeContradictions(cc, settings, llm, sinceIndex) {
     const memory = latestMemory(cc.chat);
 
     const system = [
-        'Ты редактор ролевых чатов в SillyTavern. Ищешь в ответах персонажа противоречия с карточкой, лорбуком, резюме или более ранними событиями чата.',
+        'Ты редактор ролевых чатов в SillyTavern. Ищешь в ответах персонажа противоречия с карточкой, лорбуком, резюме, воспоминаниями или более ранними событиями чата.',
         'Примеры: другой цвет глаз или возраст, чем в карточке; персонаж знает то, чего знать не может; забыл уже случившееся событие; мёртвый персонаж снова жив; характер резко поменялся без причины.',
         'Не считай противоречием развитие сюжета, ложь персонажа по сюжету и стилистику.',
         DATA_NOTE,
@@ -147,6 +148,7 @@ export async function analyzeContradictions(cc, settings, llm, sinceIndex) {
         `# Карточка\n${cardSheet(cc)}`,
         `# Лорбук (подходящие записи)\n${relevantEntries(cc, text) || 'нет'}`,
         memory ? `# Резюме прошлых событий\n${truncate(plainText(memory.text), 6000)}` : '',
+        cc.charMemory?.memories?.text ? `# Воспоминания персонажа (CharMemory)\n${truncate(cc.charMemory.memories.text, 6000)}` : '',
         contextBefore.length ? `# Предыдущие сообщения (для контекста)\n${transcript(cc.chat, contextBefore)}` : '',
         `# Новые сообщения\n${transcript(cc.chat, fresh)}`,
     ].filter(Boolean).join('\n\n');

@@ -49,7 +49,13 @@ export function htmlRegexScript() {
     };
 }
 
-export function analyzeTokens(cc, settings, budget = promptBudget(cc, cc.stSettings)) {
+const EXTENSION_TIPS = {
+    '3_vectors': 'Уменьшите «Insert» или размер кусков в Extensions → Vector Storage (чаты)',
+    '4_vectors_data_bank': 'Уменьшите «Retrieve chunks» или размер кусков в Extensions → Vector Storage (Data Bank). Если это CharMemory, можно ещё объединить дубли воспоминаний в нём',
+    '1_memory': 'Резюме разрослось. Пересоберите его короче в Extensions → Summarize',
+};
+
+export function analyzeTokens(cc, settings, budget = promptBudget(cc, cc.stSettings), actual = null) {
     const st = cc.stSettings || {};
     const out = [];
     const target = { type: 'chat', chatId: cc.chatId, label: cc.title };
@@ -242,6 +248,32 @@ export function analyzeTokens(cc, settings, budget = promptBudget(cc, cc.stSetti
             summary: `Примеры диалогов занимают ≈${fmt(examples.tokens)} токенов и закреплены. Обычно они нужны только в начале чата: выключите «Pin example messages» в Advanced Formatting`,
             target,
             fingerprint: fingerprint('advice_examples', cc.chatId),
+        }));
+    }
+
+    // CharMemory health: memories exist, but nothing brings them into the prompt.
+    const cm = cc.charMemory;
+    if (cm?.enabled && cm.files?.length && !cm.retrieval) {
+        out.push(makeProposal({
+            kind: 'advice', advice: true, severity: 'medium',
+            title: 'Воспоминания CharMemory не попадают в промпт',
+            summary: `У персонажа ${cm.memories?.count ?? 0} воспоминаний в Data Bank, но векторная память для файлов выключена, и модель их не получает. Включите Extensions → Vector Storage → «Enabled for files»`,
+            target,
+            fingerprint: fingerprint('advice_charmemory_retrieval', cc.cards[0]?.avatar ?? cc.chatId),
+        }));
+    }
+
+    // 7. Real injections by extensions, from the last request counted by SillyTavern
+    for (const x of actual?.extensions || []) {
+        if (x.tokens < settings.thresholds.extensionTokens) continue;
+        if (x.key === '2_floating_prompt') continue; // the Author's Note is the user's own text
+        out.push(makeProposal({
+            kind: 'advice', advice: true, severity: x.tokens >= 2000 ? 'medium' : 'low',
+            title: `${x.name}: ≈${fmt(x.tokens)} токенов в каждом запросе`,
+            summary: `${EXTENSION_TIPS[x.key] ?? 'Если эта вставка не нужна в этом чате, отключите расширение или уменьшите её в его настройках'}. Число посчитал сам SillyTavern на последнем ответе`,
+            evidence: x.preview ? [{ label: 'Начало вставки', text: x.preview }] : [],
+            target,
+            fingerprint: fingerprint('advice_extension', cc.chatId, x.key, Math.round(x.tokens / 500)),
         }));
     }
     return out;
