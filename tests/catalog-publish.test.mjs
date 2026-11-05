@@ -199,3 +199,47 @@ test('catalog: a publish carries the fingerprint; an older copy from GitHub cach
     setCatalogCache({ items: [], updated: '2020-01-01T00:00:00.000Z' });
     assert.equal((await loadCatalog()).items[0].id, r.item.id);
 });
+
+test('catalog author: a preset with its regexes and pictures; editing keeps the file and swaps pictures', async () => {
+    const { saveImageUpload, saveRegexUpload, editItem } = await import('../plugin/lib/catalog-publish.mjs');
+    const t = tavern();
+    const gh = fakeGitHub();
+    const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBPVP8 '), Buffer.alloc(20)]);
+    const img1 = await saveImageUpload(t.korrektorDir, webp);
+    const img2 = await saveImageUpload(t.korrektorDir, tinyPng());
+    await assert.rejects(saveImageUpload(t.korrektorDir, Buffer.from('not a picture')), /WebP, JPEG или PNG/);
+    const regexFile = await saveRegexUpload(t.korrektorDir, Buffer.from(JSON.stringify({ scriptName: 'Без звёздочек', findRegex: '/\\*/g', replaceString: '' })));
+    assert.deepEqual(regexFile.names, ['Без звёздочек']);
+    const stSettings = { extension_settings: { regex: [{ id: 'g1', scriptName: 'Убрать мысли', findRegex: '/<think>[\\s\\S]*?<\\/think>/g' }, { id: 'g2', scriptName: 'Другой', findRegex: '/x/' }] } };
+    const r = await publishItem({
+        ...t, token: 'github_pat_test', type: 'preset', source: { file: 'Мой пресет.json' },
+        meta: { ...META, models: ['Claude', 'Gemini'], uncensored: true }, regex: { global: ['g1'], uploads: [regexFile.upload] },
+        images: [img1.upload, img2.upload], stSettings, fetchImpl: gh.fetchImpl,
+    });
+    assert.equal(r.item.regex, 2);
+    assert.deepEqual(r.item.models, ['Claude', 'Gemini']);
+    assert.equal(r.item.uncensored, true);
+    assert.equal(r.item.images.length, 2);
+    assert.match(r.item.images[0], /catalog\/files\/images\/preset-temnoe-fentezi-\d+-1\.webp$/);
+    const preset = JSON.parse(gh.read('catalog/files/presets/preset-temnoe-fentezi.json').toString('utf8'));
+    assert.deepEqual(preset.extensions.regex_scripts.map(s => s.scriptName), ['Убрать мысли', 'Без звёздочек']);
+    assert.ok(preset.extensions.regex_scripts.every(s => s.id), 'every script has an id');
+
+    // Edit: keep the second picture only, add a new one, drop the censorship mark.
+    const img3 = await saveImageUpload(t.korrektorDir, webp);
+    const edited = await editItem({
+        token: 'github_pat_test', korrektorDir: t.korrektorDir, id: r.item.id,
+        meta: { ...META, description: 'Новое описание', models: ['Claude'] },
+        images: [{ keep: r.item.images[1] }, { upload: img3.upload }], fetchImpl: gh.fetchImpl,
+    });
+    assert.equal(edited.item.description, 'Новое описание');
+    assert.equal(edited.item.uncensored, null);
+    assert.equal(edited.item.images[0], r.item.images[1]);
+    assert.equal(edited.item.images.length, 2);
+    assert.equal(edited.item.url, r.item.url, 'the file stays');
+    const firstPath = decodeURIComponent(r.item.images[0].split('/main/')[1]);
+    assert.equal(gh.files.has(firstPath), false, 'a dropped picture is deleted');
+
+    await removeItem({ token: 'github_pat_test', id: r.item.id, fetchImpl: gh.fetchImpl });
+    assert.ok(![...gh.files.keys()].some(k => k.startsWith('catalog/files/')), 'the file and all pictures are gone');
+});

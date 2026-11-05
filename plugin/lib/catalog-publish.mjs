@@ -47,7 +47,11 @@ export async function listLocal(ctx, type) {
         if (!entry.isFile() || !entry.name.toLowerCase().endsWith(k.ext)) continue;
         const stat = await fs.promises.stat(path.join(k.dir(ctx), entry.name)).catch(() => null);
         if (!stat) continue;
-        out.push({ file: entry.name, name: entry.name.slice(0, -k.ext.length), size: stat.size, mtime: stat.mtimeMs });
+        const row = { file: entry.name, name: entry.name.slice(0, -k.ext.length), size: stat.size, mtime: stat.mtimeMs };
+        if (type === 'preset' && stat.size < 5 * 1024 * 1024) {
+            row.regex = regexCount(await fs.promises.readFile(path.join(k.dir(ctx), entry.name)).catch(() => Buffer.alloc(0)));
+        }
+        out.push(row);
     }
     return out.sort((a, b) => b.mtime - a.mtime).slice(0, 2000);
 }
@@ -270,20 +274,144 @@ function cleanMeta(meta, fallbackTitle) {
     if (!meta?.allowed) throw httpError(400, 'Публиковать можно только с разрешения автора');
     const tags = (Array.isArray(meta.tags) ? meta.tags : String(meta.tags || '').split(','))
         .map(t => String(t).trim()).filter(Boolean).slice(0, 8).map(t => t.slice(0, 30));
-    return {
+    const models = (Array.isArray(meta.models) ? meta.models : String(meta.models || '').split(','))
+        .map(m => String(m).trim().slice(0, 30)).filter(Boolean).slice(0, 10);
+    const out = {
         name,
         author,
         description: String(meta.description || '').trim().slice(0, 400),
         tags,
         page: cleanLink(meta.page),
+        models,
     };
+    if (typeof meta.uncensored === 'boolean') out.uncensored = meta.uncensored;
+    return out;
+}
+
+// ---------- pictures and regex scripts sent from the phone ----------
+
+const IMAGE_TYPES = [
+    { ext: '.webp', test: (b) => b.length > 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP' },
+    { ext: '.jpg', test: (b) => b[0] === 0xff && b[1] === 0xd8 },
+    { ext: '.png', test: (b) => b.length > 8 && b.readUInt32BE(0) === 0x89504e47 },
+];
+
+/** A picture for a catalog record (already made small in the app). */
+export async function saveImageUpload(korrektorDir, data) {
+    if (!data?.length) throw httpError(400, 'Картинка пустая');
+    if (data.length > 3 * 1024 * 1024) throw httpError(413, 'Картинка больше 3 МБ');
+    const kind = IMAGE_TYPES.find(t => t.test(data));
+    if (!kind) throw httpError(400, 'Нужна картинка: WebP, JPEG или PNG');
+    const id = `i${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const dir = path.join(korrektorDir, UPLOAD_DIR);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, id + kind.ext), data);
+    return { upload: id };
+}
+
+async function readImageUpload(korrektorDir, id) {
+    if (!/^i\d+$/.test(String(id || ''))) throw httpError(400, 'Нет такой картинки');
+    const dir = path.join(korrektorDir, UPLOAD_DIR);
+    for (const { ext } of IMAGE_TYPES) {
+        const file = path.join(dir, id + ext);
+        if (fs.existsSync(file)) return { data: await fs.promises.readFile(file), ext, file };
+    }
+    throw httpError(404, 'Картинка не найдена: добавьте её ещё раз');
+}
+
+/** Regex scripts from a file exported by SillyTavern (one script or a list). */
+export function readRegexFile(data) {
+    let json;
+    try {
+        json = JSON.parse(Buffer.from(data).toString('utf8').replace(/^\uFEFF/, ''));
+    } catch {
+        throw httpError(400, 'Файл регекса не читается как JSON');
+    }
+    const list = (Array.isArray(json) ? json : [json]).filter(s => s && typeof s === 'object' && typeof s.findRegex === 'string');
+    if (!list.length) throw httpError(400, 'Это не регекс SillyTavern: нет поля findRegex');
+    return list;
+}
+
+export async function saveRegexUpload(korrektorDir, data) {
+    const scripts = readRegexFile(data);
+    const id = `r${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    const dir = path.join(korrektorDir, UPLOAD_DIR);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, `${id}.json`), JSON.stringify(scripts));
+    return { upload: id, names: scripts.map(s => String(s.scriptName || 'Без названия')) };
+}
+
+/** Global regex scripts of this SillyTavern (they live in its settings.json). */
+export function globalRegex(stSettings) {
+    const list = stSettings?.extension_settings?.regex;
+    return Array.isArray(list) ? list.filter(s => s && typeof s.findRegex === 'string') : [];
+}
+
+/**
+ * Puts regex scripts into a preset (extensions.regex_scripts — SillyTavern's own place for
+ * a preset's regexes: it asks to allow them when the preset is chosen). Same scripts are not doubled.
+ */
+export function addRegexToPreset(presetBuffer, scripts) {
+    if (!scripts.length) return presetBuffer;
+    const preset = JSON.parse(presetBuffer.toString('utf8'));
+    const extensions = preset.extensions && typeof preset.extensions === 'object' ? { ...preset.extensions } : {};
+    const current = Array.isArray(extensions.regex_scripts) ? [...extensions.regex_scripts] : [];
+    const seen = new Set(current.map(s => `${s.scriptName}\u0000${s.findRegex}`));
+    for (const script of scripts) {
+        const key = `${script.scriptName}\u0000${script.findRegex}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        current.push({ ...script, id: typeof script.id === 'string' && script.id ? script.id : crypto.randomUUID() });
+    }
+    extensions.regex_scripts = current;
+    preset.extensions = extensions;
+    return Buffer.from(JSON.stringify(preset, null, 4));
+}
+
+export function regexCount(presetBuffer) {
+    try {
+        const list = JSON.parse(presetBuffer.toString('utf8'))?.extensions?.regex_scripts;
+        return Array.isArray(list) ? list.length : 0;
+    } catch {
+        return 0;
+    }
+}
+
+/** Uploads new pictures of a record; returns their raw links. */
+async function uploadImages(token, korrektorDir, id, uploads, fetchImpl) {
+    const urls = [];
+    const stamp = Date.now();
+    for (const [i, upload] of uploads.entries()) {
+        const img = await readImageUpload(korrektorDir, upload);
+        const repoPath = `catalog/files/images/${id}-${stamp}-${i + 1}${img.ext}`;
+        await gh(token, 'PUT', contentsUrl(repoPath), { message: `Каталог: картинка к ${id}`, content: img.data.toString('base64'), branch: CATALOG_BRANCH }, fetchImpl);
+        urls.push(rawUrl(repoPath));
+        await fs.promises.rm(img.file, { force: true });
+    }
+    return urls;
+}
+
+const RAW_PREFIX = () => `https://raw.githubusercontent.com/${CATALOG_REPO}/${CATALOG_BRANCH}/`;
+
+/** Deletes files of this repository's catalog/files/ by their raw links; failures are ignored. */
+async function deleteRepoFiles(token, urls, fetchImpl) {
+    for (const url of urls) {
+        if (!String(url || '').startsWith(`${RAW_PREFIX()}catalog/files/`)) continue;
+        const repoPath = decodeURIComponent(url.slice(RAW_PREFIX().length));
+        try {
+            const meta = await gh(token, 'GET', `${contentsUrl(repoPath)}?ref=${CATALOG_BRANCH}`, null, fetchImpl);
+            await gh(token, 'DELETE', contentsUrl(repoPath), { message: `Каталог: удалён файл ${repoPath}`, sha: meta.sha, branch: CATALOG_BRANCH }, fetchImpl);
+        } catch {
+            // a file left behind harms nothing
+        }
+    }
 }
 
 /**
  * Publishes a file to the catalog: puts it into catalog/files/<type>s/ and adds a record
  * at the top of catalog.json. `source` is { file } (this SillyTavern) or { upload } (from the phone).
  */
-export async function publishItem({ ctx, korrektorDir, token, type, source, meta, fetchImpl }) {
+export async function publishItem({ ctx, korrektorDir, token, type, source, meta, regex = {}, images = [], stSettings = {}, fetchImpl }) {
     let file;
     let uploadFile = null;
     if (source?.upload) {
@@ -294,6 +422,18 @@ export async function publishItem({ ctx, korrektorDir, token, type, source, meta
         file = await readLocal(ctx, type, source?.file);
     }
     const info = cleanMeta(meta, file.title);
+    if (type === 'preset') {
+        // Regexes that go with the preset: chosen global ones and files sent from the phone.
+        const names = new Set((regex.global || []).map(String));
+        const scripts = globalRegex(stSettings).filter(s => names.has(String(s.id)) || names.has(String(s.scriptName)));
+        for (const upload of (regex.uploads || []).slice(0, 50)) {
+            if (!/^r\d+$/.test(String(upload))) continue;
+            const f = path.join(korrektorDir, UPLOAD_DIR, `${upload}.json`);
+            if (fs.existsSync(f)) scripts.push(...readRegexFile(await fs.promises.readFile(f)));
+        }
+        file.data = addRegexToPreset(file.data, scripts);
+        info.regex = regexCount(file.data);
+    }
     const date = new Date().toISOString().slice(0, 10);
 
     // A free id: the file name in the repository is the id, so it must not clash.
@@ -311,10 +451,14 @@ export async function publishItem({ ctx, korrektorDir, token, type, source, meta
         branch: CATALOG_BRANCH,
     }, fetchImpl);
 
+    const pictures = await uploadImages(token, korrektorDir, id, images.slice(0, 4), fetchImpl);
     // The fingerprint lets every tavern see whether it already has this file.
     const hash = crypto.createHash('sha256').update(file.data).digest('hex');
     const item = { id, type, ...info, url: rawUrl(repoPath), added: date, hash, size: file.data.length };
+    if (pictures.length) item.images = pictures;
     if (!item.page) delete item.page;
+    if (!item.models.length) delete item.models;
+    if (!item.regex) delete item.regex;
     await updateCatalog(token, `Каталог: добавлен «${info.name}» (${info.author})`, (json) => {
         json.items = [item, ...json.items.filter(i => i?.id !== id)];
     }, fetchImpl, first);
@@ -330,17 +474,44 @@ export async function removeItem({ token, id, fetchImpl }) {
         json.items = json.items.filter(i => i?.id !== id);
     }, fetchImpl);
     if (!removed) throw httpError(404, 'Такой записи в каталоге нет');
-    const prefix = `https://raw.githubusercontent.com/${CATALOG_REPO}/${CATALOG_BRANCH}/`;
-    if (String(removed.url || '').startsWith(`${prefix}catalog/files/`)) {
-        const repoPath = decodeURIComponent(removed.url.slice(prefix.length));
-        try {
-            const meta = await gh(token, 'GET', `${contentsUrl(repoPath)}?ref=${CATALOG_BRANCH}`, null, fetchImpl);
-            await gh(token, 'DELETE', contentsUrl(repoPath), { message: `Каталог: удалён файл ${repoPath}`, sha: meta.sha, branch: CATALOG_BRANCH }, fetchImpl);
-        } catch {
-            // the record is gone; a file left behind harms nothing
-        }
-    }
+    await deleteRepoFiles(token, [removed.url, ...(Array.isArray(removed.images) ? removed.images : [])], fetchImpl);
     return { removed: removed.name };
+}
+
+/**
+ * Changes a published record: description, tags, models, censorship, pictures.
+ * `images` is the new list in order: { keep: url } for pictures already there, { upload } for new ones.
+ * The file itself stays.
+ */
+export async function editItem({ token, korrektorDir, id, meta, images = [], fetchImpl }) {
+    const first = await readCatalogFile(token, fetchImpl);
+    const old = (first.json.items || []).find(i => i?.id === id);
+    if (!old) throw httpError(404, 'Такой записи в каталоге нет');
+    const info = cleanMeta({ ...meta, allowed: true }, old.name);
+    const before = Array.isArray(old.images) ? old.images : [];
+    const plan = images.slice(0, 4);
+    const fresh = await uploadImages(token, korrektorDir, id, plan.filter(i => i.upload).map(i => i.upload), fetchImpl);
+    const pictures = [];
+    let n = 0;
+    for (const entry of plan) {
+        if (entry.keep && before.includes(entry.keep)) pictures.push(entry.keep);
+        else if (entry.upload) pictures.push(fresh[n++]);
+    }
+    let updated = null;
+    await updateCatalog(token, `Каталог: изменена запись «${info.name}»`, (json) => {
+        json.items = json.items.map((item) => {
+            if (item?.id !== id) return item;
+            updated = { ...item, ...info };
+            if (!('uncensored' in info)) delete updated.uncensored;
+            if (!updated.page) delete updated.page;
+            if (!updated.models.length) delete updated.models;
+            if (pictures.length) updated.images = pictures;
+            else delete updated.images;
+            return updated;
+        });
+    }, fetchImpl, first);
+    await deleteRepoFiles(token, before.filter(url => !pictures.includes(url)), fetchImpl);
+    return { item: cleanItems({ items: [updated] })[0] };
 }
 
 /** Where people send their presets and lorebooks (a Telegram link): kept in catalog.json. */

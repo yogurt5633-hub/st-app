@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.6';
+const APP_VERSION = '0.4.7';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -351,7 +351,7 @@ async function renderRoute() {
     oldView.replaceWith(freshView);
     document.body.style.overflow = '';
     const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', muted: 'Скрытые замечания' };
-    const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || 'Ещё' };
+    const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
     $('#page-title').textContent = titles[route.name];
     if (route.name === 'tools') return tools.renderTools();
     if (route.name === 'card') return tools.renderCardHealth(route.id);
@@ -364,6 +364,7 @@ async function renderRoute() {
         if (route.id === 'catalog') return tools.renderCatalog();
         if (route.id === 'catalog-suggest') return tools.renderCatalogSuggest();
         if (route.id === 'catalog-author') return tools.renderCatalogAuthor();
+        if (route.id.startsWith('catalog-edit/')) return tools.renderCatalogEdit(decodeURIComponent(route.id.slice('catalog-edit/'.length)));
         if (route.id === 'muted') return tools.renderMuted();
         return tools.renderTools();
     }

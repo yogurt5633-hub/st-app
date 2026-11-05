@@ -102,6 +102,55 @@ export function looksUntranslated(source, out, lang) {
     return CYRILLIC_TARGETS.has(lang) && latinShare(res) > 0.35;
 }
 
+// ---------- markup the translators break ----------
+
+/** Pairs runs of asterisks in a line like markdown does and removes the spaces translators put inside. */
+function tightenEmphasis(line) {
+    const runs = [...line.matchAll(/\*{1,3}/g)].map(m => ({ at: m.index, len: m[0].length }));
+    const pairs = [];
+    const open = {};
+    for (const run of runs) {
+        if (open[run.len]) {
+            pairs.push([open[run.len], run]);
+            open[run.len] = null;
+        } else {
+            open[run.len] = run;
+        }
+    }
+    let out = line;
+    // From the end, so earlier positions stay valid.
+    for (const [a, b] of pairs.reverse()) {
+        const inner = out.slice(a.at + a.len, b.at);
+        const trimmed = inner.trim();
+        if (!trimmed || trimmed === inner) continue;
+        out = out.slice(0, a.at + a.len) + trimmed + out.slice(b.at);
+        const lead = inner.length - inner.trimStart().length;
+        // Keep a word after the closing asterisks apart from it.
+        const shift = inner.length - trimmed.length;
+        if (out[b.at - shift + b.len] && /[\p{L}\d]/u.test(out[b.at - shift + b.len])) out = `${out.slice(0, b.at - shift + b.len)} ${out.slice(b.at - shift + b.len)}`;
+        if (lead && a.at > 0 && /[\p{L}\d]/u.test(out[a.at - 1])) out = `${out.slice(0, a.at)} ${out.slice(a.at)}`;
+    }
+    return out;
+}
+
+/**
+ * Translators turn «"Speech," he said» into «- Речь, — сказал он» and «*smiles*» into «* улыбается *».
+ * SillyTavern shows such lines as a bulleted list with a dot in front. When the original has
+ * no list here, the dash becomes «—» and asterisks hug the text again, as in the original.
+ */
+export function fixMarkup(source, out) {
+    const sourceHasList = /^\s*(?:[-*+•]|\d+[.)])\s/m.test(source);
+    return String(out).split('\n').map((line) => {
+        let fixed = /\*/.test(source) ? tightenEmphasis(line) : line;
+        if (!sourceHasList) {
+            fixed = fixed.replace(/^(\s*)[-–‐•]\s+/, '$1— ');
+            // A lone «* » left at the start of a line still makes a list item.
+            fixed = fixed.replace(/^(\s*)\*\s+(?=[^*]*$)/, '$1');
+        }
+        return fixed;
+    }).join('\n');
+}
+
 // ---------- providers ----------
 
 async function free(provider, text, lang) {
@@ -158,7 +207,7 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
             continue;
         }
         const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
-        let result = await withRetries(() => call(core), provider === 'model' ? 2 : 2);
+        let result = fixMarkup(core, await withRetries(() => call(core), 2));
         if (looksUntranslated(core, result, lang)) {
             if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1);
             else throw Object.assign(new Error(`${provider}: вернул текст без перевода`), { untranslated: true });

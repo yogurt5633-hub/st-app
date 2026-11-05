@@ -391,14 +391,63 @@ function pick(options, value, onchange) {
     return box;
 }
 
+const CATALOG_MODELS = ['Claude', 'GPT', 'Gemini', 'DeepSeek', 'GLM', 'Grok', 'Kimi', 'Qwen', 'Mistral', 'Llama'];
+
+/** Pictures of a record: its own, and for a card the card itself first. */
+function picturesOf(item) {
+    return [...(item.type === 'card' ? [item.url] : []), ...(item.images || [])];
+}
+
+/** Full-screen pictures: swipe or arrows, tap outside to close. */
+function openViewer(urls, start = 0) {
+    const { h } = ui;
+    let index = start;
+    const img = h('img', { class: 'viewer-img', alt: '', decoding: 'async' });
+    const counter = h('span', { class: 'viewer-count' });
+    const show = () => {
+        img.src = urls[index];
+        counter.textContent = urls.length > 1 ? `${index + 1} / ${urls.length}` : '';
+    };
+    const step = (d) => { index = (index + d + urls.length) % urls.length; show(); };
+    const close = () => { root.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); if (e.key === 'ArrowRight') step(1); if (e.key === 'ArrowLeft') step(-1); };
+    const root = h('div', { class: 'viewer', role: 'dialog', 'aria-label': 'Картинки', onclick: (e) => { if (e.target === root) close(); } },
+        img,
+        urls.length > 1 ? h('button', { class: 'viewer-nav prev', type: 'button', 'aria-label': 'Назад', onclick: () => step(-1), text: '‹' }) : null,
+        urls.length > 1 ? h('button', { class: 'viewer-nav next', type: 'button', 'aria-label': 'Дальше', onclick: () => step(1), text: '›' }) : null,
+        h('button', { class: 'viewer-close', type: 'button', 'aria-label': 'Закрыть', onclick: close, text: '✕' }),
+        counter);
+    let startX = null;
+    img.addEventListener('pointerdown', (e) => { startX = e.clientX; });
+    img.addEventListener('pointerup', (e) => {
+        if (startX === null) return;
+        const dx = e.clientX - startX;
+        startX = null;
+        if (Math.abs(dx) > 40 && urls.length > 1) step(dx < 0 ? 1 : -1);
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.append(root);
+    show();
+}
+
 function catalogEntry(item, extra) {
     const { h } = ui;
+    const pictures = picturesOf(item);
+    const badges = [
+        item.uncensored === true ? h('span', { class: 'badge uncensored', text: 'Без цензуры' }) : null,
+        item.uncensored === false ? h('span', { class: 'badge', text: 'С цензурой' }) : null,
+        ...item.models.map(m => h('span', { class: 'badge model', text: m })),
+        item.regex ? h('span', { class: 'badge', text: `+ регексы: ${item.regex}` }) : null,
+    ].filter(Boolean);
     return h('article', { class: 'card catalog-item' },
-        item.type === 'card' ? h('img', { class: 'catalog-thumb', src: item.url, alt: '', loading: 'lazy', decoding: 'async', width: 64, height: 86 }) : null,
+        pictures.length ? h('button', { class: 'catalog-thumb-button', type: 'button', 'aria-label': 'Смотреть картинки', onclick: () => openViewer(pictures) },
+            h('img', { class: 'catalog-thumb', src: pictures[0], alt: '', loading: 'lazy', decoding: 'async', width: 72, height: 96 }),
+            pictures.length > 1 ? h('span', { class: 'thumb-count', text: `${pictures.length}` }) : null) : null,
         h('div', { class: 'catalog-body' },
             h('div', { class: 'card-meta' }, h('span', { class: 'status-tag', text: CATALOG_NAMES[item.type] }), item.author ? h('span', { class: 'meta', text: item.author }) : null),
             h('h2', { class: 'card-title', text: item.name }),
             item.description ? h('p', { class: 'card-summary', text: item.description }) : null,
+            badges.length ? h('div', { class: 'badges' }, badges) : null,
             item.tags.length ? h('p', { class: 'small muted', style: 'margin:0', text: item.tags.join(' · ') }) : null,
             h('div', { class: 'card-actions' }, extra)));
 }
@@ -461,11 +510,29 @@ export async function renderCatalog() {
         button.addEventListener('click', () => install(item, button));
         return [button, page];
     };
+    // Search and filters: by author, by AI model, by censorship. Applied in place.
+    const pickFilter = { author: '', model: '', censor: '', text: '' };
+    const authors = [...new Set(data.items.map(i => i.author).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
+    const models = [...new Set(data.items.flatMap(i => i.models))].sort((a, b) => a.localeCompare(b));
+    const select = (label, options, key) => h('select', { class: 'select', 'aria-label': label, onchange: (e) => { pickFilter[key] = e.target.value; drawList(); } },
+        h('option', { value: '', text: label }), options.map(([v, t]) => h('option', { value: v, text: t })));
+    const search = h('input', { class: 'input', type: 'search', placeholder: 'Поиск по названию, описанию, тегам', 'aria-label': 'Поиск', oninput: () => { pickFilter.text = search.value.trim().toLowerCase(); drawList(); } });
+    const filterBar = data.items.length > 1 ? h('div', { class: 'catalog-filters' },
+        search,
+        h('div', { class: 'catalog-selects' },
+            authors.length > 1 ? select('Все авторы', authors.map(a => [a, a]), 'author') : null,
+            models.length ? select('Все модели', models.map(m => [m, m]), 'model') : null,
+            select('Цензура: любая', [['no', 'Без цензуры'], ['yes', 'С цензурой']], 'censor'))) : null;
+    const matches = (i) => (filter === 'all' || i.type === filter)
+        && (!pickFilter.author || i.author === pickFilter.author)
+        && (!pickFilter.model || i.models.includes(pickFilter.model))
+        && (!pickFilter.censor || (pickFilter.censor === 'no' ? i.uncensored === true : i.uncensored === false))
+        && (!pickFilter.text || [i.name, i.description, i.author, ...i.tags, ...i.models].join(' ').toLowerCase().includes(pickFilter.text));
     const list = h('div', { class: 'list catalog-list' });
     const drawList = () => {
-        const items = data.items.filter(i => filter === 'all' || i.type === filter);
+        const items = data.items.filter(matches);
         put(list, items.length ? items.map(item => catalogEntry(item, actionsFor(item))) : h('div', { class: 'empty' }, mascot('books', 150),
-            h('h2', { text: data.items.length ? 'В этом разделе пусто' : 'Каталог пока пуст' }),
+            h('h2', { text: data.items.length ? 'Ничего не нашлось' : 'Каталог пока пуст' }),
             h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять' })));
     };
     const filters = h('div', { class: 'filters' }, [['all', 'Все'], ['preset', 'Пресеты'], ['lorebook', 'Лорбуки'], ['card', 'Карточки']].map(([v, text]) =>
@@ -482,6 +549,7 @@ export async function renderCatalog() {
     put(view,
         back('#tools', 'Ещё'),
         filters,
+        filterBar,
         data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
         list,
         h('div', { class: 'section' },
@@ -549,11 +617,12 @@ function localPicker(type, onchange) {
     ui.api(`/catalog/local?type=${type}`).then(({ items }) => {
         select.replaceChildren(h('option', { value: '', text: items.length ? 'Выберите…' : 'В таверне таких файлов нет' }),
             ...items.map(i => h('option', { value: i.file, text: i.name })));
+        select._rows = items;
         select.disabled = !items.length;
     }).catch((error) => {
         select.replaceChildren(h('option', { value: '', text: error.message }));
     });
-    select.addEventListener('change', () => onchange(select.value, select.selectedOptions[0]?.textContent || ''));
+    select.addEventListener('change', () => onchange(select.value, select.selectedOptions[0]?.textContent || '', (select._rows || []).find(r => r.file === select.value)));
     return select;
 }
 
@@ -664,20 +733,45 @@ export async function renderCatalogAuthor() {
     let source = 'local';
     let file = '';
     let upload = '';
-    const field = (label, input, hint) => h('label', { class: 'author-field' }, h('span', { class: 'small secondary', text: label }), input, hint ? h('span', { class: 'small muted', text: hint }) : null);
-    const name = h('input', { class: 'input', style: 'width:100%', type: 'text', maxlength: 80 });
-    const author = h('input', { class: 'input', style: 'width:100%', type: 'text', maxlength: 60 });
-    const description = h('textarea', { class: 'input', rows: 3, maxlength: 400, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
-    const tags = h('input', { class: 'input', style: 'width:100%', type: 'text', placeholder: 'фэнтези, ромком' });
-    const page = h('input', { class: 'input', style: 'width:100%', type: 'url', placeholder: 'https://… (необязательно)', autocapitalize: 'off' });
+    const form = metaForm();
     const allowed = h('input', { type: 'checkbox' });
     const status = h('p', { class: 'small secondary', style: 'margin:8px 0 0' });
     const sourceBox = h('div', { style: 'margin-top:12px' });
+    const regexBox = h('div', { class: 'regex-box' });
     const fileInput = h('input', { type: 'file', hidden: true });
-    let autoName = '';
-    const setName = (value) => {
-        if (!name.value || name.value === autoName) name.value = value;
-        autoName = value;
+    let regexUploads = [];
+    let regexGlobal = new Set();
+    let presetRegex = 0;
+    const drawRegex = async () => {
+        if (type !== 'preset') return put(regexBox);
+        const regexInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
+        regexInput.addEventListener('change', async () => {
+            const f = regexInput.files[0];
+            regexInput.value = '';
+            if (!f) return;
+            try {
+                const r = await uploadRaw(`/catalog/upload-regex`, f);
+                regexUploads.push({ upload: r.upload, names: r.names });
+                drawRegex();
+            } catch (error) {
+                ui.toast(error.message, true);
+            }
+        });
+        let globals = [];
+        try {
+            globals = (await ui.api('/catalog/regex')).global;
+        } catch {
+            globals = [];
+        }
+        if (type !== 'preset') return;
+        put(regexBox,
+            h('h3', { class: 'section-title', style: 'margin-top:16px', text: 'Регексы к пресету' }),
+            h('p', { class: 'small muted', style: 'margin:0 0 8px', text: presetRegex ? `В самом пресете уже есть регексы: ${presetRegex}. Они попадут в каталог вместе с ним` : 'Регексы попадут внутрь пресета: таверна сама предложит их включить, когда пресет выберут' }),
+            globals.length ? h('div', { class: 'regex-list' }, globals.map(g => h('label', { class: 'check-row' },
+                (() => { const box = h('input', { type: 'checkbox' }); box.checked = regexGlobal.has(g.id); box.addEventListener('change', () => { if (box.checked) regexGlobal.add(g.id); else regexGlobal.delete(g.id); }); return box; })(),
+                h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: g.name }), g.disabled ? h('span', { class: 'row-sub', text: 'сейчас выключен' }) : null)))) : h('p', { class: 'small muted', style: 'margin:0', text: 'Общих регексов в таверне нет' }),
+            regexUploads.length ? h('div', { class: 'badges', style: 'margin-top:8px' }, regexUploads.map((r, i) => h('button', { class: 'badge removable', type: 'button', title: 'Убрать', onclick: () => { regexUploads.splice(i, 1); drawRegex(); }, text: `${r.names.join(', ')} ✕` }))) : null,
+            h('div', { class: 'card-actions', style: 'margin-top:8px' }, h('button', { class: 'btn secondary small', type: 'button', text: 'Добавить файл регекса', onclick: () => regexInput.click() }), regexInput));
     };
     fileInput.addEventListener('change', async () => {
         const f = fileInput.files[0];
@@ -685,12 +779,9 @@ export async function renderCatalogAuthor() {
         status.textContent = 'Проверяю файл…';
         upload = '';
         try {
-            const token = await ui.csrfToken();
-            const res = await fetch(`${ui.BASE}/catalog/upload?type=${type}&name=${encodeURIComponent(f.name)}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': token, 'X-Korrektor': '1' }, body: f });
-            const r = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(r.error || `Ошибка ${res.status}`);
+            const r = await uploadRaw(`/catalog/upload?type=${type}&name=${encodeURIComponent(f.name)}`, f);
             upload = r.upload;
-            setName(r.title);
+            form.suggestName(r.title);
             status.textContent = `Файл подходит: ${f.name}${r.removed?.length ? `. Из пресета убрано: ${r.removed.join(', ')}` : ''}`;
         } catch (error) {
             status.textContent = '';
@@ -702,23 +793,38 @@ export async function renderCatalogAuthor() {
     const drawSource = () => {
         file = '';
         upload = '';
+        presetRegex = 0;
         fileInput.accept = type === 'card' ? '.png,image/png' : '.json,application/json';
         if (source === 'local') {
-            put(sourceBox, localPicker(type, (value, label) => { file = value; if (value) setName(label); }));
+            put(sourceBox, localPicker(type, (value, label, row) => {
+                file = value;
+                if (value) form.suggestName(label);
+                presetRegex = row?.regex || 0;
+                drawRegex();
+            }));
         } else {
             put(sourceBox, h('button', { class: 'btn secondary', type: 'button', text: 'Выбрать файл', onclick: () => fileInput.click() }), fileInput);
         }
         status.textContent = '';
+        drawRegex();
     };
     const publish = async (e) => {
         const button = e.currentTarget;
         if (source === 'local' ? !file : !upload) return ui.toast('Сначала выберите файл', true);
+        if (form.busy()) return ui.toast('Подождите, картинки ещё загружаются', true);
         button.disabled = true;
-        status.textContent = 'Отправляю на GitHub: файл и запись в каталоге. Большой лорбук на мобильном интернете — до минуты…';
+        status.textContent = 'Отправляю на GitHub: файл, картинки и запись в каталоге. Большой лорбук на мобильном интернете — до минуты…';
         try {
             const r = await ui.api('/catalog/publish', {
-                method: 'POST', timeout: 120000,
-                body: { type, file: source === 'local' ? file : undefined, upload: source === 'upload' ? upload : undefined, meta: { name: name.value, author: author.value, description: description.value, tags: tags.value, page: page.value, allowed: allowed.checked } },
+                method: 'POST', timeout: 180000,
+                body: {
+                    type,
+                    file: source === 'local' ? file : undefined,
+                    upload: source === 'upload' ? upload : undefined,
+                    meta: { ...form.values(), allowed: allowed.checked },
+                    images: form.images().filter(i => i.upload).map(i => i.upload),
+                    regex: type === 'preset' ? { global: [...regexGlobal], uploads: regexUploads.map(r => r.upload) } : undefined,
+                },
             });
             ui.toast(`В каталоге: «${r.item.name}». У всех появится в течение нескольких минут`);
             catalogData = null;
@@ -741,7 +847,7 @@ export async function renderCatalogAuthor() {
         }
     };
     const remove = async (item, button) => {
-        const ok = await ui.confirmDialog({ title: `Убрать «${item.name}»?`, text: 'Запись исчезнет из каталога у всех. У тех, кто уже установил, файл останется', ok: 'Убрать', danger: true });
+        const ok = await ui.confirmDialog({ title: `Убрать «${item.name}»?`, text: 'Запись и её картинки исчезнут из каталога у всех. У тех, кто уже установил, файл останется', ok: 'Убрать', danger: true });
         if (!ok) return;
         button.disabled = true;
         try {
@@ -768,12 +874,8 @@ export async function renderCatalogAuthor() {
             pick(CATALOG_TYPES, type, (v) => { type = v; drawSource(); }),
             h('div', { style: 'margin-top:8px' }, pick([['local', 'Из таверны'], ['upload', 'Файл с телефона']], source, (v) => { source = v; drawSource(); })),
             sourceBox,
-            h('div', { class: 'author-fields' },
-                field('Название', name),
-                field('Автор', author, 'Указывается в каталоге всегда'),
-                field('Что это', description, 'Пара предложений: для чего и чем хорош'),
-                field('Теги', tags, 'Через запятую'),
-                field('Страница автора', page)),
+            regexBox,
+            form.element,
             h('label', { class: 'check-row', style: 'margin-top:12px' }, allowed,
                 h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: 'Автор разрешил распространять' }), h('span', { class: 'row-sub', text: 'Без этого опубликовать нельзя' }))),
             h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', type: 'button', text: 'Опубликовать', onclick: publish })),
@@ -789,11 +891,169 @@ export async function renderCatalogAuthor() {
             data.items.length ? h('div', { class: 'list catalog-list' }, data.items.map(item => {
                 const button = h('button', { class: 'btn quiet small', type: 'button', text: 'Убрать' });
                 button.addEventListener('click', () => remove(item, button));
-                return catalogEntry(item, [button]);
+                return catalogEntry(item, [h('a', { class: 'btn secondary small', href: `#tools/catalog-edit/${encodeURIComponent(item.id)}`, text: 'Изменить' }), button]);
             })) : h('p', { class: 'small muted', text: 'Пока пусто' })),
         h('div', { class: 'section' },
             h('p', { class: 'small muted', style: 'margin:0', text: `Публикуется в ${admin.repo}${admin.login ? ` от имени ${admin.login}` : ''}` }),
             h('div', { class: 'card-actions' }, h('button', { class: 'btn quiet small', type: 'button', text: 'Удалить токен', onclick: forget }))));
+}
+
+/** Sends a file or a picture to the plugin as is (not JSON). */
+async function uploadRaw(path, body) {
+    const token = await ui.csrfToken();
+    const res = await fetch(`${ui.BASE}${path}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': token, 'X-Korrektor': '1' }, body });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
+    return data;
+}
+
+/** A picture from the phone made small: at most `maxSide` pixels, WebP (JPEG if WebP cannot be made). */
+async function compressImage(file, maxSide = 1280) {
+    const url = URL.createObjectURL(file);
+    try {
+        const img = await new Promise((resolve, reject) => {
+            const i = new Image();
+            i.onload = () => resolve(i);
+            i.onerror = () => reject(new Error('Это не картинка'));
+            i.src = url;
+        });
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        let blob = await new Promise(r => canvas.toBlob(r, 'image/webp', 0.82));
+        if (!blob || blob.type !== 'image/webp') blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.85));
+        if (!blob) throw new Error('Не удалось уменьшить картинку');
+        return blob;
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+/**
+ * Name, author, description, tags, AI models, censorship, page and pictures of a record:
+ * the same form for publishing and for changing a published record.
+ */
+function metaForm(item = null) {
+    const { h, put } = ui;
+    const field = (label, input, hint) => h('label', { class: 'author-field' }, h('span', { class: 'small secondary', text: label }), input, hint ? h('span', { class: 'small muted', text: hint }) : null);
+    const name = h('input', { class: 'input', style: 'width:100%', type: 'text', maxlength: 80, value: item?.name || '' });
+    const author = h('input', { class: 'input', style: 'width:100%', type: 'text', maxlength: 60, value: item?.author || '' });
+    const description = h('textarea', { class: 'input', rows: 3, maxlength: 400, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
+    description.value = item?.description || '';
+    const tags = h('input', { class: 'input', style: 'width:100%', type: 'text', placeholder: 'фэнтези, ромком', value: (item?.tags || []).join(', ') });
+    const page = h('input', { class: 'input', style: 'width:100%', type: 'url', placeholder: 'https://… (необязательно)', autocapitalize: 'off', value: item?.page || '' });
+    const chosen = new Set(item?.models || []);
+    const otherModels = h('input', { class: 'input', style: 'width:100%;margin-top:8px', type: 'text', placeholder: 'Другие модели через запятую', value: (item?.models || []).filter(m => !CATALOG_MODELS.includes(m)).join(', ') });
+    const modelChips = h('div', { class: 'chips' }, CATALOG_MODELS.map(m => h('button', {
+        class: 'chip', type: 'button', 'aria-pressed': String(chosen.has(m)), onclick: (e) => {
+            if (chosen.has(m)) chosen.delete(m); else chosen.add(m);
+            e.currentTarget.setAttribute('aria-pressed', String(chosen.has(m)));
+        },
+    }, m)));
+    let censor = item?.uncensored === true ? 'no' : item?.uncensored === false ? 'yes' : '';
+    // Pictures: { keep: url } already published, { upload, preview } new from the phone.
+    const pictures = (item?.images || []).map(url => ({ keep: url, preview: url }));
+    let loading = 0;
+    const picsBox = h('div', { class: 'pics' });
+    const picInput = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+    const drawPics = () => {
+        put(picsBox,
+            pictures.map((p, i) => h('div', { class: 'pic' },
+                h('img', { src: p.preview, alt: '', onclick: () => { if (i > 0) { pictures.unshift(...pictures.splice(i, 1)); drawPics(); } } }),
+                i === 0 ? h('span', { class: 'pic-label', text: 'обложка' }) : null,
+                h('button', { class: 'pic-x', type: 'button', 'aria-label': 'Убрать', onclick: () => { pictures.splice(i, 1); drawPics(); }, text: '✕' }))),
+            loading ? h('div', { class: 'pic pic-add', text: 'Загружаю…' }) : null,
+            pictures.length + loading < 4 ? h('button', { class: 'pic pic-add', type: 'button', onclick: () => picInput.click() }, h('b', { text: '+' }), h('span', { text: 'Картинка' })) : null,
+            picInput);
+    };
+    picInput.addEventListener('change', async () => {
+        const files = [...picInput.files].slice(0, 4 - pictures.length);
+        picInput.value = '';
+        for (const f of files) {
+            loading++;
+            drawPics();
+            try {
+                const blob = await compressImage(f, 1280);
+                const r = await uploadRaw('/catalog/upload-image', blob);
+                pictures.push({ upload: r.upload, preview: URL.createObjectURL(blob) });
+            } catch (error) {
+                ui.toast(error.message, true);
+            } finally {
+                loading--;
+                drawPics();
+            }
+        }
+    });
+    drawPics();
+    let autoName = item?.name || '';
+    const element = h('div', { class: 'author-fields' },
+        field('Название', name),
+        field('Автор', author, 'Указывается в каталоге всегда'),
+        field('Что это', description, 'Пара предложений: для чего и чем хорош'),
+        h('div', { class: 'author-field' }, h('span', { class: 'small secondary', text: 'Картинки' }), picsBox,
+            h('span', { class: 'small muted', text: 'До 4: первая — обложка, остальные — скриншоты. Нажмите на картинку, чтобы сделать её обложкой' })),
+        h('div', { class: 'author-field' }, h('span', { class: 'small secondary', text: 'Для каких моделей' }), modelChips, otherModels),
+        h('div', { class: 'author-field' }, h('span', { class: 'small secondary', text: 'Цензура' }),
+            pick([['', 'Не указано'], ['no', 'Без цензуры'], ['yes', 'С цензурой']], censor, (v) => { censor = v; })),
+        field('Теги', tags, 'Через запятую'),
+        field('Страница автора', page));
+    return {
+        element,
+        busy: () => loading > 0,
+        suggestName: (value) => {
+            if (!name.value || name.value === autoName) name.value = value;
+            autoName = value;
+        },
+        values: () => ({
+            name: name.value,
+            author: author.value,
+            description: description.value,
+            tags: tags.value,
+            page: page.value,
+            models: [...CATALOG_MODELS.filter(m => chosen.has(m)), ...otherModels.value.split(',').map(m => m.trim()).filter(Boolean)],
+            uncensored: censor === 'no' ? true : censor === 'yes' ? false : undefined,
+        }),
+        images: () => pictures.map(p => (p.upload ? { upload: p.upload } : { keep: p.keep })),
+    };
+}
+
+// Changing a published record: description, tags, models, censorship, pictures.
+export async function renderCatalogEdit(id) {
+    const { h, put, $ } = ui;
+    const view = $('#view');
+    const data = await loadCatalogData();
+    const item = data.items.find(i => i.id === id);
+    if (!item) {
+        put(view, back('#tools/catalog-author', 'Ведение каталога'), h('div', { class: 'empty' }, h('h2', { text: 'Запись не найдена' })));
+        return;
+    }
+    const form = metaForm(item);
+    const status = h('p', { class: 'small secondary', style: 'margin:8px 0 0' });
+    const save = async (e) => {
+        const button = e.currentTarget;
+        if (form.busy()) return ui.toast('Подождите, картинки ещё загружаются', true);
+        button.disabled = true;
+        status.textContent = 'Сохраняю на GitHub…';
+        try {
+            await ui.api('/catalog/edit', { method: 'POST', timeout: 180000, body: { id, meta: form.values(), images: form.images() } });
+            ui.toast('Запись обновлена');
+            catalogData = null;
+            location.hash = '#tools/catalog-author';
+        } catch (error) {
+            status.textContent = '';
+            ui.toast(error.message, true);
+            button.disabled = false;
+        }
+    };
+    put(view,
+        back('#tools/catalog-author', 'Ведение каталога'),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: `${CATALOG_NAMES[item.type]}: файл остаётся тем же` }),
+            form.element,
+            h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', type: 'button', text: 'Сохранить', onclick: save })),
+            status));
 }
 
 // ---------- sync with the other device ----------

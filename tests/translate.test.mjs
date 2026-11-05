@@ -70,3 +70,12 @@ test('translate: a piece that comes back half in English is split and translated
     assert.equal(looksUntranslated('The knight walks into the tavern.', 'The knight walks into the tavern.', 'ru'), true);
     assert.equal(looksUntranslated('Привет, как дела у тебя сегодня?', 'Привет, как дела у тебя сегодня?', 'ru'), false);
 });
+
+test('translate: dashes and spaced asterisks from translators do not turn lines into a bulleted list', async () => {
+    const { fixMarkup } = await import('../st-extension/translate.js');
+    assert.equal(fixMarkup('"You want me to repay it now?" he said', '- Ты хочешь, чтобы я вернул его сейчас? он сказал'), '— Ты хочешь, чтобы я вернул его сейчас? он сказал');
+    assert.equal(fixMarkup('*smiles* Hello', '* улыбается * Привет'), '*улыбается* Привет');
+    assert.equal(fixMarkup('She *really* likes it', 'Она * очень * это любит'), 'Она *очень* это любит');
+    assert.equal(fixMarkup('*a* text *b*', '*а* текст *б*'), '*а* текст *б*');
+    assert.equal(fixMarkup('- one\n- two', '- один\n- два'), '- один\n- два', 'a real list stays a list');
+});

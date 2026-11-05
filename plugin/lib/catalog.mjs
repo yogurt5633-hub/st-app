@@ -47,6 +47,12 @@ export function cleanItems(data) {
             added: /^\d{4}-\d{2}-\d{2}$/.test(String(item.added || '')) ? item.added : '',
             hash: /^[0-9a-f]{64}$/.test(String(item.hash || '')) ? item.hash : '',
             size: Number.isFinite(Number(item.size)) && Number(item.size) > 0 ? Number(item.size) : 0,
+            // Cover first, then screenshots.
+            images: Array.isArray(item.images) ? item.images.map(cleanLink).filter(Boolean).slice(0, 4) : [],
+            models: Array.isArray(item.models) ? item.models.map(m => String(m).trim().slice(0, 30)).filter(Boolean).slice(0, 10) : [],
+            // true: without censorship, false: with, null: not said.
+            uncensored: typeof item.uncensored === 'boolean' ? item.uncensored : null,
+            regex: Number.isInteger(item.regex) && item.regex > 0 ? Math.min(item.regex, 999) : 0,
         }));
 }
 
