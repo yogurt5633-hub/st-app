@@ -46,7 +46,7 @@ find_st_dir() {
         dir="$(cd "$(dirname "$found")" && pwd)"
         is_st "$dir" || continue
         case " ${CANDIDATES[*]:-} " in *" $dir "*) ;; *) CANDIDATES+=("$dir") ;; esac
-    done < <(find "$HOME" -maxdepth 4 -name server.js -not -path '*/node_modules/*' 2>/dev/null)
+    done < <(find "$HOME" -maxdepth 4 \( -name node_modules -o -path "$HOME/.*" \) -prune -o -name server.js -type f -print 2>/dev/null)
     if [ -z "${ST_DIR:-}" ]; then
         if [ -n "$RUNNING_DIR" ]; then
             ST_DIR="$RUNNING_DIR"

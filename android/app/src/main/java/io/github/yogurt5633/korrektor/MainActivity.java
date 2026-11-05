@@ -79,11 +79,24 @@ public class MainActivity extends Activity {
 
     /** Is the app on screen? Updater uses it: a hidden app may not open the installer. */
     static volatile boolean visible;
+    /** The open window, for Termux results. */
+    static volatile MainActivity running;
 
     Prefs prefs;
     volatile boolean stUp;
     volatile boolean starting;
     volatile String message = "";
+
+    // What the last check in Termux found (null: not checked yet).
+    Boolean termuxReady;
+    String termuxError = "";
+    boolean termuxChecking;
+    boolean gitInstalled;
+    String stDir = "";
+    boolean permissionDenied;
+    private int statusRun;
+    private String pendingAction;
+    private boolean startAfterCheck;
 
     private WebView tavern;
     private WebView korrektor;
@@ -101,6 +114,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        running = this;
         prefs = new Prefs(this);
         Notifier.createChannel(this);
         getWindow().setStatusBarColor(BG);
@@ -139,6 +153,7 @@ public class MainActivity extends Activity {
         CheckJob.schedule(this);
         handleIntent(getIntent());
         checkServer(true);
+        checkTermux();
     }
 
     private int dp(int value) {
@@ -402,8 +417,17 @@ public class MainActivity extends Activity {
         } else {
             loaded = false;
             if (mayAutoStart && prefs.flag(Prefs.AUTO_START, true) && Termux.installed(this) && Termux.permitted(this)) {
-                runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
-                return;
+                // Start once Termux has answered the check and SillyTavern is known to be there.
+                boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
+                if (termuxReady == Boolean.TRUE && !termuxChecking) {
+                    if (known) {
+                        runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+                        return;
+                    }
+                } else {
+                    startAfterCheck = true;
+                    if (!termuxChecking) checkTermux();
+                }
             }
             showTab(HOME);
         }
@@ -411,11 +435,40 @@ public class MainActivity extends Activity {
     }
 
     void runAction(String action) {
-        String error = Termux.run(this, action);
+        if ("logs".equals(action) || "status".equals(action)) {
+            runQuiet(action);
+            return;
+        }
+        if (!Termux.installed(this)) {
+            message = "Сначала установите Termux (шаг 1 ниже)";
+            showTab(HOME);
+            return;
+        }
+        if (!Termux.permitted(this)) {
+            pendingAction = action;
+            message = "Нужно разрешение запускать команды в Termux (шаг 3 ниже)";
+            requestTermuxPermission();
+            showTab(HOME);
+            return;
+        }
+        int run = nextRun();
+        if (Termux.runsTavern(action)) setTavernRun(run);
+        else if ("stop".equals(action)) setTavernRun(0);
+        String error = Termux.run(this, action, prefs.text(Prefs.START_CMD), run);
         if (error != null) {
             message = error;
             toast(error);
             showTab(HOME);
+            return;
+        }
+        if ("install-tavern".equals(action)) {
+            starting = true;
+            message = "Идёт установка SillyTavern в Termux. Когда таверна запустится, приложение откроет её само";
+            homeChosen = false;
+            showTab(HOME);
+            // Termux in the background may not be allowed to show itself: open it from here.
+            handler.postDelayed(this::openTermux, 1200);
+            waitForServer(10_000, 45 * 60_000);
             return;
         }
         if ("stop".equals(action)) {
@@ -442,6 +495,147 @@ public class MainActivity extends Activity {
         homeChosen = false;
         showTab(HOME);
         waitForServer(restart ? 4000 : 1500, "update-tavern".equals(action) ? 600_000 : 240_000);
+    }
+
+    private int nextRun() {
+        long next = prefs.number("runCounter") % 1_000_000 + 1;
+        prefs.setNumber("runCounter", next);
+        return (int) next;
+    }
+
+    private void setTavernRun(int run) {
+        prefs.setNumber("tavernRun", run);
+    }
+
+    /** Commands that only report something: no change to what the screen shows. */
+    private void runQuiet(String action) {
+        if (!Termux.installed(this) || !Termux.permitted(this)) {
+            if ("logs".equals(action)) sendLogs("Журналы читаются через Termux: сначала пройдите шаги первой настройки");
+            return;
+        }
+        int run = nextRun();
+        String error = Termux.run(this, action, prefs.text(Prefs.START_CMD), run);
+        if ("status".equals(action)) {
+            if (error != null) {
+                termuxChecking = false;
+                termuxReady = false;
+                termuxError = error;
+            } else {
+                termuxChecking = true;
+                statusRun = run;
+                handler.postDelayed(() -> {
+                    if (statusRun != run || !termuxChecking) return;
+                    termuxChecking = false;
+                    termuxReady = false;
+                    termuxError = "Termux не ответил. Выполните в Termux команду из шага 2 и нажмите «Проверить». "
+                            + "Если не помогает, откройте Termux: там может быть уведомление с причиной";
+                    notifyHome();
+                }, 12_000);
+            }
+            notifyHome();
+        } else if (error != null) {
+            sendLogs(error);
+        }
+    }
+
+    /** Asks Termux whether it accepts commands and what is installed. */
+    void checkTermux() {
+        if (Termux.installed(this) && Termux.permitted(this)) runQuiet("status");
+    }
+
+    private void sendLogs(String text) {
+        try {
+            JSONObject data = new JSONObject();
+            data.put("text", text);
+            sendToHome("logs", data);
+        } catch (Exception ignored) {
+            // a plain string always fits
+        }
+    }
+
+    /** Termux finished a command (or could not run it). Called on the main thread. */
+    void onTermuxResult(TermuxResult.Outcome o) {
+        if (o.failedToRun()) {
+            termuxReady = false;
+            termuxError = o.errmsg.isEmpty() ? "Termux отказался выполнить команду" : o.errmsg.trim();
+        } else {
+            termuxReady = true;
+            termuxError = "";
+        }
+        switch (o.action) {
+            case "status":
+                if (o.run == statusRun) termuxChecking = false;
+                if (!o.failedToRun()) readStatus(o.stdout);
+                if (startAfterCheck) {
+                    startAfterCheck = false;
+                    boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
+                    if (!o.failedToRun() && known && !stUp && !starting) {
+                        runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+                    }
+                }
+                break;
+            case "logs":
+                sendLogs(o.failedToRun() ? termuxError : o.output().isEmpty() ? "Журналы пусты" : o.output());
+                break;
+            case "stop":
+                if (o.failedToRun()) message = "Не удалось остановить: " + termuxError;
+                break;
+            default:
+                if (Termux.runsTavern(o.action)) onTavernEnded(o);
+                break;
+        }
+        notifyHome();
+    }
+
+    private void readStatus(String stdout) {
+        gitInstalled = false;
+        stDir = "";
+        for (String line : stdout.split("\n")) {
+            line = line.trim();
+            if (line.equals("git=1")) gitInstalled = true;
+            else if (line.startsWith("st_dir=")) stDir = line.substring(7);
+        }
+    }
+
+    /** The Termux session that ran SillyTavern ended. */
+    private void onTavernEnded(TermuxResult.Outcome o) {
+        if (o.run != prefs.number("tavernRun")) return; // an older session we already replaced or stopped
+        setTavernRun(0);
+        int code = o.exitCode == null ? 0 : o.exitCode;
+        boolean byHand = code == 130 || code == 143; // Ctrl+C or a stop signal
+        if (!o.failedToRun() && (code == 0 || byHand) && starting) {
+            // The command may have started SillyTavern in the background and returned: keep waiting.
+            return;
+        }
+        if (o.failedToRun() || (code != 0 && !byHand)) {
+            waitToken++;
+            starting = false;
+            message = o.failedToRun() ? "Termux не выполнил команду: " + termuxError
+                    : "SillyTavern не запустился или упал (код " + code + "). Журнал ниже";
+            runQuiet("logs");
+            checkServer(false);
+            return;
+        }
+        // Ended normally, for example stopped in Termux: check whether it is really down.
+        new Thread(() -> {
+            boolean up = Net.alive(prefs.stUrl());
+            runOnUiThread(() -> {
+                if (up) return;
+                message = "SillyTavern остановлен";
+                onServerState(false, false);
+            });
+        }).start();
+    }
+
+    void openTermux() {
+        Intent intent = getPackageManager().getLaunchIntentForPackage(Termux.PACKAGE);
+        if (intent != null) startActivity(intent);
+        else toast("Termux не установлен");
+    }
+
+    void openAppSettings() {
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
     }
 
     private void waitForServer(long firstDelay, long timeout) {
@@ -512,8 +706,26 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         boolean granted = results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
-        if (requestCode == REQ_TERMUX && granted && !stUp && !starting) {
-            runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+        if (requestCode == REQ_TERMUX) {
+            if (granted) {
+                permissionDenied = false;
+                message = "";
+                String action = pendingAction;
+                pendingAction = null;
+                // Pressed "Start" before: do it now. Otherwise start on our own only once
+                // Termux has answered and SillyTavern is known to be there.
+                startAfterCheck = action == null && prefs.flag(Prefs.AUTO_START, true);
+                checkTermux();
+                if (action != null) runAction(action);
+            } else {
+                permissionDenied = true;
+                pendingAction = null;
+                // No dialog any more (denied before): only the app's settings can grant it.
+                if (!shouldShowRequestPermissionRationale(Termux.PERMISSION)) {
+                    toast("Включите: Разрешения → Дополнительные разрешения → «Выполнять команды в среде Termux»");
+                    openAppSettings();
+                }
+            }
         }
         notifyHome();
     }
@@ -557,6 +769,7 @@ public class MainActivity extends Activity {
         super.onResume();
         visible = true;
         if (!starting) checkServer(false);
+        if (termuxReady != Boolean.TRUE && !termuxChecking) checkTermux();
     }
 
     @Override
@@ -584,6 +797,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (running == this) running = null;
         handler.removeCallbacksAndMessages(null);
         for (WebView view : new WebView[]{tavern, korrektor, home}) {
             if (view != null) view.destroy();

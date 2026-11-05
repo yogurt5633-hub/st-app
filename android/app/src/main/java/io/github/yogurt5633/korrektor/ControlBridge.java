@@ -43,13 +43,20 @@ final class ControlBridge {
             s.put("notify", prefs.flag(Prefs.NOTIFY, true));
             s.put("lastCheck", prefs.number("lastCheck"));
             s.put("message", activity.message);
+            s.put("termuxReady", activity.termuxReady == null ? JSONObject.NULL : activity.termuxReady);
+            s.put("termuxError", activity.termuxError);
+            s.put("termuxChecking", activity.termuxChecking);
+            s.put("git", activity.gitInstalled);
+            s.put("stDir", activity.stDir);
+            s.put("startCmd", prefs.text(Prefs.START_CMD));
+            s.put("permissionDenied", activity.permissionDenied);
         } catch (Exception ignored) {
             // all puts are simple values
         }
         return s.toString();
     }
 
-    /** start | start-update | stop | restart | update-korrektor | update-tavern */
+    /** start | start-update | stop | restart | update-korrektor | update-tavern | install-tavern | logs */
     @JavascriptInterface
     public void action(String name) {
         activity.runOnUiThread(() -> activity.runAction(name));
@@ -85,11 +92,31 @@ final class ControlBridge {
 
     @JavascriptInterface
     public void openTermux() {
-        activity.runOnUiThread(() -> {
-            Intent intent = activity.getPackageManager().getLaunchIntentForPackage(Termux.PACKAGE);
-            if (intent != null) activity.startActivity(intent);
-            else activity.toast("Termux не установлен");
-        });
+        activity.runOnUiThread(activity::openTermux);
+    }
+
+    @JavascriptInterface
+    public void openAppSettings() {
+        activity.runOnUiThread(activity::openAppSettings);
+    }
+
+    /** Check again whether Termux accepts commands and what is installed. */
+    @JavascriptInterface
+    public void recheck() {
+        activity.runOnUiThread(activity::checkTermux);
+    }
+
+    /** The user's own command that starts SillyTavern in Termux (for example st); empty = automatic. */
+    @JavascriptInterface
+    public void setStartCommand(String command) {
+        String value = command == null ? "" : command.replaceAll("[\\r\\n]+", " ").trim();
+        if (value.length() > 300) {
+            activity.toast("Слишком длинная команда");
+            return;
+        }
+        activity.prefs.setText(Prefs.START_CMD, value);
+        activity.toast(value.isEmpty() ? "Команда запуска: автоматически" : "Команда запуска сохранена");
+        activity.notifyHome();
     }
 
     /** Only a few known pages: where to get Termux and this project. */

@@ -53,6 +53,9 @@ input[type="text"] { width: 100%; height: 40px; padding: 0 12px; border-radius: 
 .switch input:checked + span::after { transform: translateX(18px); background: #1d1608; }
 .badge { font-family: var(--mono); font-size: 12px; color: var(--accent); }
 a { color: var(--accent); }
+.error { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: #f0a0a2; overflow-wrap: anywhere; }
+pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto; border-radius: 8px; background: var(--bg-deep); font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.field + .field { margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -64,6 +67,10 @@ a { color: var(--accent); }
     var state = {};
     var updates = null;
     var checking = false;
+    var logs = null;          // text of the logs, when shown
+    var logsLoading = false;
+    var drafts = {};          // what the user typed and has not saved yet
+    var pendingRender = false;
     var root = document.getElementById('root');
 
     function h(tag, props) {
@@ -95,6 +102,32 @@ a { color: var(--accent); }
             hint ? h('p', { class: 'hint', text: hint }) : null);
     }
 
+    // A text field with a "Save" button. Tapping the button keeps focus in the field,
+    // so the page does not redraw under the finger.
+    function field(key, label, value, placeholder, onsave, hint) {
+        var input = h('input', { type: 'text', 'aria-label': label, placeholder: placeholder || '', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false' });
+        input.value = drafts[key] !== undefined ? drafts[key] : (value || '');
+        input.addEventListener('input', function () { drafts[key] = input.value; });
+        var save = h('button', { class: 'btn secondary small', type: 'button', text: 'Сохранить',
+            onmousedown: function (e) { e.preventDefault(); },
+            onclick: function () { delete drafts[key]; onsave(input.value.trim()); input.blur(); } });
+        return h('div', { class: 'field' },
+            h('span', { class: 'small muted', text: label }),
+            h('div', { class: 'line', style: 'margin-top:4px' }, input, save),
+            hint ? h('p', { class: 'hint' }, hint) : null);
+    }
+
+    function startTavern() {
+        app.action(state.autoUpdate ? 'start-update' : 'start');
+    }
+
+    function showLogs() {
+        logsLoading = true;
+        if (logs === null) logs = '';
+        render();
+        app.action('logs');
+    }
+
     function when(ms) {
         if (!ms) return 'ещё не проверялось';
         var d = new Date(ms);
@@ -111,44 +144,80 @@ a { color: var(--accent); }
             actions.push(h('button', { class: 'btn secondary', type: 'button', onclick: function () { app.action('restart'); }, text: 'Перезапустить' }));
             actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: function () { app.action('stop'); }, text: 'Остановить' }));
         } else {
-            actions.push(h('button', { class: 'btn primary', type: 'button', disabled: s.starting || !s.termuxPermission,
-                onclick: function () { app.action(s.autoUpdate ? 'start-update' : 'start'); }, text: s.starting ? 'Запускаю' : 'Запустить' }));
+            actions.push(h('button', { class: 'btn primary', type: 'button', disabled: s.starting, onclick: startTavern, text: s.starting ? 'Запускаю' : 'Запустить' }));
             if (s.starting) actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: function () { app.action('stop'); }, text: 'Остановить' }));
         }
-        var url = h('input', { type: 'text', value: s.stUrl || '', 'aria-label': 'Адрес SillyTavern', autocapitalize: 'off', spellcheck: 'false' });
+        actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: showLogs, text: 'Журнал' }));
+
+        var logRow = logs === null ? null : h('div', { class: 'row' },
+            h('div', { class: 'line' },
+                h('span', { class: 'small muted', text: logsLoading ? 'Читаю журнал…' : 'Журнал (последние строки)' }),
+                h('div', { style: 'display:flex;gap:4px;flex:none' },
+                    h('button', { class: 'btn quiet small', type: 'button', onclick: showLogs, text: 'Обновить' }),
+                    h('button', { class: 'btn quiet small', type: 'button', onclick: function () { logs = null; render(); }, text: 'Скрыть' }))),
+            logs ? h('pre', { class: 'log', text: logs }) : null);
+
+        var found = s.stDir ? 'Сейчас найдена папка ' + s.stDir.replace(/^\/data\/data\/com\.termux\/files\/home/, '~') + '. ' : '';
         return [
             h('div', { class: 'box' },
                 h('div', { class: 'row' },
                     h('div', { class: 'status' }, h('span', { class: 'dot ' + dot }), title),
                     s.message && s.message !== title ? h('p', { class: 'message', text: s.message }) : null,
                     h('div', { class: 'actions' }, actions)),
+                logRow,
                 h('div', { class: 'row' },
-                    h('span', { class: 'small muted', text: 'Адрес SillyTavern' }),
-                    h('div', { class: 'line', style: 'margin-top:4px' }, url,
-                        h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.setUrl(url.value); }, text: 'Сохранить' })),
-                    h('p', { class: 'hint', text: 'Обычно http://127.0.0.1:8000. Если в config.yaml SillyTavern другой порт, укажите его' }))),
+                    field('cmd', 'Команда запуска в Termux', s.startCmd, 'автоматически', function (v) { app.setStartCommand(v); },
+                        found + 'Пусто — Корректор сам найдёт папку SillyTavern и запустит start.sh. Если вы запускаете таверну своей командой (например st), впишите её сюда'),
+                    field('url', 'Адрес SillyTavern', s.stUrl, 'http://127.0.0.1:8000', function (v) { app.setUrl(v); },
+                        'Обычно http://127.0.0.1:8000. Если в config.yaml SillyTavern другой порт, укажите его'))),
         ];
     }
 
     function setupSection() {
         var s = state;
-        if (s.termuxInstalled && s.termuxPermission) return null;
+        var ready = s.termuxReady === true;
+        var tavernKnown = !!(s.stDir || s.startCmd);
+        if (s.termuxInstalled && s.termuxPermission && ready && tavernKnown) return null;
         function step(n, done, title, body) {
             return h('div', { class: 'row step' + (done ? ' done' : '') }, h('span', { class: 'num', text: done ? 'ok' : String(n) }), h('div', {}, h('div', { text: title }), body));
         }
+        function btn(text, onclick, primary, disabled) {
+            return h('button', { class: 'btn ' + (primary ? 'primary' : 'secondary') + ' small', type: 'button', disabled: disabled, onclick: onclick, text: text });
+        }
+
+        var permissionBody = s.termuxPermission ? null : [
+            h('div', { class: 'actions' },
+                btn('Разрешить', function () { app.requestTermux(); }, true, !s.termuxInstalled),
+                s.permissionDenied ? btn('Открыть настройки', function () { app.openAppSettings(); }) : null),
+            s.permissionDenied ? h('p', { class: 'hint', text: 'Если окно с запросом не появилось: настройки приложения → Разрешения → Дополнительные разрешения → «Выполнять команды в среде Termux»' }) : null];
+
+        var termuxBody = ready ? null : [
+            h('code', { text: s.termuxSetup || '' }),
+            h('div', { class: 'actions' },
+                btn('Скопировать', function () { app.copy(s.termuxSetup); }),
+                btn('Открыть Termux', function () { app.openTermux(); }),
+                s.termuxPermission ? btn(s.termuxChecking ? 'Проверяю…' : 'Проверить', function () { app.recheck(); }, false, s.termuxChecking) : null),
+            s.termuxReady === false && s.termuxError ? h('p', { class: 'error', text: s.termuxError }) : null,
+            s.termuxPermission ? null : h('p', { class: 'hint', text: 'Проверить получится после шага 2' })];
+
+        var tavernTitle = s.stDir ? 'SillyTavern найден: ' + s.stDir.replace(/^\/data\/data\/com\.termux\/files\/home/, '~')
+            : s.startCmd ? 'Таверна запускается командой: ' + s.startCmd
+            : 'SillyTavern в Termux';
+        var tavernBody = tavernKnown ? null : ready ? [
+            h('p', { class: 'hint', text: 'В домашней папке Termux SillyTavern не найден. Кнопка ниже откроет Termux и поставит SillyTavern с Корректором, это займёт 5–15 минут. Если таверна уже стоит в другом месте или запускается своей командой, впишите команду выше' }),
+            h('div', { class: 'actions' }, btn('Установить SillyTavern', function () {
+                if (confirm('Установить SillyTavern в Termux? Откроется Termux, там будет видно, как идёт установка')) app.action('install-tavern');
+            }, true))]
+            : h('p', { class: 'hint', text: 'Проверю после шагов 2 и 3' });
+
         return [
             h('h2', { text: 'Первая настройка' }),
             h('div', { class: 'box' },
                 step(1, s.termuxInstalled, 'Установите Termux из F-Droid или GitHub',
-                    s.termuxInstalled ? null : h('div', { class: 'actions' }, h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openLink('termux'); }, text: 'Открыть F-Droid' }))),
-                step(2, false, 'Разрешите Termux принимать команды от приложений: выполните в Termux',
-                    [h('code', { text: s.termuxSetup || '' }),
-                        h('div', { class: 'actions' },
-                            h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.copy(s.termuxSetup); }, text: 'Скопировать' }),
-                            h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openTermux(); }, text: 'Открыть Termux' }))]),
-                step(3, s.termuxPermission, 'Разрешите Корректору запускать команды в Termux',
-                    s.termuxPermission ? null : h('div', { class: 'actions' }, h('button', { class: 'btn primary small', type: 'button', disabled: !s.termuxInstalled, onclick: function () { app.requestTermux(); }, text: 'Разрешить' }))),
-                h('div', { class: 'row' }, h('p', { class: 'hint', style: 'margin:0', text: 'Дальше всё само: при первом запуске Корректор скачается в ~/korrektor-src и установится в SillyTavern. Нужны git и сам SillyTavern в Termux' }))),
+                    s.termuxInstalled ? null : h('div', { class: 'actions' }, btn('Открыть F-Droid', function () { app.openLink('termux'); }))),
+                step(2, s.termuxPermission, 'Разрешите Корректору запускать команды в Termux', permissionBody),
+                step(3, ready, 'Разрешите Termux принимать команды от приложений: выполните в Termux', termuxBody),
+                step(4, tavernKnown, tavernTitle, tavernBody)),
         ];
     }
 
@@ -166,12 +235,12 @@ a { color: var(--accent); }
         var kRow = h('div', { class: 'row' },
             h('div', { class: 'line' },
                 h('div', {}, h('div', { text: 'Корректор в SillyTavern' }), h('div', { class: 'small muted', text: (kInfo.current ? 'версия ' + kInfo.current : s.stUp ? 'версия неизвестна' : 'SillyTavern не запущен') + (kInfo.latest ? ' · последняя ' + kInfo.latest : '') })),
-                h('button', { class: 'btn ' + (kInfo.available ? 'primary' : 'secondary') + ' small', type: 'button', disabled: !s.termuxPermission, onclick: function () { app.action('update-korrektor'); }, text: kInfo.available ? 'Обновить' : 'Переустановить' })),
+                h('button', { class: 'btn ' + (kInfo.available ? 'primary' : 'secondary') + ' small', type: 'button', onclick: function () { app.action('update-korrektor'); }, text: kInfo.available ? 'Обновить' : 'Переустановить' })),
             h('p', { class: 'hint', text: 'Скачает новую версию в ~/korrektor-src, поставит её и перезапустит SillyTavern' }));
         var stRow = h('div', { class: 'row' },
             h('div', { class: 'line' },
                 h('div', {}, h('div', { text: 'SillyTavern' }), h('div', { class: 'small muted', text: 'git pull в папке таверны' })),
-                h('button', { class: 'btn secondary small', type: 'button', disabled: !s.termuxPermission, onclick: function () {
+                h('button', { class: 'btn secondary small', type: 'button', onclick: function () {
                     if (confirm('Обновить SillyTavern до последней версии? Таверна перезапустится, первый запуск после обновления может занять несколько минут')) app.action('update-tavern');
                 }, text: 'Обновить' })));
         return [
@@ -198,7 +267,18 @@ a { color: var(--accent); }
         ];
     }
 
+    function typing() {
+        var el = document.activeElement;
+        return el && el.tagName === 'INPUT' && el.type === 'text' && root.contains(el);
+    }
+
     function render() {
+        // Redrawing would drop what is being typed: wait until the field loses focus.
+        if (typing()) {
+            pendingRender = true;
+            return;
+        }
+        pendingRender = false;
         root.replaceChildren.apply(root, [].concat(
             h('h1', { text: 'Корректор' }),
             tavernSection(),
@@ -219,16 +299,24 @@ a { color: var(--accent); }
         render();
     }
 
+    root.addEventListener('focusout', function () {
+        if (pendingRender) setTimeout(render, 250);
+    });
+
     window.onNative = function (type, data) {
         if (type === 'updates') {
             updates = data;
             checking = false;
         }
+        if (type === 'logs') {
+            logs = (data && data.text) || '';
+            logsLoading = false;
+        }
         refresh();
     };
 
     refresh();
-    setInterval(function () { if (state.starting) refresh(); }, 2000);
+    setInterval(function () { if (state.starting || state.termuxChecking) refresh(); }, 2000);
     if (!state.lastCheck || Date.now() - state.lastCheck > 6 * 3600 * 1000) {
         checking = true;
         render();

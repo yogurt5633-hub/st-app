@@ -39,6 +39,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Termux reports how a command ended (only through the PendingIntent the app gives it) -->
+        <receiver
+            android:name=".TermuxResult"
+            android:exported="false" />
+
         <service
             android:name=".CheckJob"
             android:exported="false"
