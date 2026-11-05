@@ -4,17 +4,32 @@
 # Другая папка SillyTavern: ST_DIR=/путь/к/SillyTavern bash scripts/install-termux.sh
 set -euo pipefail
 
-ST_DIR="${ST_DIR:-$HOME/SillyTavern}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$HERE/../plugin"
 
 say() { printf '%s\n' "$*"; }
 
-if [ ! -f "$ST_DIR/server.js" ]; then
-    say "Не нашёл SillyTavern в $ST_DIR"
-    say "Укажите папку: ST_DIR=/путь/к/SillyTavern bash $0"
+is_st() { [ -f "$1/server.js" ] && grep -qi '"name": *"sillytavern"' "$1/package.json" 2>/dev/null; }
+
+# Папка SillyTavern: из ST_DIR, из обычных мест или поиском по домашней папке
+# (лаунчеры кладут её глубже, например ~/SillyTavern-Launcher/SillyTavern).
+if [ -z "${ST_DIR:-}" ]; then
+    for dir in "$HOME/SillyTavern" "$HOME/SillyTavern-Launcher/SillyTavern" "$HOME/sillytavern" "$HOME/ST"; do
+        if is_st "$dir"; then ST_DIR="$dir"; break; fi
+    done
+fi
+if [ -z "${ST_DIR:-}" ]; then
+    while IFS= read -r found; do
+        dir="$(dirname "$found")"
+        if is_st "$dir"; then ST_DIR="$dir"; break; fi
+    done < <(find "$HOME" -maxdepth 4 -name server.js -not -path '*/node_modules/*' 2>/dev/null)
+fi
+if [ -z "${ST_DIR:-}" ] || ! is_st "$ST_DIR"; then
+    say "Не нашёл папку SillyTavern${ST_DIR:+ в $ST_DIR}"
+    say "Укажите её: ST_DIR=/путь/к/SillyTavern bash $0"
     exit 1
 fi
+say "SillyTavern: $ST_DIR"
 
 # 1. Плагин
 mkdir -p "$ST_DIR/plugins"
