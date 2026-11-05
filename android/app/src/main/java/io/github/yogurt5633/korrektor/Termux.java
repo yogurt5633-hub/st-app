@@ -34,8 +34,11 @@ final class Termux {
             + "if [ ! -d \"$SRC/.git\" ]; then command -v git >/dev/null || { echo 'В Termux нет git: нажмите «Установить SillyTavern» или выполните pkg install git'; exit 1; }; "
             + "git clone -q " + REPO + " \"$SRC\" 2>&1 | tee -a \"$LOG\"; fi; ";
     // ~/korrektor-src is the app's own copy of the code: it always follows main exactly.
-    private static final String PULL = "{ git -C \"$SRC\" fetch -q origin main && git -C \"$SRC\" reset -q --hard origin/main; } 2>&1 | tee -a \"$LOG\"; ";
-    private static final String ENSURE = "grep -q 'cd_only_dir' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
+    // A slow or blocked GitHub must not hang the start: 90 seconds at most, and the reason is shown.
+    private static final String PULL = "T=; command -v timeout >/dev/null && T='timeout 90'; "
+            + "{ $T git -C \"$SRC\" fetch -q --depth 1 origin main && git -C \"$SRC\" reset -q --hard origin/main "
+            + "|| echo 'Не удалось скачать обновление с GitHub (нет интернета или GitHub недоступен): ставлю то, что уже скачано'; } 2>&1 | tee -a \"$LOG\"; ";
+    private static final String ENSURE = "grep -q 'wait_lock' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
     private static final String CTL = "exec bash \"$SRC/scripts/korrektor-ctl.sh\" ";
 
     private Termux() {

@@ -12,7 +12,7 @@ const AVATAR_KEY = 'korrektor_avatar';      // this chat: { [avatarFile]: imageU
 const WINDOW_KEY = 'korrektor.avatarWindow';
 const MODE_KEY = 'korrektor.galleryMode';
 
-function el(tag, props = {}, ...children) {
+export function el(tag, props = {}, ...children) {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
         if (value === undefined || value === null || value === false) continue;
@@ -25,7 +25,7 @@ function el(tag, props = {}, ...children) {
     return node;
 }
 
-function storage(key, fallback) {
+export function storage(key, fallback) {
     try {
         const raw = localStorage.getItem(key);
         return raw ? JSON.parse(raw) : fallback;
@@ -34,7 +34,7 @@ function storage(key, fallback) {
     }
 }
 
-function store(key, value) {
+export function store(key, value) {
     try {
         localStorage.setItem(key, JSON.stringify(value));
     } catch {
@@ -50,7 +50,7 @@ async function post(url, body) {
 
 // ---------- bottom sheet ----------
 
-function sheet(title, body, onClose) {
+export function sheet(title, body, onClose) {
     document.querySelector('.kg-sheet')?.remove();
     const close = () => {
         root.remove();

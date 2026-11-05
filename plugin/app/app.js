@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.2';
+const APP_VERSION = '0.4.3';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -55,6 +55,8 @@ const TASKS = [
     ['condenseEntry', 'Сжатие и слияние записей лорбука'],
     ['condensePrompt', 'Сжатие промптов пресета'],
     ['ask', 'Просьбы к Корректору'],
+    ['recap', 'Пересказ «что было»'],
+    ['translate', 'Перевод сообщений в чате'],
 ];
 const ANALYZERS = [
     ['context', 'Переполнение контекста', 'Предлагает резюме старых сообщений'],
@@ -1354,8 +1356,13 @@ async function boot() {
     };
     $('#scan-button').addEventListener('click', () => startScan());
     window.addEventListener('hashchange', () => renderRoute());
+    // Back to the app or to this tab: fresh data, but not on every quick tab switch.
+    let fullAt = Date.now();
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') refresh();
+        if (document.visibilityState !== 'visible') return;
+        const full = Date.now() - fullAt > 20000;
+        if (full) fullAt = Date.now();
+        refresh(full);
     });
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').catch(() => { });
@@ -1364,7 +1371,14 @@ async function boot() {
     setInterval(() => { if (document.visibilityState === 'visible' && !state.job) refresh(false); }, 30000);
 }
 
+/** What the feed shows: the periodic refresh redraws it only when this changes. */
+function feedKey() {
+    const s = state.status || {};
+    return JSON.stringify([state.proposals, s.open, s.lastScan, s.scanning?.id ?? null, s.connectionCheck?.ok ?? null]);
+}
+
 async function refresh(rerender = true) {
+    const before = feedKey();
     // The chat list (for titles and marks) is heavier, so only on open and on return to the app.
     const results = await Promise.allSettled([loadStatus(), loadProposals(), rerender ? loadChats() : null]);
     const failed = results.find(r => r.status === 'rejected');
@@ -1376,7 +1390,8 @@ async function refresh(rerender = true) {
         return;
     }
     const route = currentRoute().name;
-    if (rerender || route === 'feed') renderRoute();
+    // A redraw under the finger swallows the tap: on a timer only when there is something new.
+    if (rerender || (route === 'feed' && feedKey() !== before)) renderRoute();
 }
 
 boot();

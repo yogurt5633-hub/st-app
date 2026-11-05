@@ -34,7 +34,7 @@ public class KorrektorWidget extends AppWidgetProvider {
         }
         int run = prefs.nextRun();
         prefs.setNumber("tavernRun", run);
-        String error = Termux.run(context, prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start", prefs.text(Prefs.START_CMD), run);
+        String error = Termux.run(context, prefs.startAction(), prefs.text(Prefs.START_CMD), run);
         show(context, error == null ? "Запускаю таверну…" : error, false);
         // Look again in a minute, when the tavern has had time to start.
         CheckJob.scheduleWidgetRefresh(context);

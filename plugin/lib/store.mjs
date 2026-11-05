@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
         condensePrompt: 'heavy',
         ask: 'heavy',
         recap: 'scan',
+        translate: 'scan',
     },
     scan: {
         auto: true,

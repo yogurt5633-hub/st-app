@@ -100,4 +100,18 @@ final class Prefs {
     static final String SHOW_MODEL_BAR = "showModelBar";    // model and preset row above the tavern
     static final String ONBOARDING = "onboarding";          // version of the welcome screens already seen
     static final int ONBOARDING_VERSION = 1;
+
+    /**
+     * "start-update" only when a newer Korrektor is already known (from the update check);
+     * otherwise a plain start that does not wait for GitHub.
+     */
+    String startAction() {
+        if (!flag(AUTO_UPDATE, true)) return "start";
+        String latest = text("korrektorLatest");
+        String installed = text("korrektorInstalled");
+        if (latest.isEmpty()) return "start";
+        // Never seen the installed version: the ctl script compares versions itself.
+        if (installed.isEmpty()) return "start-update";
+        return Updater.compare(latest, installed) > 0 ? "start-update" : "start";
+    }
 }

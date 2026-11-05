@@ -1,6 +1,7 @@
 // Companion for the Korrektor server plugin.
 // Also adds quick backgrounds and the avatar window (gallery.js).
 import { initGallery } from './gallery.js';
+import { initTranslate } from './translate.js';
 
 // When Korrektor changes the open chat, a lorebook, a card or the settings,
 // this tab reloads them, so its next save does not overwrite the fix.
@@ -196,4 +197,10 @@ try {
     initGallery();
 } catch (error) {
     console.warn('[korrektor] gallery not available', error);
+}
+
+try {
+    initTranslate();
+} catch (error) {
+    console.warn('[korrektor] translation not available', error);
 }

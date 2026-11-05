@@ -1,4 +1,4 @@
-/* Корректор: backgrounds sheet and avatar window, in SillyTavern's own theme colours. */
+/* Корректор: backgrounds sheet, avatar window and chat translation, in SillyTavern's own theme colours. */
 .kg-sheet { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 10050; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-end; justify-content: center; }
 .kg-sheet-box { width: min(640px, 100%); max-height: 82vh; overflow: auto; background: var(--SmartThemeBlurTintColor, #171717); color: var(--SmartThemeBodyColor, #ddd); border: 1px solid var(--SmartThemeBorderColor, #333); border-radius: 16px 16px 0 0; padding: 12px 14px 18px; box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35); }
 .kg-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-size: 1.05em; }
@@ -23,3 +23,11 @@
 .kg-win-btn { border: 0; background: transparent; color: inherit; font-size: 16px; width: 32px; height: 28px; border-radius: 6px; cursor: pointer; }
 .kg-win-img { flex: 1; min-height: 0; width: 100%; object-fit: contain; cursor: pointer; }
 .kg-win-resize { position: absolute; right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 50%, rgba(127, 127, 127, 0.55) 50%); }
+.kg-translate select { width: 100%; margin-bottom: 10px; }
+.kg-label { font-size: 0.85em; opacity: 0.75; margin: 4px 0 6px; }
+.kg-checks { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; }
+.kg-main { font-weight: 600; }
+.kg-bar { height: 6px; border-radius: 3px; background: rgba(127, 127, 127, 0.2); overflow: hidden; margin-top: 12px; }
+.kg-bar i { display: block; height: 100%; width: 0; background: var(--SmartThemeQuoteColor, #e3a54a); transition: width 0.2s; }
+.kg-progress { margin-top: 8px; font-size: 0.9em; min-height: 1.2em; }
+.kg-sheet [hidden] { display: none !important; }

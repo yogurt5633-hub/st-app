@@ -26,6 +26,7 @@ import { httpError, isInside, nowIso } from './lib/util.mjs';
 import { logUsage, usageSummary, refreshOpenRouterPrices, getPrices, setPrice, lastPromptOf } from './lib/usage.mjs';
 import { cardHealth } from './lib/health.mjs';
 import { makeRecap } from './lib/recap.mjs';
+import { translateText } from './lib/translate.mjs';
 import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
 import { loadCatalog, installItem } from './lib/catalog.mjs';
@@ -438,6 +439,13 @@ export async function init(router) {
         if (!chatId) throw httpError(400, 'Нужен chatId');
         const job = startJob(user.ctx.handle, 'recap', async () => makeRecap(user.ctx, user.store, { chatId, llm: await llmFor(user) }), { chatId });
         return publicJob(job);
+    }));
+
+    // ---------- translation of a chat message (companion's "Translate chat") ----------
+    router.post('/translate', route(async (req, user) => {
+        const text = String(req.body?.text ?? '');
+        const lang = String(req.body?.lang || 'ru').slice(0, 12);
+        return { text: await translateText(await llmFor(user), text, lang) };
     }));
 
     // ---------- full backup of SillyTavern data ----------

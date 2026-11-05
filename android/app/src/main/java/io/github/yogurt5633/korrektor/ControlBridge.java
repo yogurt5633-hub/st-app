@@ -59,6 +59,8 @@ final class ControlBridge {
             s.put("resolvedTheme", Palette.resolvedTheme(activity, prefs));
             s.put("accent", prefs.text(Prefs.ACCENT).isEmpty() ? "amber" : prefs.text(Prefs.ACCENT));
             s.put("onboardingDone", prefs.number(Prefs.ONBOARDING) >= Prefs.ONBOARDING_VERSION);
+            // While another tab is open the home page does not redraw at all.
+            s.put("homeShown", activity.homeShown());
         } catch (Exception ignored) {
             // all puts are simple values
         }
@@ -143,6 +145,9 @@ final class ControlBridge {
                 break;
             case "project":
                 url = "https://github.com/yogurt5633-hub/st-app";
+                break;
+            case "guide":
+                url = "https://github.com/yogurt5633-hub/st-app/blob/main/docs/GUIDE.md";
                 break;
             default:
                 return;

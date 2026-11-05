@@ -180,7 +180,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
     }
 
     function startTavern() {
-        app.action(state.autoUpdate ? 'start-update' : 'start');
+        app.action('start-auto');
     }
 
     function showLogs() {
@@ -340,7 +340,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                     h('span', { class: 'small muted', text: checking ? 'проверяю…' : when(s.lastCheck) }),
                     h('button', { class: 'btn secondary small', type: 'button', disabled: checking, onclick: function () { checking = true; render(); app.checkUpdates(); }, text: 'Проверить' }))),
             h('div', { class: 'box', style: 'margin-top:12px' },
-                toggle('Обновлять Корректор сам', 'Перед каждым запуском SillyTavern из приложения: если на GitHub новая версия, она ставится до старта, ничего не прерывая', s.autoUpdate, function (v) { app.setFlag('autoUpdate', v); }),
+                toggle('Обновлять Корректор сам', 'Если приложение уже нашло новую версию, она ставится при следующем запуске таверны. Обычный запуск интернета не ждёт', s.autoUpdate, function (v) { app.setFlag('autoUpdate', v); }),
                 toggle('Запускать SillyTavern при открытии', 'Если таверна не работает, приложение запустит её через Termux', s.autoStart, function (v) { app.setFlag('autoStart', v); })),
         ];
     }
@@ -422,7 +422,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
     }
 
     // The oldest Korrektor plugin this app's screens work with.
-    var MIN_KORREKTOR = '0.4.2';
+    var MIN_KORREKTOR = '0.4.3';
 
     function versionLess(a, b) {
         var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
@@ -496,6 +496,10 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         return [
             h('h2', { text: 'Помощь' }),
             h('div', { class: 'box' },
+                h('div', { class: 'row' },
+                    h('div', {}, 'Пошаговый гайд'),
+                    h('p', { class: 'hint', text: 'Телефон, компьютер, связь между ними, перевод и частые ошибки — с нуля, без знания программирования' }),
+                    h('div', { class: 'actions' }, h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openLink('guide'); }, text: 'Открыть гайд' }))),
                 h('div', { class: 'row' },
                     h('div', {}, 'Что-то не работает?'),
                     h('p', { class: 'hint', text: 'Соберу версии, состояние Termux и последние строки журнала в один текст: он скопируется, и его можно сразу отправить. Проверьте текст перед отправкой' }),
@@ -594,9 +598,20 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         return el && el.tagName === 'INPUT' && el.type === 'text' && root.contains(el);
     }
 
+    // A finger on the screen: redrawing now would swallow the tap (the button under it is replaced).
+    var pressing = false;
+    root.addEventListener('pointerdown', function () { pressing = true; }, true);
+    function released() {
+        pressing = false;
+        // After the click has fired.
+        if (pendingRender) setTimeout(render, 120);
+    }
+    root.addEventListener('pointerup', released, true);
+    root.addEventListener('pointercancel', released, true);
+
     function render() {
-        // Redrawing would drop what is being typed: wait until the field loses focus.
-        if (typing()) {
+        // Redrawing would drop what is being typed or the tap in progress, and a hidden page needs none.
+        if (typing() || pressing || state.homeShown === false) {
             pendingRender = true;
             return;
         }
@@ -625,19 +640,37 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         else delete el.dataset.accent;
     }
 
-    function refresh() {
+    // The page is redrawn only when something it shows has changed.
+    var lastRaw = '';
+    var lastDashboard = '';
+    var lastDashboardAt = 0;
+    function loadDashboard() {
+        lastDashboardAt = Date.now();
+        app.dashboard();
+    }
+    function refresh(force) {
         var wasUp = state.stUp;
+        var wasShown = state.homeShown;
+        var raw = '';
         try {
-            state = JSON.parse(app.state());
+            raw = app.state() + '\n' + app.sites();
+        } catch (e) {
+            raw = '';
+        }
+        if (!force && raw === lastRaw && !pendingRender) return;
+        lastRaw = raw;
+        var parts = raw.split('\n');
+        try {
+            state = JSON.parse(parts[0]);
         } catch (e) {
             state = {};
         }
-        if (state.stUp && !wasUp) app.dashboard();
         try {
-            siteList = JSON.parse(app.sites()) || [];
+            siteList = JSON.parse(parts[1]) || [];
         } catch (e) {
             siteList = [];
         }
+        if (state.stUp && (!wasUp || (state.homeShown && !wasShown && Date.now() - lastDashboardAt > 60000))) loadDashboard();
         render();
     }
 
@@ -649,9 +682,11 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         if (type === 'updates') {
             updates = data;
             checking = false;
+            refresh(true);
+            return;
         }
         if (type === 'focus' && data && data.section) {
-            refresh();
+            refresh(true);
             var target = document.getElementById(data.section);
             if (target) target.scrollIntoView({ block: 'start' });
             return;
@@ -659,8 +694,13 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         if (type === 'logs') {
             logs = (data && data.text) || '';
             logsLoading = false;
+            refresh(true);
+            return;
         }
         if (type === 'dashboard') {
+            var raw = JSON.stringify(data);
+            if (raw === lastDashboard) return;
+            lastDashboard = raw;
             dashboard = data;
             render();
             return;
@@ -668,9 +708,9 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         refresh();
     };
 
-    refresh();
-    // Tiles stay fresh while the page is open.
-    setInterval(function () { if (state.stUp && document.visibilityState === 'visible') app.dashboard(); }, 30000);
+    refresh(true);
+    // Tiles stay fresh while the home page is on screen (every 2 minutes: each refresh asks the tavern).
+    setInterval(function () { if (state.stUp && state.homeShown !== false && document.visibilityState === 'visible') loadDashboard(); }, 120000);
     setInterval(function () { if (state.starting || state.termuxChecking) refresh(); }, 2000);
     if (!state.lastCheck || Date.now() - state.lastCheck > 6 * 3600 * 1000) {
         checking = true;

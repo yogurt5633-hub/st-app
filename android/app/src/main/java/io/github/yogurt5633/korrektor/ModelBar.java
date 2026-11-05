@@ -33,7 +33,7 @@ final class ModelBar {
     // What is selected now. Model fields differ per source; the common pattern is #model_<source>_select.
     private static final String READ = "(function(){try{"
             + "var $=window.jQuery;if(!$||!window.SillyTavern)return JSON.stringify({ok:false});"
-            + "var out={ok:true,gallery:!!window.korrektorGallery,api:$('#main_api').val()};"
+            + "var out={ok:true,gallery:!!window.korrektorGallery,translator:!!window.korrektorTranslate,api:$('#main_api').val()};"
             + "var tr=document.getElementById('translation_auto_mode'),tl=document.getElementById('translation_target_language');"
             + "if(tr&&tl&&document.getElementById('translate_chat')){out.translate={mode:tr.value,lang:tl.value,"
             + "langName:tl.selectedOptions[0]?tl.selectedOptions[0].textContent:'',provider:$('#translation_provider').val(),"
@@ -126,8 +126,11 @@ final class ModelBar {
 
     private void translateDialog() {
         JSONObject tr = state == null ? null : state.optJSONObject("translate");
+        boolean ours = state != null && state.optBoolean("translator");
         if (tr == null) {
-            activity.toast("Встроенный перевод в таверне выключен: включите расширение Chat Translation в меню расширений SillyTavern");
+            // Without SillyTavern's Chat Translation there is no auto mode, but old messages can still be translated.
+            if (ours) run("window.korrektorTranslate.open()");
+            else activity.toast("Встроенный перевод в таверне выключен: включите расширение Chat Translation в меню расширений SillyTavern");
             return;
         }
         String mode = tr.optString("mode", "none");
@@ -171,7 +174,8 @@ final class ModelBar {
             });
         });
         box.addView(language, row());
-        TextView note = text("Переводит " + providerName(tr.optString("provider")) + " через саму таверну: перевод показывается вместо текста, а модель по-прежнему видит оригинал", false);
+        TextView note = text("Новые ответы переводит " + providerName(tr.optString("provider")) + " через саму таверну: перевод показывается вместо текста, а модель по-прежнему видит оригинал."
+                + (ours ? " Уже написанные сообщения — кнопка «Старые сообщения»: по одному, с повтором при ошибке, можно моделью Корректора" : ""), false);
         note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         box.addView(note, row());
 
@@ -183,7 +187,10 @@ final class ModelBar {
                     run("(function(m,l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');"
                             + "$('#translation_auto_mode').val(m).trigger('change');})(" + JSONObject.quote(next) + "," + JSONObject.quote(lang[0]) + ")");
                 })
-                .setNeutralButton("Ещё", (d, w) -> moreDialog(lang[0]))
+                .setNeutralButton(ours ? "Старые сообщения" : "Ещё", (d, w) -> {
+                    if (ours) run("window.korrektorTranslate.open({lang:" + JSONObject.quote(lang[0]) + "})");
+                    else moreDialog(lang[0]);
+                })
                 .setNegativeButton("Отмена", null)
                 .create();
         dialog.show();

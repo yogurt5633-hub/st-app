@@ -1,11 +1,28 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { readJson } from './util.mjs';
 
 // Reads SillyTavern's own settings.json (not secrets.json) to learn the
 // connection the user picked and the context size.
 
+// settings.json of SillyTavern is often several megabytes, and the app asks for it every
+// few seconds: parse it again only when the file changed. Callers only read it.
+const settingsCache = new Map();
+
 export async function readStSettings(ctx) {
-    return readJson(path.join(ctx.dirs.root, 'settings.json'), {});
+    const file = path.join(ctx.dirs.root, 'settings.json');
+    let stat = null;
+    try {
+        stat = await fs.promises.stat(file);
+    } catch {
+        return {};
+    }
+    const key = `${stat.mtimeMs}:${stat.size}`;
+    const hit = settingsCache.get(file);
+    if (hit && hit.key === key) return hit.value;
+    const value = await readJson(file, {});
+    settingsCache.set(file, { key, value });
+    return value;
 }
 
 const MODEL_FIELD = {

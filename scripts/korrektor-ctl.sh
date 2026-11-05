@@ -98,20 +98,38 @@ watch_companion() {
 }
 
 # Один запуск за раз: два установщика сразу ломали друг другу файлы плагина.
+# Блокировку снимает только тот, кто её взял (иначе старый запуск, завершаясь,
+# снимал блокировку нового).
 LOCK="$HOME/.korrektor-ctl.lock"
+lock_owner() { cat "$LOCK/pid" 2>/dev/null; }
 take_lock() {
     local pid
     if ! mkdir "$LOCK" 2>/dev/null; then
-        pid="$(cat "$LOCK/pid" 2>/dev/null)"
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 1; fi
+        pid="$(lock_owner)"
+        if [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2>/dev/null; then
+            # «Перезапуск» и «обновление» всё равно останавливают таверну: если она уже
+            # работает, держатель блокировки — просто её запуск, блокировку можно забрать.
+            [ "${1:-}" = "take-over" ] && [ -n "$(running_pids)" ] || return 1
+            log "Забираю блокировку у запуска $pid: таверна будет перезапущена"
+        fi
         rm -rf "$LOCK"
         mkdir "$LOCK" 2>/dev/null || return 1
     fi
     echo "$$" > "$LOCK/pid"
-    trap 'rm -rf "$LOCK"' EXIT
+    trap 'drop_lock' EXIT
     return 0
 }
-drop_lock() { rm -rf "$LOCK"; }
+drop_lock() { [ "$(lock_owner)" = "$$" ] && rm -rf "$LOCK"; return 0; }
+# Ждёт, пока другой запуск закончит установку (до 3 минут), вместо того чтобы молча выйти.
+wait_lock() {
+    local i
+    for i in $(seq 1 90); do
+        take_lock "${1:-}" && return 0
+        [ "$i" = 1 ] && say "Таверна ещё запускается: подожду, пока закончит"
+        sleep 2
+    done
+    return 1
+}
 
 # «cd папка» только переходит в папку и сразу заканчивается: такую команду
 # понимаем как «запустить таверну из этой папки».
@@ -231,13 +249,13 @@ case "${1:-}" in
         say "SillyTavern остановлен"
         ;;
     restart)
+        wait_lock take-over || { say "Таверна запускается слишком долго: перезапуск отменён. Посмотрите журнал"; exit 1; }
         stop_st
-        take_lock || { say "SillyTavern уже запускается"; exit 0; }
         sleep 1
         run_st
         ;;
     update-korrektor)
-        take_lock || { say "SillyTavern уже запускается: обновление подождёт"; exit 0; }
+        wait_lock take-over || { say "Таверна запускается слишком долго: обновление не поставлено. Нажмите «Обновить» ещё раз через минуту"; exit 1; }
         install_korrektor
         stop_st
         sleep 1
@@ -245,7 +263,7 @@ case "${1:-}" in
         ;;
     update-tavern)
         need_dir || exit 1
-        take_lock || { say "SillyTavern уже запускается: обновление подождёт"; exit 0; }
+        wait_lock take-over || { say "Таверна запускается слишком долго: обновление отменено"; exit 1; }
         say "Обновляю SillyTavern в $ST_DIR"
         git -C "$ST_DIR" pull --ff-only 2>&1 | tee -a "$LOG" || say "git pull в SillyTavern не удался"
         stop_st

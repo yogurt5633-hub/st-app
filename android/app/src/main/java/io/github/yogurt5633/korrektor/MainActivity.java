@@ -269,6 +269,25 @@ public class MainActivity extends Activity {
         updateBar.setVisibility(View.VISIBLE);
     }
 
+    /**
+     * The tavern reported which Korrektor it runs. After an update this hides the
+     * "new version" bar at once, without asking GitHub again.
+     */
+    void noteKorrektorVersion(String installed) {
+        JSONObject k = updates == null ? null : updates.optJSONObject("korrektor");
+        if (k == null || installed.isEmpty() || installed.equals(k.optString("current"))) return;
+        try {
+            String latest = k.optString("latest");
+            k.put("current", installed);
+            k.put("available", !latest.isEmpty() && Updater.compare(latest, installed) > 0);
+            k.put("stRunning", true);
+        } catch (Exception ignored) {
+            return;
+        }
+        showUpdateBar();
+        sendToHome("updates", updates);
+    }
+
     private void dismissUpdate() {
         long apkCode = prefs.number("apkCode");
         if (apkCode > Updater.appVersionCode(this)) prefs.setNumber("dismissedApp", apkCode);
@@ -523,9 +542,22 @@ public class MainActivity extends Activity {
         korrektor.setVisibility(KORREKTOR.equals(tab) ? View.VISIBLE : View.GONE);
         home.setVisibility(HOME.equals(tab) ? View.VISIBLE : View.GONE);
         sites.view().setVisibility(SITES.equals(tab) ? View.VISIBLE : View.GONE);
+        // Hidden pages need no animations or redraws. The tavern is never paused: a reply may be streaming.
+        pauseUnless(korrektor, KORREKTOR.equals(tab));
+        pauseUnless(sites.webView(), SITES.equals(tab));
         if (SITES.equals(tab)) sites.onShown();
         if (TAVERN.equals(tab) || KORREKTOR.equals(tab)) prefs.setText(Prefs.LAST_TAB, tab);
         notifyHome();
+    }
+
+    private void pauseUnless(WebView view, boolean shown) {
+        if (view == null) return;
+        if (shown) view.onResume();
+        else view.onPause();
+    }
+
+    boolean homeShown() {
+        return HOME.equals(current) && visible;
     }
 
     /** Is SillyTavern up? Optionally start it when it is not. */
@@ -571,7 +603,7 @@ public class MainActivity extends Activity {
                 boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
                 if (termuxReady == Boolean.TRUE && !termuxChecking) {
                     if (known) {
-                        runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+                        runAction(prefs.startAction());
                         return;
                     }
                 } else {
@@ -585,6 +617,8 @@ public class MainActivity extends Activity {
     }
 
     void runAction(String action) {
+        // The home page asks for "start-auto": the app knows whether an update is waiting.
+        if ("start-auto".equals(action)) action = prefs.startAction();
         if ("logs".equals(action) || "status".equals(action)) {
             runQuiet(action);
             return;
@@ -643,7 +677,7 @@ public class MainActivity extends Activity {
         boolean restart = !action.startsWith("start");
         message = "update-tavern".equals(action) ? "Обновляю SillyTavern, это может занять несколько минут"
                 : "update-korrektor".equals(action) ? "Обновляю Корректор и перезапускаю SillyTavern"
-                : "start-update".equals(action) ? "Проверяю обновление Корректора и запускаю SillyTavern"
+                : "start-update".equals(action) ? "Ставлю новую версию Корректора и запускаю SillyTavern"
                 : restart ? "Перезапускаю SillyTavern" : "Запускаю SillyTavern";
         if (restart) {
             stUp = false;
@@ -726,7 +760,7 @@ public class MainActivity extends Activity {
                     startAfterCheck = false;
                     boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
                     if (!o.failedToRun() && known && !stUp && !starting) {
-                        runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+                        runAction(prefs.startAction());
                     }
                 }
                 break;
@@ -829,7 +863,7 @@ public class MainActivity extends Activity {
         homeChosen = false;
         if (stUp) showTab(TAVERN);
         else if (termuxReady == Boolean.TRUE && (!stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty()) && !starting) {
-            runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+            runAction(prefs.startAction());
         } else notifyHome();
     }
 
@@ -990,7 +1024,9 @@ public class MainActivity extends Activity {
                 if (status.ok()) {
                     JSONObject st = new JSONObject(status.body);
                     out.put("status", st);
-                    prefs.setText("korrektorInstalled", st.optString("version"));
+                    String version = st.optString("version");
+                    prefs.setText("korrektorInstalled", version);
+                    runOnUiThread(() -> noteKorrektorVersion(version));
                 }
                 out.put("korrektorLatest", prefs.text("korrektorLatest"));
                 Net.Reply chats = Net.get(base + "/chats?limit=1", 8000, true);
@@ -1183,6 +1219,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         visible = true;
+        notifyHome();
         if (!starting) checkServer(false);
         checkUpdates(false);
         if (termuxReady != Boolean.TRUE && !termuxChecking) checkTermux();
