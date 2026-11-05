@@ -33,10 +33,14 @@ final class Notifier {
     }
 
     static void show(Context context, int id, String title, String text, String tab) {
-        if (!allowed(context)) return;
         Intent open = new Intent(context, MainActivity.class);
         open.putExtra("tab", tab);
         open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        show(context, id, title, text, open);
+    }
+
+    static void show(Context context, int id, String title, String text, Intent open) {
+        if (!allowed(context)) return;
         PendingIntent pending = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(context, CHANNEL)

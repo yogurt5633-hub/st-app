@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.Settings;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -164,11 +165,16 @@ final class Updater {
                 if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != id) return;
                 app.unregisterReceiver(this);
                 Uri uri = dm.getUriForDownloadedFile(id);
-                if (uri == null) return;
+                if (uri == null) {
+                    Toast.makeText(app, "Не удалось скачать новую версию, попробуйте ещё раз", Toast.LENGTH_LONG).show();
+                    return;
+                }
                 Intent install = new Intent(Intent.ACTION_VIEW);
                 install.setDataAndType(uri, "application/vnd.android.package-archive");
                 install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                app.startActivity(install);
+                // Android does not let a hidden app open screens: then the notification opens the installer.
+                if (MainActivity.visible) app.startActivity(install);
+                else Notifier.show(app, 12, "Новая версия скачана", "Нажмите, чтобы установить", install);
             }
         };
         IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);

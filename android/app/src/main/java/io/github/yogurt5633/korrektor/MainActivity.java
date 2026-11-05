@@ -77,6 +77,9 @@ public class MainActivity extends Activity {
             + "if(d.classList.contains('pinnedOpen'))return;var t=d.parentElement&&d.parentElement.querySelector('.drawer-toggle');if(t)t.click();});},80);"
             + "return true;})()";
 
+    /** Is the app on screen? Updater uses it: a hidden app may not open the installer. */
+    static volatile boolean visible;
+
     Prefs prefs;
     volatile boolean stUp;
     volatile boolean starting;
@@ -552,12 +555,14 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        visible = true;
         if (!starting) checkServer(false);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        visible = false;
         CookieManager.getInstance().flush();
     }
 
