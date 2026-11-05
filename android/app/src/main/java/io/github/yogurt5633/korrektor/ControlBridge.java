@@ -59,6 +59,10 @@ final class ControlBridge {
             s.put("resolvedTheme", Palette.resolvedTheme(activity, prefs));
             s.put("accent", prefs.text(Prefs.ACCENT).isEmpty() ? "amber" : prefs.text(Prefs.ACCENT));
             s.put("onboardingDone", prefs.number(Prefs.ONBOARDING) >= Prefs.ONBOARDING_VERSION);
+            s.put("keepAlive", prefs.flag(Prefs.KEEP_ALIVE, true));
+            s.put("appBatteryFree", activity.batteryFree(activity.getPackageName()));
+            s.put("termuxBatteryFree", activity.batteryFree(Termux.PACKAGE));
+            s.put("android", android.os.Build.VERSION.SDK_INT);
             // While another tab is open the home page does not redraw at all.
             s.put("homeShown", activity.homeShown());
         } catch (Exception ignored) {
@@ -187,10 +191,21 @@ final class ControlBridge {
     }
 
     @JavascriptInterface
+    public void appBattery() {
+        activity.runOnUiThread(activity::askAppBattery);
+    }
+
+    @JavascriptInterface
+    public void termuxBattery() {
+        activity.runOnUiThread(() -> activity.openSettingsOf(Termux.PACKAGE));
+    }
+
+    @JavascriptInterface
     public void setFlag(String key, boolean value) {
-        if (Prefs.AUTO_START.equals(key) || Prefs.AUTO_UPDATE.equals(key) || Prefs.NOTIFY.equals(key) || Prefs.SHOW_SITES.equals(key) || Prefs.SHOW_MODEL_BAR.equals(key)) {
+        if (Prefs.AUTO_START.equals(key) || Prefs.AUTO_UPDATE.equals(key) || Prefs.NOTIFY.equals(key) || Prefs.SHOW_SITES.equals(key) || Prefs.SHOW_MODEL_BAR.equals(key) || Prefs.KEEP_ALIVE.equals(key)) {
             activity.prefs.setFlag(key, value);
         }
+        if (Prefs.KEEP_ALIVE.equals(key)) activity.runOnUiThread(activity::updateKeepAlive);
         if (Prefs.SHOW_SITES.equals(key)) activity.runOnUiThread(() -> activity.setSitesVisible(value));
         if (Prefs.SHOW_MODEL_BAR.equals(key)) activity.runOnUiThread(activity::refreshModelBar);
     }

@@ -72,6 +72,7 @@ a { color: var(--accent); }
 .hello { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; }
 .hello h1 { margin: 0; }
 .mascot { display: block; flex: none; object-fit: contain; }
+.small.ok { color: var(--accent); }
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; text-align: left; color: var(--text); font: inherit; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; min-width: 0; }
 .tile:active { transform: scale(0.98); }
@@ -404,6 +405,25 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         ];
     }
 
+    // So the tavern does not reload when the person switches to other apps.
+    function keepSection() {
+        var s = state;
+        var mark = function (ok) { return h('span', { class: 'small ' + (ok ? 'ok' : 'muted'), text: ok ? '✓ без ограничений' : 'ограничено' }); };
+        return [
+            h('h2', { text: 'Чтобы таверна не перезагружалась' }),
+            h('div', { class: 'box' },
+                toggle('Держать таверну открытой', 'Пока таверна открыта, в шторке висит тихое уведомление «Таверна открыта». С ним Android не выгружает приложение, когда вы открываете другие, и страница не перезагружается. Если всё же перезагрузится — откроется тот же чат, на том же месте, с недописанным сообщением', s.keepAlive !== false, function (v) { app.setFlag('keepAlive', v); }),
+                h('div', { class: 'row' },
+                    h('div', { class: 'line' }, h('span', { text: 'Батарея: Корректор' }), mark(s.appBatteryFree)),
+                    s.appBatteryFree ? null : h('div', { class: 'actions' }, h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.appBattery(); }, text: 'Разрешить работу в фоне' }))),
+                s.onPc || !s.termuxInstalled ? null : h('div', { class: 'row' },
+                    h('div', { class: 'line' }, h('span', { text: 'Батарея: Termux' }), mark(s.termuxBatteryFree)),
+                    s.termuxBatteryFree ? null : h('p', { class: 'hint', text: 'Иначе Android усыпляет сервер таверны. В настройках Termux: Батарея → «Без ограничений»' }),
+                    s.termuxBatteryFree ? null : h('div', { class: 'actions' }, h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.termuxBattery(); }, text: 'Настройки Termux' }))),
+                s.onPc || (s.android || 0) < 31 ? null : h('p', { class: 'hint', style: 'padding:0 16px 12px', text: 'Если таверна в Termux всё равно сама останавливается: Настройки → Для разработчиков → «Отключить ограничения дочерних процессов» (Android 14 и новее). На Xiaomi, Huawei и Samsung ещё разрешите Корректору и Termux автозапуск' })),
+        ];
+    }
+
     function notifySection() {
         var s = state;
         return [
@@ -625,6 +645,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             updatesSection(),
             sitesSection(),
             appearanceSection(),
+            keepSection(),
             notifySection(),
             helpSection(),
             onboarding() || [],

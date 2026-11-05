@@ -2,6 +2,7 @@
 // Also adds quick backgrounds and the avatar window (gallery.js).
 import { initGallery } from './gallery.js';
 import { initTranslate } from './translate.js';
+import { initSession } from './session.js';
 
 // When Korrektor changes the open chat, a lorebook, a card or the settings,
 // this tab reloads them, so its next save does not overwrite the fix.
@@ -205,4 +206,10 @@ try {
     initTranslate();
 } catch (error) {
     console.warn('[korrektor] translation not available', error);
+}
+
+try {
+    initSession();
+} catch (error) {
+    console.warn('[korrektor] session restore not available', error);
 }

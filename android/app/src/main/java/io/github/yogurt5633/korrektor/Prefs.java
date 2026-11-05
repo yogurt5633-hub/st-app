@@ -98,6 +98,7 @@ final class Prefs {
     static final String THEME = "theme";                    // dark | light | system
     static final String ACCENT = "accent";                  // amber | rose | mint | sky | lavender
     static final String SHOW_MODEL_BAR = "showModelBar";    // model and preset row above the tavern
+    static final String KEEP_ALIVE = "keepAlive";           // «Таверна открыта» notification keeps the app loaded
     static final String ONBOARDING = "onboarding";          // version of the welcome screens already seen
     static final int ONBOARDING_VERSION = 1;
 

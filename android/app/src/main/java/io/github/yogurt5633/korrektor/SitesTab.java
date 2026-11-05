@@ -37,7 +37,7 @@ final class SitesTab {
     private final MainActivity activity;
     private final LinearLayout root;
     private final LinearLayout chips;
-    private final WebView web;
+    private WebView web;
     private final View line;
     private int selected = -1;
     private Palette palette;
@@ -60,7 +60,12 @@ final class SitesTab {
         line.setBackgroundColor(palette.line);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
-        web = new WebView(activity);
+        web = makeWeb();
+        root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+    }
+
+    private WebView makeWeb() {
+        WebView web = new WebView(activity);
         web.setBackgroundColor(palette.bg);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -80,8 +85,26 @@ final class SitesTab {
                 openOutside(uri.toString());
                 return true;
             }
+
+            @Override
+            public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail detail) {
+                // Android stopped the page engine to free memory: a fresh page instead of a crash.
+                v.post(() -> recover(v));
+                return true;
+            }
         });
-        root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        return web;
+    }
+
+    private void recover(WebView dead) {
+        if (dead != web) return;
+        String url = dead.getUrl();
+        int index = root.indexOfChild(dead);
+        root.removeView(dead);
+        dead.destroy();
+        web = makeWeb();
+        root.addView(web, index, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        if (url != null && url.startsWith("http")) web.loadUrl(url);
     }
 
     View view() {

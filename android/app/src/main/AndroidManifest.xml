@@ -9,6 +9,11 @@
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
     <!-- Install a newer version of this app downloaded from GitHub (the user confirms) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- «Таверна открыта»: keeps the app loaded while the tavern is open, so the page does not reload -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- The person can let the app work in the background without battery limits (asked with a button) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Saving exports to Downloads on Android 9 and older -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -53,6 +58,15 @@
                 <data android:mimeType="text/json" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the SillyTavern page open in the app while the person uses other apps" />
+        </service>
 
         <!-- Lets Telegram read the one file the app is sharing («Предложить своё») -->
         <provider

@@ -53,11 +53,16 @@ final class ModelBar {
             + "}catch(e){return JSON.stringify({ok:false});}})()";
 
     private final MainActivity activity;
-    private final WebView tavern;
+    private WebView tavern;
     private final LinearLayout root;
     private final LinearLayout chips;
     private Palette palette;
     private JSONObject state;
+
+    /** The tavern page was rebuilt (Android stopped its engine): read and change the new one. */
+    void setTavern(WebView tavern) {
+        this.tavern = tavern;
+    }
 
     ModelBar(MainActivity activity, WebView tavern, Palette palette) {
         this.activity = activity;

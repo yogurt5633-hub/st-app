@@ -400,6 +400,14 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail detail) {
+                // Android stopped the pages' engine to free memory. Without this the app would close;
+                // instead a fresh page is put in its place, and the companion reopens the same chat.
+                handler.post(() -> replaceWebView(v));
+                return true;
+            }
+
+            @Override
             public void onReceivedError(WebView v, WebResourceRequest request, WebResourceError error) {
                 if (pageTab && request.isForMainFrame()) {
                     stUp = false;
@@ -435,6 +443,48 @@ public class MainActivity extends Activity {
             view.setDownloadListener((url, userAgent, disposition, mime, length) -> download(view, url, userAgent, disposition, mime));
         }
         return view;
+    }
+
+    private void replaceWebView(WebView dead) {
+        boolean isHome = dead == home;
+        boolean isTavern = dead == tavern;
+        boolean isKorrektor = dead == korrektor;
+        if (!isHome && !isTavern && !isKorrektor) return;
+        ViewGroup parent = (ViewGroup) dead.getParent();
+        if (parent == null) return;
+        int index = parent.indexOfChild(dead);
+        ViewGroup.LayoutParams params = dead.getLayoutParams();
+        int visibility = dead.getVisibility();
+        parent.removeView(dead);
+        try {
+            dead.destroy();
+        } catch (Exception ignored) {
+            // already gone
+        }
+        WebView fresh = makeWebView(!isHome);
+        fresh.setVisibility(visibility);
+        parent.addView(fresh, index, params);
+        if (isHome) {
+            home = fresh;
+            home.addJavascriptInterface(new ControlBridge(this), ControlBridge.NAME);
+            home.loadUrl("file:///android_asset/home.html");
+        } else if (isTavern) {
+            tavern = fresh;
+            modelBar.setTavern(fresh);
+            if (stUp) tavern.loadUrl(prefs.stUrl() + "/");
+            else loaded = false;
+        } else {
+            korrektor = fresh;
+            korrektorLoaded = false;
+            if (stUp && KORREKTOR.equals(current)) loadKorrektor();
+        }
+        appLog("Android выгрузил страницу " + (isHome ? "главной" : isTavern ? "таверны" : "Корректора") + " ради памяти: открыта заново");
+    }
+
+    /** «Таверна открыта» while the tavern page is loaded (if the person did not turn it off). */
+    void updateKeepAlive() {
+        if (stUp && loaded) KeepAliveService.start(this);
+        else KeepAliveService.stop(this);
     }
 
     private void askLogin(HttpAuthHandler auth, boolean failed) {
@@ -557,6 +607,35 @@ public class MainActivity extends Activity {
         else view.onPause();
     }
 
+    /** Is Android allowed to put this package to sleep (battery optimisation)? */
+    boolean batteryFree(String pkg) {
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || (pm != null && pm.isIgnoringBatteryOptimizations(pkg));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Asks Android not to unload this app in the background. */
+    void askAppBattery() {
+        try {
+            Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Exception e) {
+            openSettingsOf(getPackageName());
+        }
+    }
+
+    /** Termux's own settings page: Battery → «Без ограничений». */
+    void openSettingsOf(String pkg) {
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg)));
+        } catch (Exception e) {
+            toast("Не удалось открыть настройки");
+        }
+    }
+
     boolean homeShown() {
         return HOME.equals(current) && visible;
     }
@@ -575,6 +654,7 @@ public class MainActivity extends Activity {
 
     private void onServerState(boolean up, boolean mayAutoStart) {
         if (up != stUp) KorrektorWidget.refresh(this);
+        handler.post(this::updateKeepAlive);
         if (up && starting) {
             long sent = prefs.number("startSentAt");
             appLog("SillyTavern отвечает" + (sent > 0 ? " через " + (System.currentTimeMillis() - sent) / 1000 + " с после запуска" : ""));
@@ -694,6 +774,7 @@ public class MainActivity extends Activity {
             tavern.loadUrl("about:blank");
             korrektor.loadUrl("about:blank");
             korrektorLoaded = false;
+            KeepAliveService.stop(this);
             showTab(HOME);
             return;
         }
@@ -1393,6 +1474,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         if (running == this) running = null;
+        if (isFinishing()) KeepAliveService.stop(this);
         handler.removeCallbacksAndMessages(null);
         KorrektorWidget.refresh(this);
         for (WebView view : new WebView[]{tavern, korrektor, home, sites == null ? null : sites.webView()}) {
