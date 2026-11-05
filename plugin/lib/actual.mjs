@@ -49,6 +49,7 @@ export function cleanReport(body) {
         preset: truncate(String(body?.preset || ''), 120),
         tokenizer: truncate(String(body?.tokenizer || ''), 80),
         total: num(body?.total),
+        reply: num(body?.replyTokens),
         maxContext: num(body?.maxContext),
         parts,
         extensions: (Array.isArray(body?.extensions) ? body.extensions : []).slice(0, 40).map(x => ({

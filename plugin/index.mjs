@@ -23,6 +23,13 @@ import {
     rejectProposal, revertProposal, fingerprint, OPEN_STATUSES,
 } from './lib/proposals.mjs';
 import { httpError, isInside, nowIso } from './lib/util.mjs';
+import { logUsage, usageSummary, refreshOpenRouterPrices, getPrices, setPrice, lastPromptOf } from './lib/usage.mjs';
+import { cardHealth } from './lib/health.mjs';
+import { makeRecap } from './lib/recap.mjs';
+import { noteRejection, setMuted } from './lib/mute.mjs';
+import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
+import { loadCatalog, installItem } from './lib/catalog.mjs';
+import { markTouched } from './lib/touched.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(HERE, 'app');
@@ -85,6 +92,8 @@ async function llmFor(user) {
         auth: user.auth,
         settings: await user.store.getSettings(),
         stSettings: await readStSettings(user.ctx),
+        // Korrektor's own model calls go to the spending screen.
+        onUsage: (u) => logUsage(user.store, { kind: 'korrektor', model: u.model, input: u.input, output: u.output, task: u.task }),
     });
 }
 
@@ -213,6 +222,7 @@ export async function init(router) {
             open: proposals.filter(p => OPEN_STATUSES.includes(p.status)).length,
             lastScan: state.lastScan ?? null,
             scanning: publicJob(runningJob(user.ctx.handle, 'scan')),
+            connectionCheck: user.connectionCheck ?? null,
             termux: termuxAvailable(),
             time: nowIso(),
         };
@@ -237,7 +247,17 @@ export async function init(router) {
         return item;
     }));
     router.post('/proposals/:id/apply', route(async (req, user) => applyProposal(user.ctx, user.store, req.params.id, req.body?.overrides)));
-    router.post('/proposals/:id/reject', route(async (req, user) => rejectProposal(user.store, req.params.id)));
+    router.post('/proposals/:id/reject', route(async (req, user) => {
+        const proposal = await rejectProposal(user.store, req.params.id);
+        const learned = await noteRejection(user.store, proposal?.kind);
+        return { ...proposal, suggestMute: learned.suggestMute, rejectedOfKind: learned.count };
+    }));
+    // Stop (or start again) showing one kind of findings.
+    router.post('/mute', route(async (req, user) => {
+        const kind = String(req.body?.kind || '');
+        if (!kind) throw httpError(400, 'Нужен kind');
+        return { muted: await setMuted(user.store, kind, req.body?.muted !== false) };
+    }));
     router.post('/proposals/:id/revert', route(async (req, user) => revertProposal(user.ctx, user.store, req.params.id, { force: Boolean(req.body?.force) })));
     router.post('/proposals/:id/prepare', route(async (req, user) => publicJob(prepareJob(user, req.params.id))));
     router.post('/proposals/:id/followup', route(async (req, user) => {
@@ -306,6 +326,144 @@ export async function init(router) {
     router.post('/actual', route(async (req, user) => {
         const report = cleanReport(req.body);
         await user.store.saveActual(report);
+        // Each reply is also a request paid for: the spending screen counts it.
+        await logUsage(user.store, { kind: 'roleplay', model: report.model, chatId: report.chatId, input: report.total, output: report.reply });
+        return { ok: true };
+    }));
+
+    // ---------- spending ----------
+    router.get('/usage', route(async (req, user) => {
+        const settings = await user.store.getSettings();
+        const prices = await getPrices(user.store);
+        const fetched = await refreshOpenRouterPrices();
+        const days = Math.min(60, Math.max(1, Number(req.query.days) || 7));
+        const summary = await usageSummary(user.store, { days, prices, fetched, expensiveTokens: settings.thresholds.expensivePrompt });
+        const chats = await listChats(user.ctx);
+        for (const row of [...summary.chats, ...summary.expensive]) {
+            const chat = chats.find(c => c.id === row.chatId);
+            row.title = chat ? (chat.isGroup ? chat.title : await characterName(user.ctx, chat.avatar)) : row.chatId.split('/').pop();
+        }
+        return { ...summary, prices };
+    }));
+    router.post('/usage/price', route(async (req, user) => ({ prices: await setPrice(user.store, req.body?.model, req.body?.input, req.body?.output) })));
+
+    // ---------- does the key work ----------
+    router.post('/connection-check', route(async (req, user) => {
+        const llm = await llmFor(user);
+        const result = { ...(await llm.checkConnection({ test: Boolean(req.body?.test) })), at: nowIso() };
+        user.connectionCheck = result;
+        return result;
+    }));
+
+    // ---------- card health ----------
+    router.get('/card-health', route(async (req, user) => {
+        const avatar = String(req.query.avatar || '');
+        const { card } = await readCard(user.ctx, avatar);
+        const conn = connectionInfo(await readStSettings(user.ctx));
+        return { name: cardName(card, avatar.replace(/\.png$/i, '')), ...cardHealth(card, avatar, { proposals: await user.store.getProposals(), contextSize: conn.contextSize }) };
+    }));
+    router.get('/cards-health', route(async (req, user) => {
+        const conn = connectionInfo(await readStSettings(user.ctx));
+        const proposals = await user.store.getProposals();
+        const items = [];
+        for (const entry of (await listCards(user.ctx)).slice(0, 300)) {
+            try {
+                const { card } = await readCard(user.ctx, entry.avatar);
+                const health = cardHealth(card, entry.avatar, { proposals, contextSize: conn.contextSize });
+                items.push({ avatar: entry.avatar, name: cardName(card, entry.avatar.replace(/\.png$/i, '')), score: health.score, verdict: health.verdict, tokens: health.tokens });
+            } catch {
+                // a broken PNG: skip
+            }
+        }
+        return { items: items.sort((a, b) => a.score - b.score) };
+    }));
+
+    // ---------- session recap ----------
+    router.post('/recap', route(async (req, user) => {
+        const chatId = String(req.body?.chatId || '');
+        if (!chatId) throw httpError(400, 'Нужен chatId');
+        const job = startJob(user.ctx.handle, 'recap', async () => makeRecap(user.ctx, user.store, { chatId, llm: await llmFor(user) }), { chatId });
+        return publicJob(job);
+    }));
+
+    // ---------- full backup of SillyTavern data ----------
+    const uploads = path.join('korrektor', 'archives');
+    router.get('/archive/info', route(async (req, user) => summarize(await collectFiles(user.ctx.dirs.root))));
+    router.get('/archive', route(async (req, user, res) => {
+        const files = await collectFiles(user.ctx.dirs.root);
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="sillytavern-${encodeURIComponent(user.ctx.handle)}-${stamp}.zip"`);
+        res.setHeader('Cache-Control', 'no-store');
+        await writeZip(res, files);
+        res.end();
+    }));
+    router.post('/archive/upload', route(async (req, user) => {
+        const id = `upload-${Date.now()}`;
+        const file = path.join(user.ctx.dirs.root, uploads, `${id}.zip`);
+        await saveUpload(req, file);
+        try {
+            return { upload: id, ...(await describeArchive(user.ctx.dirs.root, file)) };
+        } catch (error) {
+            await fs.promises.rm(file, { force: true });
+            throw error;
+        }
+    }));
+    router.post('/archive/restore', route(async (req, user) => {
+        const id = String(req.body?.upload || '');
+        if (!/^upload-\d+$/.test(id)) throw httpError(400, 'Неверный файл');
+        const dir = path.join(user.ctx.dirs.root, uploads);
+        const file = path.join(dir, `${id}.zip`);
+        if (!fs.existsSync(file)) throw httpError(404, 'Загруженный файл не найден, загрузите его ещё раз');
+        // Always a copy of the current state first: the restore can be undone with it.
+        const safety = `before-restore-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.zip`;
+        await writeZipFile(path.join(dir, safety), await collectFiles(user.ctx.dirs.root));
+        const result = await restoreArchive(user.ctx.dirs.root, file);
+        await fs.promises.rm(file, { force: true });
+        // Keep the three latest safety copies.
+        const old = (await fs.promises.readdir(dir)).filter(n => n.startsWith('before-restore-')).sort().reverse().slice(3);
+        for (const name of old) await fs.promises.rm(path.join(dir, name), { force: true });
+        markTouched(user.ctx.handle, 'settings', 'restore');
+        return { ...result, safety };
+    }));
+    router.get('/archive/safety', route(async (req, user) => {
+        const dir = path.join(user.ctx.dirs.root, uploads);
+        let names = [];
+        try {
+            names = (await fs.promises.readdir(dir)).filter(n => n.startsWith('before-restore-')).sort().reverse();
+        } catch {
+            names = [];
+        }
+        const items = [];
+        for (const name of names) items.push({ name, bytes: (await fs.promises.stat(path.join(dir, name))).size });
+        return { items };
+    }));
+    router.get('/archive/safety/:name', route(async (req, user, res) => {
+        const name = String(req.params.name);
+        if (!/^before-restore-[\d-]+\.zip$/.test(name)) throw httpError(400, 'Неверное имя');
+        const file = path.join(user.ctx.dirs.root, uploads, name);
+        if (!fs.existsSync(file)) throw httpError(404, 'Копия не найдена');
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+        await new Promise((resolve, reject) => fs.createReadStream(file).on('error', reject).on('end', resolve).pipe(res));
+    }));
+
+    // ---------- catalog ----------
+    router.get('/catalog', route(async (req, user) => {
+        const catalog = await loadCatalog({ force: Boolean(req.query.force) });
+        return { items: catalog.items, error: catalog.error };
+    }));
+    router.post('/catalog/install', route(async (req, user) => {
+        const catalog = await loadCatalog();
+        const item = catalog.items.find(i => i.id === String(req.body?.id || ''));
+        if (!item) throw httpError(404, 'Такой записи в каталоге нет');
+        return installItem(user.ctx, item);
+    }));
+
+    // After the app imported something through SillyTavern itself: let the open tab refresh.
+    router.post('/refresh', route(async (req, user) => {
+        const type = ['card', 'world', 'settings'].includes(req.body?.type) ? req.body.type : 'card';
+        markTouched(user.ctx.handle, type, String(req.body?.ref || ''));
         return { ok: true };
     }));
 
@@ -346,6 +504,8 @@ export async function init(router) {
                 return report ? { ...report, items: reportItems(report) } : null;
             })(),
             summary: latestMemory(cc.chat),
+            recap: (await user.store.getState()).chats?.[cc.chatId]?.recap ?? null,
+            lastPrompt: await lastPromptOf(user.store, cc.chatId),
         };
         if (req.query.messages) {
             const from = Math.max(0, Number(req.query.from) || 0);

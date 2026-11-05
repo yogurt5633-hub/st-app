@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { chatModelFor, connectionBody, connectionInfo, textgenInfo } from './st-settings.mjs';
 import { httpError } from './util.mjs';
+import { estimateTokens } from './tokens.mjs';
 
 // Model calls go through SillyTavern's own endpoint
 // /api/backends/chat-completions/generate on the loopback address.
@@ -26,6 +27,19 @@ function isOpenAiReasoning(source, model) {
     return source === 'openrouter' ? /^openai\/(o1|o3|o4)/.test(model) : /^(o1|o3|o4)/.test(model);
 }
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** Token counts from a provider reply: OpenAI style, Claude style or Gemini style. */
+export function usageOf(data) {
+    const u = data?.usage;
+    if (u && (u.prompt_tokens || u.completion_tokens)) return { input: Number(u.prompt_tokens) || 0, output: Number(u.completion_tokens) || 0 };
+    if (u && (u.input_tokens || u.output_tokens)) {
+        const input = (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0);
+        return { input, output: Number(u.output_tokens) || 0 };
+    }
+    const g = data?.usageMetadata;
+    if (g && (g.promptTokenCount || g.candidatesTokenCount)) return { input: Number(g.promptTokenCount) || 0, output: (Number(g.candidatesTokenCount) || 0) + (Number(g.thoughtsTokenCount) || 0) };
+    return null;
+}
 
 /** Captures what is needed to call SillyTavern back as the same user. Kept in memory only. */
 export function captureAuth(request) {
@@ -173,11 +187,13 @@ export class LlmClient {
      * @param {object} options.settings plugin settings
      * @param {object} options.stSettings SillyTavern settings.json
      */
-    constructor({ auth, settings, stSettings }) {
+    constructor({ auth, settings, stSettings, onUsage = null }) {
         this.auth = auth;
         this.settings = settings;
         this.stSettings = stSettings;
         this.calls = 0;
+        // Called with { model, input, output, task } after each answer, for the spending screen.
+        this.onUsage = onUsage;
     }
 
     get available() {
@@ -308,8 +324,17 @@ export class LlmClient {
                         : 'подробности в консоли SillyTavern';
             throw httpError(502, `Модель ${label} вернула ошибку: ${message}`);
         }
-        const text = stripThinking(extractText(data));
+        const raw = extractText(data);
+        const text = stripThinking(raw);
         if (!text) throw httpError(502, `Модель ${label} вернула пустой ответ`);
+        if (this.onUsage) {
+            const used = usageOf(data) ?? { input: estimateTokens(JSON.stringify(body.messages ?? body.prompt ?? '')), output: estimateTokens(raw) };
+            try {
+                await this.onUsage({ model: label, task, ...used });
+            } catch {
+                // the spending log must never break a model call
+            }
+        }
         return { text, model: label, source: r.source, tier: r.tier };
     }
 
@@ -319,6 +344,42 @@ export class LlmClient {
     }
 
     /** Model ids the provider offers, asked through SillyTavern with its key. */
+    /**
+     * Does SillyTavern's connection work? SillyTavern asks the provider for its
+     * model list with its own key (the same check as its "Connect" button).
+     * With test=true also sends a tiny request, for providers without a model list.
+     */
+    async checkConnection({ test = false } = {}) {
+        const conn = connectionInfo(this.stSettings);
+        const out = { api: conn.api, source: conn.source || conn.textType, model: conn.model || conn.textModel || '', ok: null, models: 0, message: '' };
+        if (!this.available) return { ...out, ok: false, message: 'Нет связи с сессией SillyTavern: откройте приложение заново' };
+        if (conn.api === 'chat' && conn.source && !test) {
+            const res = await postToSillyTavern(this.auth, STATUS_PATH, { chat_completion_source: conn.source, ...connectionBody(this.stSettings, conn.source) });
+            let data = null;
+            try {
+                data = JSON.parse(res.text);
+            } catch {
+                data = res.text;
+            }
+            const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.data?.data) ? data.data.data : Array.isArray(data) ? data : [];
+            const reason = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.message === 'string' ? data.message : '';
+            if (list.length && !data?.error) return { ...out, ok: true, models: list.length, message: `Ключ работает, доступно моделей: ${list.length}` };
+            // A clear refusal from the provider.
+            if (reason || res.status === 401 || res.status === 403 || res.status >= 500) {
+                return { ...out, ok: false, message: reason ? `Провайдер ответил: ${reason}` : 'Провайдер не принял ключ или не отвечает' };
+            }
+            // SillyTavern cannot list models for some providers (Claude among them) and answers
+            // the same way as for a missing key: settle it with a tiny request instead.
+        }
+        if (conn.api === 'other') return { ...out, ok: null, message: 'Этот тип API Корректор проверить не может' };
+        try {
+            await this.complete({ task: 'facts', system: 'Ответь одним словом.', user: 'Скажи «да».', maxTokens: 64 });
+            return { ...out, ok: true, tested: true, message: 'Пробный запрос прошёл: ключ и модель работают' };
+        } catch (error) {
+            return { ...out, ok: false, message: error.message };
+        }
+    }
+
     async listModels(source) {
         if (source === 'claude') return CLAUDE_MODELS;
         if (!this.available || !source) return [];

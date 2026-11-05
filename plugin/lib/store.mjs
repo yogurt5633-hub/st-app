@@ -32,6 +32,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
         condenseEntry: 'heavy',
         condensePrompt: 'heavy',
         ask: 'heavy',
+        recap: 'scan',
     },
     scan: {
         auto: true,
@@ -61,7 +62,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
         repeatMinMessages: 3,
         presetPromptTokens: 600,
         extensionTokens: 800,
+        // A chat whose latest request is this big shows up as "expensive" on the spending screen.
+        expensivePrompt: 30000,
     },
+    // Kinds of findings the user asked not to show any more.
+    muted: [],
     summary: {
         // 'memory' = Summarize extension, 'note' = Author's Note, 'lorebook' = chat lorebook entry
         target: 'memory',

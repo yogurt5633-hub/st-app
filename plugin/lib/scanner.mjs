@@ -138,7 +138,9 @@ export async function runScan(ctx, store, { chatIds = null, llm = null, backgrou
         const key = p.target?.type === 'world' ? `world:${p.target.world}` : p.target?.type === 'card' ? `card:${p.target.avatar}` : null;
         if (key && usedBy.has(key)) p.chats = [...new Set([...(p.chats || []), ...usedBy.get(key)])];
     }
-    const added = await addProposals(store, found);
+    // Kinds the user asked not to show any more.
+    const muted = new Set(settings.muted || []);
+    const added = await addProposals(store, found.filter(p => !muted.has(p.kind)));
     const summary = {
         at: nowIso(),
         background,

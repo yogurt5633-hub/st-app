@@ -2,8 +2,9 @@
 // All chat text is inserted with textContent, never as HTML.
 
 import { diffWords } from './diff.js';
+import * as tools from './tools.js';
 
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.4.0';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -321,24 +322,40 @@ function currentRoute() {
     const hash = decodeURIComponent(location.hash.slice(1) || 'feed');
     if (hash.startsWith('p/')) return { name: 'proposal', id: hash.slice(2) };
     if (hash.startsWith('chat/')) return { name: 'chat', id: hash.slice(5) };
-    return { name: ['feed', 'chats', 'history', 'settings'].includes(hash) ? hash : 'feed' };
+    if (hash.startsWith('compress/')) return { name: 'compress', id: hash.slice(9) };
+    if (hash.startsWith('card/')) return { name: 'card', id: hash.slice(5) };
+    if (hash.startsWith('tools/')) return { name: 'tool', id: hash.slice(6) };
+    return { name: ['feed', 'chats', 'history', 'settings', 'tools'].includes(hash) ? hash : 'feed' };
 }
 
 async function renderRoute() {
     const route = currentRoute();
     const sheet = $('#sheet');
-    const tabName = route.name === 'proposal' ? 'feed' : route.name === 'chat' ? 'chats' : route.name;
+    const tabName = route.name === 'proposal' ? 'feed' : ['chat', 'compress'].includes(route.name) ? 'chats' : ['tool', 'card'].includes(route.name) ? 'tools' : route.name;
     for (const tab of document.querySelectorAll('.tab')) {
         if (tab.dataset.tab === tabName) tab.setAttribute('aria-current', 'page');
         else tab.removeAttribute('aria-current');
     }
     if (route.name === 'proposal') return renderProposalSheet(route.id);
     if (route.name === 'chat') return renderChatSheet(route.id);
+    if (route.name === 'compress') return tools.renderCompress(route.id);
     sheet.hidden = true;
     put(sheet, );
     document.body.style.overflow = '';
-    const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки' };
+    const toolTitles = { spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', muted: 'Скрытые замечания' };
+    const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || 'Ещё' };
     $('#page-title').textContent = titles[route.name];
+    if (route.name === 'tools') return tools.renderTools();
+    if (route.name === 'card') return tools.renderCardHealth(route.id);
+    if (route.name === 'tool') {
+        if (route.id === 'spend') return tools.renderSpend();
+        if (route.id === 'cards') return tools.renderCardsHealth();
+        if (route.id === 'backup') return tools.renderBackup();
+        if (route.id === 'import') return tools.renderImport(state.importUrl || '');
+        if (route.id === 'catalog') return tools.renderCatalog();
+        if (route.id === 'muted') return tools.renderMuted();
+        return tools.renderTools();
+    }
     if (route.name === 'feed') return renderFeed();
     if (route.name === 'chats') return renderChats();
     if (route.name === 'history') return renderHistory();
@@ -474,8 +491,10 @@ function renderFeed() {
     ].filter(Boolean);
     if (!visible.length) {
         const filtered = all.length && !items.length;
+        const scanning = state.job?.kind === 'scan';
         children.push(h('div', { class: 'empty' },
-            h('h2', { text: filtered ? 'В выбранных чатах замечаний нет' : items.length ? 'В этом разделе пусто' : 'Замечаний нет' }),
+            tools.mascot(scanning ? 'write' : 'sleep', 150),
+            h('h2', { text: scanning ? 'Проверяю чаты' : filtered ? 'В выбранных чатах замечаний нет' : items.length ? 'В этом разделе пусто' : 'Замечаний нет' }),
             h('p', { text: filtered ? 'Выберите другие чаты в списке выше' : items.length ? 'Загляните в другие разделы' : 'Корректор проверяет чаты сам. Можно запустить проверку вручную кнопкой вверху' }),
             !all.length ? h('p', {}, h('button', { class: 'btn secondary', type: 'button', style: 'margin-top:16px', onclick: () => startScan(), text: 'Проверить сейчас' })) : null));
     } else {
@@ -553,14 +572,16 @@ async function applyProposal(p) {
 }
 
 async function reject(p) {
+    let result = null;
     try {
-        await api(`/proposals/${p.id}/reject`, { method: 'POST' });
+        result = await api(`/proposals/${p.id}/reject`, { method: 'POST' });
     } catch (error) {
         toast(error.message, true);
     }
     await loadProposals();
     if (currentRoute().name === 'proposal') location.hash = '#feed';
     else renderRoute();
+    await tools.offerMute(result);
 }
 
 async function prepare(p) {
@@ -965,7 +986,11 @@ async function renderChatSheet(id) {
         h('div', { class: 'field-row', style: 'align-items:flex-start' },
             h('h1', { class: 'sheet-title', text: info.title }),
             starButton(chat, () => renderChatSheet(id))),
-        h('p', { class: 'small muted', style: 'margin:0', text: `${info.messages} сообщений, скрыто из контекста ${u.hiddenCount}${u.preset ? ` · пресет «${u.preset}»` : ''}` }),
+        h('p', { class: 'small muted', style: 'margin:0', text: `${info.messages} ${plural(info.messages, 'сообщение', 'сообщения', 'сообщений')}, скрыто из контекста ${u.hiddenCount}${u.preset ? ` · пресет «${u.preset}»` : ''}` }),
+        h('div', { class: 'card-actions' },
+            tools.compressButton(info),
+            info.id.startsWith('c/') ? h('a', { class: 'btn secondary small', href: `#card/${encodeURIComponent(`${info.id.split('/')[1]}.png`)}`, text: 'Здоровье карточки' }) : null),
+        tools.recapSection(info),
         renderAsk(info.id),
         actualSection,
         h('div', { class: 'section' },
@@ -1225,6 +1250,16 @@ async function renderSettings(reload = true) {
                     h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'API в SillyTavern' }), h('span', { class: 'mono secondary', style: 'text-align:right', text: stApiText })),
                     h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Модель в SillyTavern' }), h('span', { class: 'mono secondary', style: 'overflow-wrap:anywhere;text-align:right', text: stModel || '—' })),
                     h('span', { class: 'hint', text: 'Запросы идут через бэкенд SillyTavern с его ключами. Корректор ключи не видит и secrets.json не читает' })))),
+        tools.renderKeyCheck(),
+        tools.inApp() ? null : h('div', { class: 'section' },
+            h('h2', { class: 'section-title', text: 'Оформление' }),
+            h('div', { class: 'rows' },
+                h('div', { class: 'field' },
+                    h('span', { class: 'label', text: 'Тема' }),
+                    seg([['', 'Как в системе'], ['dark', 'Тёмная'], ['light', 'Светлая']], storageGet('korrektor.theme') || '', (v) => { window.korrektorTheme(v, storageGet('korrektor.accent')); renderSettings(false); })),
+                h('div', { class: 'field' },
+                    h('span', { class: 'label', text: 'Цвет акцента' }),
+                    seg(tools.ACCENTS, storageGet('korrektor.accent') || 'amber', (v) => { window.korrektorTheme(storageGet('korrektor.theme'), v); renderSettings(false); })))),
 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Модели' }),
@@ -1302,6 +1337,20 @@ function plural(n, one, few, many) {
 }
 
 async function boot() {
+    tools.setup({ h, put, $, api, toast, confirmDialog, fmt, when, plural, state, openSheet, renderCard, storageGet, storageSet, csrfToken, BASE, KIND });
+    tools.applyTheme(storageGet('korrektor.theme'), storageGet('korrektor.accent'));
+    // The Android app passes its look here, and links shared to the app.
+    window.korrektorTheme = (theme, accent) => {
+        storageSet('korrektor.theme', theme || '');
+        storageSet('korrektor.accent', accent || '');
+        tools.applyTheme(theme, accent);
+    };
+    window.korrektorImport = (url) => {
+        state.importUrl = String(url || '');
+        if (location.hash === '#tools/import') renderRoute();
+        else location.hash = '#tools/import';
+        setTimeout(() => { state.importUrl = ''; }, 1000);
+    };
     $('#scan-button').addEventListener('click', () => startScan());
     window.addEventListener('hashchange', () => renderRoute());
     document.addEventListener('visibilitychange', () => {
@@ -1320,6 +1369,7 @@ async function refresh(rerender = true) {
     const failed = results.find(r => r.status === 'rejected');
     if (failed && !state.status) {
         put($('#view'), h('div', { class: 'empty' },
+            tools.mascot('confused', 150),
             h('h2', { text: 'Нет связи с SillyTavern' }),
             h('p', { text: failed.reason?.message ?? '' })));
         return;

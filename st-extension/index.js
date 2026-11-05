@@ -118,6 +118,8 @@ async function report() {
     if (!chatId || !ctx.chat?.length) return;
     const mesId = ctx.chat.length - 1;
     const body = { chatId, mesId, at: new Date().toISOString(), parts: {}, extensions: [], worldInfo: [] };
+    // The reply's length: with the prompt size it makes the cost of this request.
+    body.replyTokens = await count(ctx, ctx.chat[mesId]?.mes);
 
     const module = await itemizedModule();
     if (module?.itemizedPrompts && module.findItemizedPromptSet && module.itemizedParams) {
