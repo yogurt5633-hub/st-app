@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.3';
+const APP_VERSION = '0.4.4';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -344,7 +344,7 @@ async function renderRoute() {
     sheet.hidden = true;
     put(sheet, );
     document.body.style.overflow = '';
-    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', muted: 'Скрытые замечания' };
+    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', muted: 'Скрытые замечания' };
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || 'Ещё' };
     $('#page-title').textContent = titles[route.name];
     if (route.name === 'tools') return tools.renderTools();
@@ -356,6 +356,8 @@ async function renderRoute() {
         if (route.id === 'backup') return tools.renderBackup();
         if (route.id === 'import') return tools.renderImport(state.importUrl || '');
         if (route.id === 'catalog') return tools.renderCatalog();
+        if (route.id === 'catalog-suggest') return tools.renderCatalogSuggest();
+        if (route.id === 'catalog-author') return tools.renderCatalogAuthor();
         if (route.id === 'muted') return tools.renderMuted();
         return tools.renderTools();
     }

@@ -358,21 +358,60 @@ export function renderImport(prefill = '') {
 
 // ---------- catalog ----------
 
+// ---------- catalog ----------
+
+const CATALOG_NAMES = { preset: 'Пресет', lorebook: 'Лорбук', card: 'Карточка' };
+const CATALOG_TYPES = [['preset', 'Пресет'], ['lorebook', 'Лорбук'], ['card', 'Карточка']];
+// Loaded once per visit: switching between presets, lorebooks and cards only filters it.
+let catalogData = null;
+let catalogAt = 0;
+
+async function loadCatalogData(force = false) {
+    if (!force && catalogData && Date.now() - catalogAt < 5 * 60000) return catalogData;
+    try {
+        catalogData = await ui.api(`/catalog${force ? '?force=1' : ''}`);
+    } catch (error) {
+        catalogData = { items: catalogData?.items || [], submit: catalogData?.submit || '', error: error.message };
+    }
+    catalogAt = Date.now();
+    return catalogData;
+}
+
+/** Segmented switch that changes in place, without redrawing the screen. */
+function pick(options, value, onchange) {
+    const { h } = ui;
+    const box = h('div', { class: 'seg', role: 'group' });
+    options.forEach(([v, label]) => box.append(h('button', {
+        type: 'button', 'aria-pressed': String(value === v), onclick: (e) => {
+            for (const b of box.children) b.setAttribute('aria-pressed', String(b === e.currentTarget));
+            onchange(v);
+        },
+    }, label)));
+    return box;
+}
+
+function catalogEntry(item, extra) {
+    const { h } = ui;
+    return h('article', { class: 'card catalog-item' },
+        item.type === 'card' ? h('img', { class: 'catalog-thumb', src: item.url, alt: '', loading: 'lazy', decoding: 'async', width: 64, height: 86 }) : null,
+        h('div', { class: 'catalog-body' },
+            h('div', { class: 'card-meta' }, h('span', { class: 'status-tag', text: CATALOG_NAMES[item.type] }), item.author ? h('span', { class: 'meta', text: item.author }) : null),
+            h('h2', { class: 'card-title', text: item.name }),
+            item.description ? h('p', { class: 'card-summary', text: item.description }) : null,
+            item.tags.length ? h('p', { class: 'small muted', style: 'margin:0', text: item.tags.join(' · ') }) : null,
+            h('div', { class: 'card-actions' }, extra)));
+}
+
 export async function renderCatalog() {
     const { h, put, $ } = ui;
     const view = $('#view');
-    const filter = ui.storageGet('korrektor.catalogFilter') || 'all';
-    put(view, back('#tools', 'Ещё'), h('p', { class: 'muted', text: 'Загружаю каталог' }));
-    let data;
-    try {
-        data = await ui.api('/catalog');
-    } catch (error) {
-        data = { items: [], error: error.message };
-    }
-    const names = { preset: 'Пресет', lorebook: 'Лорбук', card: 'Карточка' };
-    const items = data.items.filter(i => filter === 'all' || i.type === filter);
+    let filter = ui.storageGet('korrektor.catalogFilter') || 'all';
+    if (!catalogData) put(view, back('#tools', 'Ещё'), h('p', { class: 'muted', text: 'Загружаю каталог' }));
+    const data = await loadCatalogData();
+    if (location.hash !== '#tools/catalog') return;
+
     const install = async (item, button) => {
-        const ok = await ui.confirmDialog({ title: `Установить «${item.name}»?`, text: `${names[item.type]} от ${item.author || 'автора'} скачается в SillyTavern. Ваши файлы не перезаписываются: если имя занято, у нового будет номер`, ok: 'Установить' });
+        const ok = await ui.confirmDialog({ title: `Установить «${item.name}»?`, text: `${CATALOG_NAMES[item.type]} от ${item.author || 'автора'} скачается в SillyTavern. Ваши файлы не перезаписываются: если имя занято, у нового будет номер`, ok: 'Установить' });
         if (!ok) return;
         button.disabled = true;
         try {
@@ -384,24 +423,316 @@ export async function renderCatalog() {
             button.disabled = false;
         }
     };
-    put(view,
-        back('#tools', 'Ещё'),
-        h('div', { class: 'filters' }, [['all', 'Все'], ['preset', 'Пресеты'], ['lorebook', 'Лорбуки'], ['card', 'Карточки']].map(([v, text]) =>
-            h('button', { class: 'filter', type: 'button', 'aria-pressed': String(filter === v), onclick: () => { ui.storageSet('korrektor.catalogFilter', v); renderCatalog(); } }, text))),
-        data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
-        items.length ? h('div', { class: 'list' }, items.map(item => {
+    const list = h('div', { class: 'list catalog-list' });
+    const drawList = () => {
+        const items = data.items.filter(i => filter === 'all' || i.type === filter);
+        put(list, items.length ? items.map(item => {
             const button = h('button', { class: 'btn primary small', type: 'button', text: 'Установить' });
             button.addEventListener('click', () => install(item, button));
-            return h('article', { class: 'card' },
-                h('div', { class: 'card-meta' }, h('span', { class: 'status-tag', text: names[item.type] }), item.author ? h('span', { class: 'meta', text: item.author }) : null),
-                h('h2', { class: 'card-title', text: item.name }),
-                item.description ? h('p', { class: 'card-summary', text: item.description }) : null,
-                item.tags.length ? h('p', { class: 'small muted', style: 'margin:0', text: item.tags.join(' · ') }) : null,
-                h('div', { class: 'card-actions' }, button, item.page ? h('a', { class: 'btn secondary small', href: item.page, target: '_blank', rel: 'noopener', text: 'Страница автора' }) : null));
-        }))
-            : h('div', { class: 'empty' }, mascot('books', 150),
-                h('h2', { text: data.items.length ? 'В этом разделе пусто' : 'Каталог пока пуст' }),
-                h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять. Предложить свои можно в Telegram-канале Корректора' })));
+            return catalogEntry(item, [button, item.page ? h('a', { class: 'btn secondary small', href: item.page, target: '_blank', rel: 'noopener', text: 'Страница автора' }) : null]);
+        }) : h('div', { class: 'empty' }, mascot('books', 150),
+            h('h2', { text: data.items.length ? 'В этом разделе пусто' : 'Каталог пока пуст' }),
+            h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять' })));
+    };
+    const filters = h('div', { class: 'filters' }, [['all', 'Все'], ['preset', 'Пресеты'], ['lorebook', 'Лорбуки'], ['card', 'Карточки']].map(([v, text]) =>
+        h('button', {
+            class: 'filter', type: 'button', 'aria-pressed': String(filter === v), onclick: (e) => {
+                if (filter === v) return;
+                filter = v;
+                ui.storageSet('korrektor.catalogFilter', v);
+                for (const b of filters.children) b.setAttribute('aria-pressed', String(b === e.currentTarget));
+                drawList();
+            },
+        }, text)));
+    drawList();
+    put(view,
+        back('#tools', 'Ещё'),
+        filters,
+        data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
+        list,
+        h('div', { class: 'section' },
+            h('div', { class: 'card-actions', style: 'margin-top:0' },
+                h('a', { class: 'btn secondary', href: '#tools/catalog-suggest', text: 'Предложить своё' }),
+                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); renderCatalog(); } })),
+            h('p', { class: 'small muted', style: 'margin:12px 0 0' }, 'Каталог ведёт автор Корректора. ', h('a', { href: '#tools/catalog-author', text: 'Для автора каталога' }))));
+}
+
+function copyText(text) {
+    try {
+        if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
+    } catch {
+        // fall back below
+    }
+    return Promise.resolve(fallbackCopy(text));
+}
+
+function fallbackCopy(text) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try {
+        ok = document.execCommand('copy');
+    } catch {
+        ok = false;
+    }
+    area.remove();
+    return ok;
+}
+
+/** A picker of this tavern's presets, lorebooks or cards. Calls onchange(file, name). */
+function localPicker(type, onchange) {
+    const { h } = ui;
+    const select = h('select', { class: 'select', style: 'width:100%', 'aria-label': 'Файл из таверны' }, h('option', { value: '', text: 'Загружаю список…' }));
+    select.disabled = true;
+    ui.api(`/catalog/local?type=${type}`).then(({ items }) => {
+        select.replaceChildren(h('option', { value: '', text: items.length ? 'Выберите…' : 'В таверне таких файлов нет' }),
+            ...items.map(i => h('option', { value: i.file, text: i.name })));
+        select.disabled = !items.length;
+    }).catch((error) => {
+        select.replaceChildren(h('option', { value: '', text: error.message }));
+    });
+    select.addEventListener('change', () => onchange(select.value, select.selectedOptions[0]?.textContent || ''));
+    return select;
+}
+
+// People send their presets and lorebooks to the catalog's author.
+export async function renderCatalogSuggest() {
+    const { h, put, $ } = ui;
+    const view = $('#view');
+    const data = await loadCatalogData();
+    if (location.hash !== '#tools/catalog-suggest') return;
+    let type = 'preset';
+    let file = '';
+    const save = h('a', { class: 'btn primary', download: '', text: 'Сохранить файл' });
+    save.hidden = true;
+    const note = h('p', { class: 'small muted', style: 'margin:8px 0 0' });
+    const pickerBox = h('div', { style: 'margin-top:12px' });
+    const template = h('textarea', { class: 'input', rows: 7, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
+    const fillTemplate = (name = '') => {
+        template.value = `Хочу предложить в каталог Корректора\nТип: ${CATALOG_NAMES[type].toLowerCase()}\nНазвание: ${name}\nАвтор: \nЧто это (пара предложений): \nАвтор разрешил распространять: да`;
+    };
+    const drawPicker = () => {
+        file = '';
+        save.hidden = true;
+        note.textContent = type === 'preset' ? 'Пароли, адреса прокси и всё похожее на ключи из пресета при сохранении убираются' : '';
+        put(pickerBox, localPicker(type, (value, name) => {
+            file = value;
+            save.hidden = !value;
+            if (value) save.href = `${ui.BASE}/catalog/export?type=${type}&file=${encodeURIComponent(value)}`;
+            fillTemplate(value ? name : '');
+        }));
+        fillTemplate();
+    };
+    save.addEventListener('click', () => ui.toast(inApp() ? 'Сохраняю в Загрузки/Korrektor' : 'Скачивание началось'));
+    const link = data.submit;
+    // A Telegram chat with a person or a bot can open with the text already typed.
+    const telegram = () => {
+        let url = link;
+        if (/^https:\/\/t\.me\/[A-Za-z0-9_]{4,}\/?$/.test(link)) url = `${link.replace(/\/$/, '')}?text=${encodeURIComponent(template.value)}`;
+        window.open(url, '_blank', 'noopener');
+    };
+    drawPicker();
+    put(view,
+        back('#tools/catalog', 'Каталог'),
+        h('div', { class: 'section' },
+            mascotRow('books', 'Поделиться своим', 'Пресеты, лорбуки и карточки в каталог добавляет его автор. Пришлите ему файл с названием, автором и парой слов о том, что это. Чужое — только с разрешения автора')),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: '1. Файл из вашей таверны' }),
+            pick(CATALOG_TYPES, type, (v) => { type = v; drawPicker(); }),
+            pickerBox,
+            h('div', { class: 'card-actions' }, save),
+            note),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: '2. Сообщение автору каталога' }),
+            template,
+            h('div', { class: 'card-actions' },
+                link ? h('button', { class: 'btn primary', type: 'button', text: 'Открыть Telegram', onclick: telegram }) : null,
+                h('button', { class: 'btn secondary', type: 'button', text: 'Скопировать текст', onclick: async () => ui.toast(await copyText(template.value) ? 'Текст скопирован' : 'Не удалось скопировать: выделите текст вручную', false) })),
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: link ? 'В Telegram прикрепите сохранённый файл (скрепка → Файл → Загрузки/Korrektor) и отправьте вместе с текстом' : 'Автор каталога пока не указал, куда присылать: напишите в Telegram-канал Корректора и прикрепите файл' })));
+}
+
+// For the catalog's author: publishing to GitHub.
+export async function renderCatalogAuthor() {
+    const { h, put, $ } = ui;
+    const view = $('#view');
+    let admin;
+    try {
+        admin = await ui.api('/catalog/admin');
+    } catch (error) {
+        put(view, back('#tools/catalog', 'Каталог'), h('div', { class: 'empty' }, h('h2', { text: 'Не удалось открыть' }), h('p', { text: error.message })));
+        return;
+    }
+    if (location.hash !== '#tools/catalog-author') return;
+
+    if (!admin.hasToken) {
+        const token = h('input', { class: 'input mono', style: 'width:100%', type: 'password', placeholder: 'github_pat_…', 'aria-label': 'Токен GitHub', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+        const saveToken = async (e) => {
+            e.currentTarget.disabled = true;
+            try {
+                const r = await ui.api('/catalog/admin', { method: 'POST', body: { token: token.value.trim() } });
+                ui.toast(r.login ? `Токен подходит: ${r.login}` : 'Токен подходит');
+                renderCatalogAuthor();
+            } catch (error) {
+                ui.toast(error.message, true);
+                e.currentTarget.disabled = false;
+            }
+        };
+        put(view,
+            back('#tools/catalog', 'Каталог'),
+            h('div', { class: 'section' },
+                mascotRow('key', 'Каталог ведёте вы', 'Отсюда пресеты, лорбуки и карточки попадают в каталог для всех: Корректор кладёт файл в репозиторий на GitHub и дописывает запись. Нужен токен GitHub, один раз')),
+            h('div', { class: 'section' },
+                h('h3', { class: 'section-title', text: 'Как получить токен' }),
+                h('ol', { class: 'steps' },
+                    h('li', { text: `Войдите на github.com в аккаунт, которому принадлежит репозиторий ${admin.repo}` }),
+                    h('li', { text: 'Аватар → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token' }),
+                    h('li', { text: `Repository access: Only select repositories → ${admin.repo.split('/')[1]}. Permissions → Contents: Read and write. Срок — какой удобно` }),
+                    h('li', { text: 'Нажмите Generate token, скопируйте токен (начинается с github_pat_) и вставьте сюда' })),
+                h('div', { class: 'field-row', style: 'margin-top:12px' }, token),
+                h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', type: 'button', text: 'Сохранить токен', onclick: saveToken })),
+                h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Токен хранится только в этой таверне: в резервные копии и синхронизацию не попадает, обратно в приложении не показывается. Пользователям этот раздел не нужен: у них нет токена' })));
+        return;
+    }
+
+    const data = await loadCatalogData(true);
+    if (location.hash !== '#tools/catalog-author') return;
+    let type = 'preset';
+    let source = 'local';
+    let file = '';
+    let upload = '';
+    const field = (label, input, hint) => h('label', { class: 'author-field' }, h('span', { class: 'small secondary', text: label }), input, hint ? h('span', { class: 'small muted', text: hint }) : null);
+    const name = h('input', { class: 'input', style: 'width:100%', type: 'text', maxlength: 80 });
+    const author = h('input', { class: 'input', style: 'width:100%', type: 'text', maxlength: 60 });
+    const description = h('textarea', { class: 'input', rows: 3, maxlength: 400, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
+    const tags = h('input', { class: 'input', style: 'width:100%', type: 'text', placeholder: 'фэнтези, ромком' });
+    const page = h('input', { class: 'input', style: 'width:100%', type: 'url', placeholder: 'https://… (необязательно)', autocapitalize: 'off' });
+    const allowed = h('input', { type: 'checkbox' });
+    const status = h('p', { class: 'small secondary', style: 'margin:8px 0 0' });
+    const sourceBox = h('div', { style: 'margin-top:12px' });
+    const fileInput = h('input', { type: 'file', hidden: true });
+    let autoName = '';
+    const setName = (value) => {
+        if (!name.value || name.value === autoName) name.value = value;
+        autoName = value;
+    };
+    fileInput.addEventListener('change', async () => {
+        const f = fileInput.files[0];
+        if (!f) return;
+        status.textContent = 'Проверяю файл…';
+        upload = '';
+        try {
+            const token = await ui.csrfToken();
+            const res = await fetch(`${ui.BASE}/catalog/upload?type=${type}&name=${encodeURIComponent(f.name)}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': token, 'X-Korrektor': '1' }, body: f });
+            const r = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(r.error || `Ошибка ${res.status}`);
+            upload = r.upload;
+            setName(r.title);
+            status.textContent = `Файл подходит: ${f.name}${r.removed?.length ? `. Из пресета убрано: ${r.removed.join(', ')}` : ''}`;
+        } catch (error) {
+            status.textContent = '';
+            ui.toast(error.message, true);
+        } finally {
+            fileInput.value = '';
+        }
+    });
+    const drawSource = () => {
+        file = '';
+        upload = '';
+        fileInput.accept = type === 'card' ? '.png,image/png' : '.json,application/json';
+        if (source === 'local') {
+            put(sourceBox, localPicker(type, (value, label) => { file = value; if (value) setName(label); }));
+        } else {
+            put(sourceBox, h('button', { class: 'btn secondary', type: 'button', text: 'Выбрать файл', onclick: () => fileInput.click() }), fileInput);
+        }
+        status.textContent = '';
+    };
+    const publish = async (e) => {
+        const button = e.currentTarget;
+        if (source === 'local' ? !file : !upload) return ui.toast('Сначала выберите файл', true);
+        button.disabled = true;
+        status.textContent = 'Публикую на GitHub…';
+        try {
+            const r = await ui.api('/catalog/publish', {
+                method: 'POST', timeout: 120000,
+                body: { type, file: source === 'local' ? file : undefined, upload: source === 'upload' ? upload : undefined, meta: { name: name.value, author: author.value, description: description.value, tags: tags.value, page: page.value, allowed: allowed.checked } },
+            });
+            ui.toast(`В каталоге: «${r.item.name}». У всех появится в течение нескольких минут`);
+            catalogData = null;
+            renderCatalogAuthor();
+        } catch (error) {
+            status.textContent = '';
+            ui.toast(error.message, true);
+            button.disabled = false;
+        }
+    };
+    const submit = h('input', { class: 'input', style: 'width:100%', type: 'url', value: data.submit || '', placeholder: 'https://t.me/ваш_ник', autocapitalize: 'off' });
+    const saveSubmit = async () => {
+        try {
+            await ui.api('/catalog/submit-link', { method: 'POST', body: { link: submit.value.trim() } });
+            catalogData = null;
+            ui.toast(submit.value.trim() ? 'Ссылка сохранена: кнопка «Предложить своё» ведёт туда' : 'Ссылка убрана');
+        } catch (error) {
+            ui.toast(error.message, true);
+        }
+    };
+    const remove = async (item, button) => {
+        const ok = await ui.confirmDialog({ title: `Убрать «${item.name}»?`, text: 'Запись исчезнет из каталога у всех. У тех, кто уже установил, файл останется', ok: 'Убрать', danger: true });
+        if (!ok) return;
+        button.disabled = true;
+        try {
+            await ui.api('/catalog/remove', { method: 'POST', body: { id: item.id }, timeout: 120000 });
+            ui.toast('Убрано из каталога');
+            catalogData = null;
+            renderCatalogAuthor();
+        } catch (error) {
+            ui.toast(error.message, true);
+            button.disabled = false;
+        }
+    };
+    const forget = async () => {
+        const ok = await ui.confirmDialog({ title: 'Удалить токен?', text: 'Публиковать отсюда будет нельзя, пока не добавите токен снова. Сам каталог не меняется', ok: 'Удалить', danger: true });
+        if (!ok) return;
+        await ui.api('/catalog/admin', { method: 'POST', body: { token: '' } });
+        renderCatalogAuthor();
+    };
+    drawSource();
+    put(view,
+        back('#tools/catalog', 'Каталог'),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: 'Добавить в каталог' }),
+            pick(CATALOG_TYPES, type, (v) => { type = v; drawSource(); }),
+            h('div', { style: 'margin-top:8px' }, pick([['local', 'Из таверны'], ['upload', 'Файл с телефона']], source, (v) => { source = v; drawSource(); })),
+            sourceBox,
+            h('div', { class: 'author-fields' },
+                field('Название', name),
+                field('Автор', author, 'Указывается в каталоге всегда'),
+                field('Что это', description, 'Пара предложений: для чего и чем хорош'),
+                field('Теги', tags, 'Через запятую'),
+                field('Страница автора', page)),
+            h('label', { class: 'check-row', style: 'margin-top:12px' }, allowed,
+                h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: 'Автор разрешил распространять' }), h('span', { class: 'row-sub', text: 'Без этого опубликовать нельзя' }))),
+            h('div', { class: 'card-actions' }, h('button', { class: 'btn primary', type: 'button', text: 'Опубликовать', onclick: publish })),
+            status,
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Из пресетов при публикации убираются пароли, адреса прокси и всё похожее на ключи' })),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: 'Куда присылать предложения' }),
+            h('div', { class: 'field-row' }, submit),
+            h('div', { class: 'card-actions' }, h('button', { class: 'btn secondary', type: 'button', text: 'Сохранить ссылку', onclick: saveSubmit })),
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Ссылка на ваш Telegram (https://t.me/ник) или чат канала. По ней пользователи пришлют файлы с кнопки «Предложить своё»' })),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: `В каталоге сейчас: ${data.items.length}` }),
+            data.items.length ? h('div', { class: 'list catalog-list' }, data.items.map(item => {
+                const button = h('button', { class: 'btn quiet small', type: 'button', text: 'Убрать' });
+                button.addEventListener('click', () => remove(item, button));
+                return catalogEntry(item, [button]);
+            })) : h('p', { class: 'small muted', text: 'Пока пусто' })),
+        h('div', { class: 'section' },
+            h('p', { class: 'small muted', style: 'margin:0', text: `Публикуется в ${admin.repo}${admin.login ? ` от имени ${admin.login}` : ''}` }),
+            h('div', { class: 'card-actions' }, h('button', { class: 'btn quiet small', type: 'button', text: 'Удалить токен', onclick: forget }))));
 }
 
 // ---------- sync with the other device ----------

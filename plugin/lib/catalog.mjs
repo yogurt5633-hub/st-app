@@ -13,7 +13,18 @@ export const CATALOG_URL = 'https://raw.githubusercontent.com/yogurt5633-hub/st-
 const TYPES = new Set(['lorebook', 'preset', 'card']);
 const MAX_BYTES = 20 * 1024 * 1024;
 const CACHE_MS = 30 * 60 * 1000;
-let cache = { at: 0, items: [], error: '' };
+let cache = { at: 0, items: [], error: '', submit: '' };
+
+/** An https link, or '' for anything else. */
+export function cleanLink(value) {
+    const text = String(value || '').trim();
+    return /^https:\/\/[^\s"'<>]+$/i.test(text) ? text.slice(0, 300) : '';
+}
+
+/** After the author published a change: show it at once, without waiting for GitHub's cache. */
+export function setCatalogCache(json) {
+    cache = { at: Date.now(), items: cleanItems(json), error: '', submit: cleanLink(json?.submit) };
+}
 
 export function cleanItems(data) {
     const list = Array.isArray(data?.items) ? data.items : [];
@@ -26,7 +37,8 @@ export function cleanItems(data) {
             description: String(item.description || '').slice(0, 400),
             tags: Array.isArray(item.tags) ? item.tags.map(String).slice(0, 8) : [],
             url: item.url,
-            page: /^https:\/\//i.test(String(item.page || '')) ? item.page : '',
+            page: cleanLink(item.page),
+            added: /^\d{4}-\d{2}-\d{2}$/.test(String(item.added || '')) ? item.added : '',
         }));
 }
 
@@ -35,9 +47,9 @@ export async function loadCatalog({ force = false, fetchImpl = globalThis.fetch 
     try {
         const res = await fetchImpl(CATALOG_URL, { signal: AbortSignal.timeout(15000), cache: 'no-store' });
         if (!res.ok) throw new Error(`GitHub ответил ${res.status}`);
-        cache = { at: Date.now(), items: cleanItems(await res.json()), error: '' };
+        setCatalogCache(await res.json());
     } catch (error) {
-        cache = { at: Date.now() - CACHE_MS + 60000, items: cache.items, error: `Каталог не загрузился: ${error.message}` };
+        cache = { ...cache, at: Date.now() - CACHE_MS + 60000, error: `Каталог не загрузился: ${error.message}` };
     }
     return cache;
 }

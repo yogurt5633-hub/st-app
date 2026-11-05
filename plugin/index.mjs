@@ -30,6 +30,7 @@ import { translateText } from './lib/translate.mjs';
 import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
 import { loadCatalog, installItem } from './lib/catalog.mjs';
+import { listLocal, readLocal, saveCatalogUpload, readAdmin, saveAdmin, checkToken, publishItem, removeItem, setSubmitLink, CATALOG_REPO } from './lib/catalog-publish.mjs';
 import { markTouched } from './lib/touched.mjs';
 import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
 import { readJson, writeJson } from './lib/util.mjs';
@@ -513,8 +514,65 @@ export async function init(router) {
     // ---------- catalog ----------
     router.get('/catalog', route(async (req, user) => {
         const catalog = await loadCatalog({ force: Boolean(req.query.force) });
-        return { items: catalog.items, error: catalog.error };
+        return { items: catalog.items, error: catalog.error, submit: catalog.submit };
     }));
+    // Presets, lorebooks and cards of this SillyTavern: to send to the catalog's author or to publish.
+    router.get('/catalog/local', route(async (req, user) => ({ items: await listLocal(user.ctx, String(req.query.type || '')) })));
+    router.get('/catalog/export', route(async (req, user, res) => {
+        const type = String(req.query.type || '');
+        const file = await readLocal(user.ctx, type, String(req.query.file || ''));
+        res.setHeader('Content-Type', type === 'card' ? 'image/png' : 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(file.data);
+    }));
+    // For the catalog's author: publishing to GitHub with their token (kept only here).
+    router.get('/catalog/admin', route(async (req, user) => {
+        const admin = await readAdmin(user.store.dir);
+        return { hasToken: Boolean(admin.token), login: admin.login, repo: CATALOG_REPO };
+    }));
+    router.post('/catalog/admin', route(async (req, user) => {
+        const token = String(req.body?.token || '').trim();
+        if (!token) {
+            await saveAdmin(user.store.dir, null);
+            return { hasToken: false, login: '', repo: CATALOG_REPO };
+        }
+        const { login } = await checkToken(token);
+        await saveAdmin(user.store.dir, { token, login });
+        return { hasToken: true, login, repo: CATALOG_REPO };
+    }));
+    const adminToken = async (user) => {
+        const admin = await readAdmin(user.store.dir);
+        if (!admin.token) throw httpError(403, 'Сначала добавьте токен GitHub');
+        return admin.token;
+    };
+    router.post('/catalog/upload', route(async (req, user) => {
+        const chunks = [];
+        let total = 0;
+        if (Buffer.isBuffer(req.body) && req.body.length) {
+            chunks.push(req.body);
+        } else {
+            for await (const chunk of req) {
+                total += chunk.length;
+                if (total > 20 * 1024 * 1024) throw httpError(413, 'Файл больше 20 МБ');
+                chunks.push(chunk);
+            }
+        }
+        return saveCatalogUpload(user.store.dir, String(req.query.type || ''), Buffer.concat(chunks), String(req.query.name || ''));
+    }));
+    router.post('/catalog/publish', route(async (req, user) => {
+        const body = req.body || {};
+        return publishItem({
+            ctx: user.ctx,
+            korrektorDir: user.store.dir,
+            token: await adminToken(user),
+            type: String(body.type || ''),
+            source: body.upload ? { upload: String(body.upload) } : { file: String(body.file || '') },
+            meta: body.meta || {},
+        });
+    }));
+    router.post('/catalog/remove', route(async (req, user) => removeItem({ token: await adminToken(user), id: String(req.body?.id || '') })));
+    router.post('/catalog/submit-link', route(async (req, user) => setSubmitLink({ token: await adminToken(user), link: String(req.body?.link || '') })));
     router.post('/catalog/install', route(async (req, user) => {
         const catalog = await loadCatalog();
         const item = catalog.items.find(i => i.id === String(req.body?.id || ''));
