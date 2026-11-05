@@ -30,10 +30,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
         summary: 'heavy',
         condenseCard: 'heavy',
         condenseEntry: 'heavy',
+        condensePrompt: 'heavy',
     },
     scan: {
         auto: true,
         intervalMinutes: 20,
+        // 'recent' = the latest changed chats, 'watched' = only chats marked in the app
+        mode: 'recent',
+        watched: [],
         recentChats: 3,
         useModel: true,
         maxMessagesPerLlmScan: 40,
@@ -47,12 +51,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
         loreDuplicates: true,
         loreKeys: true,
         bloat: true,
+        tokens: true,
     },
     thresholds: {
         contextWarn: 0.8,
         cardTokens: 1800,
         entryTokens: 600,
         repeatMinMessages: 3,
+        presetPromptTokens: 600,
     },
     summary: {
         // 'memory' = Summarize extension, 'note' = Author's Note, 'lorebook' = chat lorebook entry

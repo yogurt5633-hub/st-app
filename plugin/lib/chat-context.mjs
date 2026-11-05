@@ -61,6 +61,7 @@ export async function buildChatContext(ctx, chatId, stSettings) {
         charWorld: cards[0]?.card?.data?.extensions?.world || '',
         worlds,
         conn: connectionInfo(stSettings),
+        stSettings,
         userName: chat.header?.user_name || 'User',
     };
 }

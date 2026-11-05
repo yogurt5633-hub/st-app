@@ -178,7 +178,7 @@ async function tick() {
 function discoverUsers() {
     const root = globalThis.DATA_ROOT;
     if (!root || !fs.existsSync(root)) return;
-    const template = { root: '', worlds: 'worlds', groups: 'groups', groupChats: 'group chats', chats: 'chats', characters: 'characters', backups: 'backups' };
+    const template = { root: '', worlds: 'worlds', groups: 'groups', groupChats: 'group chats', chats: 'chats', characters: 'characters', backups: 'backups', openAI_Settings: 'OpenAI Settings' };
     for (const handle of fs.readdirSync(root)) {
         const base = path.join(root, handle);
         if (!fs.existsSync(path.join(base, 'korrektor'))) continue;
@@ -266,29 +266,46 @@ export async function init(router) {
 
     // Read API: chats, characters, lorebooks, summaries and Author's Notes.
     router.get('/chats', route(async (req, user) => {
-        const limit = Math.min(200, Number(req.query.limit) || 40);
+        const limit = Math.min(1000, Number(req.query.limit) || 300);
         const chats = (await listChats(user.ctx)).slice(0, limit);
         const state = await user.store.getState();
         const proposals = await user.store.getProposals();
+        const settings = await user.store.getSettings();
+        const watched = new Set(settings.scan.watched || []);
         const items = [];
         for (const chat of chats) {
             const title = chat.isGroup ? chat.title : await characterName(user.ctx, chat.avatar);
             items.push({
                 ...chat,
                 title,
+                watched: watched.has(chat.id),
                 scannedAt: state.chats?.[chat.id]?.scannedAt ?? null,
-                open: proposals.filter(p => OPEN_STATUSES.includes(p.status) && p.target?.chatId === chat.id).length,
+                open: proposals.filter(p => OPEN_STATUSES.includes(p.status) && (p.target?.chatId === chat.id || p.chats?.includes(chat.id))).length,
             });
         }
-        return { items };
+        return { items, mode: settings.scan.mode };
     }));
+    // Mark a chat as watched (checked by the assistant) or not.
+    router.post('/watch', route(async (req, user) => {
+        const chatId = String(req.body?.chatId || '');
+        if (!chatId) throw httpError(400, 'Нужен chatId');
+        const settings = await user.store.getSettings();
+        const set = new Set(settings.scan.watched || []);
+        if (req.body?.watched === false) set.delete(chatId);
+        else set.add(chatId);
+        const next = await user.store.saveSettings({ scan: { watched: [...set] } });
+        return { watched: next.scan.watched };
+    }));
+
     router.get('/chat', route(async (req, user) => {
         const stSettings = await readStSettings(user.ctx);
         const cc = await buildChatContext(user.ctx, String(req.query.id), stSettings);
         const meta = cc.chat.header?.chat_metadata || {};
+        const settings = await user.store.getSettings();
         const out = {
             id: cc.chatId,
             title: cc.title,
+            watched: (settings.scan.watched || []).includes(cc.chatId),
             messages: cc.chat.messages.length,
             usage: contextUsage(cc),
             worlds: cc.worlds.map(w => w.name),

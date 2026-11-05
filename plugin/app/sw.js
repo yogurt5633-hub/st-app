@@ -1,6 +1,6 @@
 // Keeps the app shell offline so the icon opens even while SillyTavern is stopped.
 // API calls always go to the network.
-const VERSION = 'korrektor-0.1.0';
+const VERSION = 'korrektor-0.2.0';
 const SHELL = [
     './',
     'index.html',

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { buildChatContext, chatLanguageIsRussian, latestMemory, plainText, transcript } from '../chat-context.mjs';
 import { isVisible, messageText } from '../chats.mjs';
 import { readCard, getCardField, cardName } from '../cards.mjs';
@@ -258,4 +260,46 @@ async function suggestKeys(ctx, proposal, { llm }) {
     };
 }
 
-export const FIXERS = { summary, rewriteMessage, fixContradiction, condenseCard, condenseEntries, mergeEntries, suggestKeys };
+async function condensePrompt(ctx, proposal, { llm, stSettings }) {
+    const { identifier, preset } = proposal.prepare;
+    const step = { key: 'identifier', value: identifier };
+    const prompt = (stSettings?.oai_settings?.prompts || []).find(p => p?.identifier === identifier);
+    if (!prompt?.content) throw httpError(409, 'Этого промпта больше нет в пресете');
+    const before = prompt.content;
+    const system = [
+        'Ты редактор промптов для ролевых чатов в SillyTavern. Сократи этот промпт примерно вдвое.',
+        'Сохрани каждое правило, запрет, требование к формату и стилю, а также все макросы вроде {{char}}, {{user}}, {{random}} как есть.',
+        'Убери повторы, воду, вежливые обороты и разные формулировки одного и того же. Не добавляй новых правил. Язык оставь исходный.',
+        'Верни только новый текст промпта, без пояснений.',
+        DATA_NOTE,
+    ].join('\n');
+    const { text, model } = await llm.complete({ task: 'condensePrompt', system, user: `# Промпт «${prompt.name || identifier}»\n${before}` });
+    const after = cleanReply(text);
+    if (!after || after === before) throw httpError(502, 'Модель не предложила сокращений');
+
+    const ops = [{
+        op: 'settings.setPath',
+        path: ['oai_settings', 'prompts', step, 'content'],
+        before,
+        after,
+        label: `Промпт «${prompt.name || identifier}»`,
+        view: { label: `Пресет${preset ? ` «${preset}»` : ''} · ${prompt.name || identifier}`, before, after, editable: true },
+    }];
+    // Also save into the preset file, so switching presets does not bring the old text back.
+    if (preset) {
+        try {
+            const dir = ctx.dirs.openAI_Settings || path.join(ctx.dirs.root, 'OpenAI Settings');
+            const file = JSON.parse(await fs.promises.readFile(path.join(dir, `${preset}.json`), 'utf8'));
+            const inFile = (file.prompts || []).find(p => p?.identifier === identifier);
+            if (inFile?.content === before) {
+                ops.push({ op: 'preset.setPath', preset, path: ['prompts', step, 'content'], before, after, label: `Файл пресета «${preset}»`, view: { label: `Файл пресета «${preset}»`, note: 'Тот же текст сохраняется и в файл пресета' } });
+            }
+        } catch {
+            // No preset file: settings.json is enough.
+        }
+    }
+    const saved = estimateTokens(before) - estimateTokens(after);
+    return { ops, model, note: `Экономия ≈${saved.toLocaleString('ru-RU')} токенов на каждый запрос. Вкладка SillyTavern перезагрузится сама, если стоит расширение синхронизации` };
+}
+
+export const FIXERS = { summary, rewriteMessage, fixContradiction, condenseCard, condenseEntries, mergeEntries, suggestKeys, condensePrompt };

@@ -1,6 +1,6 @@
 // Companion for the Korrektor server plugin.
-// When Korrektor changes the open chat, a lorebook or a card, this tab reloads
-// them, so its next save does not overwrite the fix.
+// When Korrektor changes the open chat, a lorebook, a card or the settings,
+// this tab reloads them, so its next save does not overwrite the fix.
 
 const API = '/api/plugins/korrektor/touched';
 const INTERVAL_MS = 4000;
@@ -34,6 +34,7 @@ async function handle(items) {
     const ctx = SillyTavern.getContext();
     const chatId = currentChatId(ctx);
     let reloadChat = false;
+    let reloadPage = false;
     const later = [];
 
     for (const item of items) {
@@ -48,10 +49,20 @@ async function handle(items) {
             }
         } else if (item.type === 'card') {
             await ctx.getCharacters?.();
+        } else if (item.type === 'settings' || item.type === 'preset') {
+            // SillyTavern keeps settings in the page and saves them back on its own,
+            // so the page must reload, or it would overwrite the change.
+            if (busy(ctx)) later.push(item);
+            else reloadPage = true;
         }
     }
     waiting = later;
 
+    if (reloadPage) {
+        toastr.info('Корректор изменил настройки SillyTavern, страница обновится');
+        setTimeout(() => location.reload(), 1500);
+        return;
+    }
     if (reloadChat) {
         await ctx.reloadCurrentChat();
         toastr.info('Корректор изменил этот чат, он обновлён');

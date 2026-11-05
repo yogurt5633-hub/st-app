@@ -1,33 +1,14 @@
-import { cardTokens, constantEntries, latestMemory, visibleMessages } from '../chat-context.mjs';
+import { visibleMessages } from '../chat-context.mjs';
+import { promptBudget } from '../prompt-budget.mjs';
 import { estimateTokens } from '../tokens.mjs';
 import { fingerprint, makeProposal } from '../proposals.mjs';
 import { messageText } from '../chats.mjs';
 
 export const fmt = (n) => Math.round(n).toLocaleString('ru-RU');
 
-/** Rough picture of what goes into the prompt for this chat. */
+/** What goes into the prompt for this chat (see prompt-budget.mjs). */
 export function contextUsage(cc) {
-    const { chat } = cc;
-    const cardPart = Math.max(0, ...cc.cards.map(c => cardTokens(c.card).total));
-    const lorePart = constantEntries(cc.worlds).reduce((sum, { entry }) => sum + estimateTokens(entry.content), 0);
-    const meta = chat.header?.chat_metadata || {};
-    const notePart = estimateTokens(meta.note_prompt || '');
-    const memory = latestMemory(chat);
-    const memoryPart = estimateTokens(memory?.text || '');
-    const visible = visibleMessages(chat);
-    const chatPart = visible.reduce((sum, { message }) => sum + estimateTokens(messageText(message)) + 4, 0);
-    const overhead = 200;
-    const budget = Math.max(0, cc.conn.contextSize - cc.conn.responseSize);
-    const total = cardPart + lorePart + notePart + memoryPart + chatPart + overhead;
-    return {
-        budget,
-        total,
-        ratio: budget ? total / budget : 0,
-        parts: { card: cardPart, lorebook: lorePart, note: notePart, memory: memoryPart, chat: chatPart, overhead },
-        visibleCount: visible.length,
-        hiddenCount: chat.messages.length - visible.length,
-        memory,
-    };
+    return promptBudget(cc, cc.stSettings);
 }
 
 export function analyzeContext(cc, settings) {
@@ -61,9 +42,7 @@ export function analyzeContext(cc, settings) {
             ? `Модель уже не видит начало чата: занято ≈${fmt(usage.total)} из ${fmt(usage.budget)} токенов (${percent}%). Резюме старых сообщений сохранит важное и освободит место`
             : `Занято ≈${fmt(usage.total)} из ${fmt(usage.budget)} токенов (${percent}%). Скоро начало чата начнёт выпадать из памяти модели`,
         evidence: [
-            { label: 'Сообщения чата', text: `≈${fmt(usage.parts.chat)} токенов, ${usage.visibleCount} сообщений в контексте` },
-            { label: 'Карточка', text: `≈${fmt(usage.parts.card)} токенов` },
-            { label: 'Постоянные записи лорбуков', text: `≈${fmt(usage.parts.lorebook)} токенов` },
+            ...usage.items.slice(0, 4).map(item => ({ label: item.label, text: `≈${fmt(item.tokens)} токенов` })),
             { label: 'Предлагается сжать', text: `сообщения #${from}–${to} (${range.length} шт., ≈${fmt(tokens)} токенов), последние ${keep} остаются как есть` },
         ],
         target: { type: 'chat', chatId: cc.chatId, label: cc.title },

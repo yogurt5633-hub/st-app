@@ -16,7 +16,7 @@ export function fingerprint(...parts) {
     return sha256(parts.map(p => (typeof p === 'string' ? p : JSON.stringify(p))).join('|')).slice(0, 24);
 }
 
-export function makeProposal({ kind, severity = 'medium', title, summary, evidence = [], target, fingerprint: fp, ops = null, views = null, prepare = null, model = null, context = {}, followups = [] }) {
+export function makeProposal({ kind, severity = 'medium', title, summary, evidence = [], target, fingerprint: fp, ops = null, views = null, prepare = null, model = null, context = {}, followups = [], advice = false }) {
     const now = nowIso();
     return {
         id: newId('p'),
@@ -27,7 +27,9 @@ export function makeProposal({ kind, severity = 'medium', title, summary, eviden
         evidence,
         target,
         fingerprint: fp,
-        status: ops && ops.length ? 'open' : 'needs_fix',
+        // Advice has no change to apply: the card only explains what to do.
+        status: advice || (ops && ops.length) ? 'open' : 'needs_fix',
+        advice,
         ops: ops ?? [],
         views: views ?? (ops ?? []).map(op => describeOp(op, context)),
         prepare,
@@ -45,7 +47,14 @@ export async function addProposals(store, list) {
         const known = new Map(items.filter(p => p.status !== 'stale' && p.status !== 'failed').map(p => [p.fingerprint, p]));
         const added = [];
         for (const proposal of list) {
-            if (known.has(proposal.fingerprint)) continue;
+            const existing = known.get(proposal.fingerprint);
+            if (existing) {
+                // The same problem seen from another chat: remember that chat too.
+                if (Array.isArray(proposal.chats) && proposal.chats.length) {
+                    existing.chats = [...new Set([...(existing.chats || []), ...proposal.chats])];
+                }
+                continue;
+            }
             items.push(proposal);
             known.set(proposal.fingerprint, proposal);
             added.push(proposal);
@@ -73,6 +82,7 @@ async function patchProposal(store, id, patch) {
 export async function applyProposal(ctx, store, id, overrides) {
     const proposal = await findProposal(store, id);
     if (proposal.status !== 'open') throw httpError(409, 'Это предложение нельзя применить в текущем состоянии');
+    if (proposal.advice || !proposal.ops?.length) throw httpError(409, 'Это совет: применять нечего');
     const ops = withOverrides(proposal.ops, overrides);
     try {
         const { backupId, appliedOps } = await applyOps(ctx, store, ops, { proposalId: id, title: proposal.title });

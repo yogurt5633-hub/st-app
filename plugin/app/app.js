@@ -16,11 +16,18 @@ const KIND = {
     lore_duplicate: 'Дубли',
     lore_keys: 'Ключи',
     lore_bloat: 'Объём лорбука',
+    lore_keyed: 'Объём лорбука',
+    lore_card_dup: 'Повтор карточки',
     card_bloat: 'Объём карточки',
+    preset_bloat: 'Пресет',
+    prompt_reasoning: 'Рассуждения',
+    prompt_html: 'HTML',
+    advice: 'Совет',
     manual: 'Изменение',
 };
 const GROUP = {
     chats: ['context', 'repetition', 'slop', 'new_fact', 'contradiction', 'rewrite'],
+    tokens: ['preset_bloat', 'prompt_reasoning', 'prompt_html', 'advice', 'lore_keyed', 'lore_card_dup'],
     lore: ['lore_duplicate', 'lore_keys', 'lore_bloat'],
     cards: ['card_bloat'],
 };
@@ -43,6 +50,7 @@ const TASKS = [
     ['summary', 'Резюме старых сообщений'],
     ['condenseCard', 'Сжатие карточек'],
     ['condenseEntry', 'Сжатие и слияние записей лорбука'],
+    ['condensePrompt', 'Сжатие промптов пресета'],
 ];
 const ANALYZERS = [
     ['context', 'Переполнение контекста', 'Предлагает резюме старых сообщений'],
@@ -53,6 +61,7 @@ const ANALYZERS = [
     ['loreDuplicates', 'Дубли в лорбуках', 'Без модели'],
     ['loreKeys', 'Плохие ключи', 'Без модели'],
     ['bloat', 'Раздутые карточки и записи', 'Без модели, сжатие делает модель'],
+    ['tokens', 'Куда уходят токены', 'Пресет, HTML, рассуждения, лорбук, векторы, персона'],
 ];
 // Chat Completion sources of SillyTavern. Any of them works if its key is saved in SillyTavern.
 const SOURCES = [
@@ -76,6 +85,9 @@ const state = {
     worlds: [],
     backups: [],
     filter: 'all',
+    feedChat: storageGet('korrektor.feedChat') || 'all',
+    chatQuery: '',
+    chatsView: 'all',
     historyTab: 'changes',
     job: null,
     overrides: {},
@@ -86,6 +98,24 @@ const state = {
     offline: false,
     needLogin: false,
 };
+
+// ---------- per-device conveniences ----------
+
+function storageGet(key) {
+    try {
+        return localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function storageSet(key, value) {
+    try {
+        localStorage.setItem(key, value);
+    } catch {
+        // private mode or storage off: the filter just resets next time
+    }
+}
 
 // ---------- API ----------
 
@@ -361,26 +391,64 @@ function renderScanline() {
     }
 }
 
+function relatedChats(p) {
+    return new Set([...(p.chats || []), p.target?.chatId].filter(Boolean));
+}
+
+function chatTitle(id) {
+    const chat = state.chats.find(c => c.id === id);
+    if (chat) return chat.title + (chat.isGroup ? '' : ` · ${chat.file}`);
+    const p = state.proposals.find(x => x.target?.chatId === id);
+    return p?.target?.label || id.split('/').pop();
+}
+
+function matchesChatFilter(p) {
+    if (state.feedChat === 'all') return true;
+    const related = relatedChats(p);
+    if (state.feedChat === 'watched') {
+        const watched = state.chats.filter(c => c.watched).map(c => c.id);
+        return watched.some(id => related.has(id));
+    }
+    return related.has(state.feedChat);
+}
+
 function renderFeed() {
     const view = $('#view');
-    const items = sortedFeed();
-    const counts = { all: items.length, chats: 0, lore: 0, cards: 0 };
+    const all = sortedFeed();
+    const items = all.filter(matchesChatFilter);
+    const counts = { all: items.length, chats: 0, tokens: 0, lore: 0, cards: 0 };
     for (const p of items) counts[proposalGroup(p)]++;
     const visible = state.filter === 'all' ? items : items.filter(p => proposalGroup(p) === state.filter);
 
+    // Which chats to show: all, the marked ones, or one chat.
+    const chatIds = [...new Set(all.flatMap(p => [...relatedChats(p)]))];
+    const hasWatched = state.chats.some(c => c.watched);
+    if (!['all', 'watched'].includes(state.feedChat) && !chatIds.includes(state.feedChat)) chatIds.push(state.feedChat);
+    const chatSelect = h('select', { class: 'select', 'aria-label': 'Какие чаты показывать', style: 'width:100%' },
+        h('option', { value: 'all', text: 'Все чаты' }),
+        hasWatched ? h('option', { value: 'watched', text: 'Только отмеченные чаты' }) : null,
+        chatIds.sort((a, b) => chatTitle(a).localeCompare(chatTitle(b))).map(id => h('option', { value: id, text: chatTitle(id) })));
+    chatSelect.value = state.feedChat === 'watched' && !hasWatched ? 'all' : state.feedChat;
+    chatSelect.addEventListener('change', () => {
+        state.feedChat = chatSelect.value;
+        storageSet('korrektor.feedChat', state.feedChat);
+        renderFeed();
+    });
+
     const filters = h('div', { class: 'filters', role: 'group', 'aria-label': 'Фильтр' },
-        [['all', 'Все'], ['chats', 'Чаты'], ['lore', 'Лорбуки'], ['cards', 'Карточки']].map(([key, label]) =>
+        [['all', 'Все'], ['chats', 'Чаты'], ['tokens', 'Токены'], ['lore', 'Лорбуки'], ['cards', 'Карточки']].map(([key, label]) =>
             h('button', {
                 class: 'filter', type: 'button', 'aria-pressed': String(state.filter === key),
                 onclick: () => { state.filter = key; renderFeed(); },
             }, label, h('span', { class: 'mono', text: counts[key] }))));
 
-    const children = [h('p', { class: 'scanline', id: 'scanline' }), filters];
+    const children = [h('p', { class: 'scanline', id: 'scanline' }), h('div', { class: 'chat-filter' }, chatSelect), filters];
     if (!visible.length) {
+        const filtered = all.length && !items.length;
         children.push(h('div', { class: 'empty' },
-            h('h2', { text: items.length ? 'В этом разделе пусто' : 'Замечаний нет' }),
-            h('p', { text: items.length ? 'Загляните в другие разделы' : 'Корректор проверяет недавние чаты сам. Можно запустить проверку вручную кнопкой вверху' }),
-            !items.length ? h('p', {}, h('button', { class: 'btn secondary', type: 'button', style: 'margin-top:16px', onclick: () => startScan(), text: 'Проверить сейчас' })) : null));
+            h('h2', { text: filtered ? 'В выбранных чатах замечаний нет' : items.length ? 'В этом разделе пусто' : 'Замечаний нет' }),
+            h('p', { text: filtered ? 'Выберите другие чаты в списке выше' : items.length ? 'Загляните в другие разделы' : 'Корректор проверяет чаты сам. Можно запустить проверку вручную кнопкой вверху' }),
+            !all.length ? h('p', {}, h('button', { class: 'btn secondary', type: 'button', style: 'margin-top:16px', onclick: () => startScan(), text: 'Проверить сейчас' })) : null));
     } else {
         children.push(h('div', { class: 'list' }, visible.map(renderCard)));
     }
@@ -406,6 +474,16 @@ function renderQuote(item) {
 function renderCard(p) {
     const dim = p.status === 'stale' || p.status === 'failed';
     const actions = [];
+    if (p.advice && p.status === 'open') {
+        actions.push(h('button', { class: 'btn secondary small', type: 'button', onclick: () => reject(p), text: 'Понятно' }));
+        const first = p.evidence?.find(e => e.text);
+        return h('article', { class: 'card' },
+            cardMeta(p),
+            h('h2', { class: 'card-title' }, h('a', { href: `#p/${encodeURIComponent(p.id)}`, style: 'text-decoration:none', text: p.title })),
+            h('p', { class: 'card-summary', text: p.summary }),
+            first ? renderQuote(first) : null,
+            h('div', { class: 'card-actions' }, actions));
+    }
     if (p.status === 'open') {
         actions.push(
             h('button', { class: 'btn primary small', type: 'button', onclick: (e) => { e.stopPropagation(); applyProposal(p); }, text: 'Применить' }),
@@ -605,7 +683,9 @@ async function renderProposalSheet(id) {
     body.push(h('dl', { class: 'facts' }, facts.map(([k, v]) => [h('dt', { text: k }), h('dd', { class: k === 'Копия' || k === 'Модель' ? 'mono' : '', text: v })])));
 
     let foot = null;
-    if (p.status === 'open') {
+    if (p.advice && p.status === 'open') {
+        foot = [h('button', { class: 'btn secondary', type: 'button', onclick: () => reject(p), text: 'Понятно, скрыть' })];
+    } else if (p.status === 'open') {
         foot = [h('button', { class: 'btn secondary', type: 'button', onclick: () => reject(p), text: 'Отклонить' }),
             h('button', { class: 'btn primary', type: 'button', onclick: () => applyProposal(p), text: state.overrides[p.id] ? 'Применить с правками' : 'Применить' })];
     } else if (p.status === 'needs_fix' || p.status === 'failed') {
@@ -652,11 +732,43 @@ async function revert(p) {
 
 // ---------- chats ----------
 
+const STAR = '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>';
+
+function starButton(chat, onchange) {
+    const btn = h('button', {
+        class: `icon-button star${chat.watched ? ' on' : ''}`, type: 'button',
+        'aria-pressed': String(Boolean(chat.watched)),
+        'aria-label': chat.watched ? 'Не отслеживать чат' : 'Отслеживать чат',
+    });
+    btn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${STAR}</svg>`;
+    btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = !chat.watched;
+        try {
+            await api('/watch', { method: 'POST', body: { chatId: chat.id, watched: next } });
+            chat.watched = next;
+            for (const c of state.chats) if (c.id === chat.id) c.watched = next;
+            onchange?.();
+        } catch (error) {
+            toast(error.message, true);
+        }
+    });
+    return btn;
+}
+
+async function loadChats() {
+    const data = await api('/chats');
+    state.chats = data.items;
+    state.scanMode = data.mode;
+    return state.chats;
+}
+
 async function renderChats() {
     const view = $('#view');
     if (!state.chats.length) view.replaceChildren(h('p', { class: 'muted', text: 'Загружаю чаты' }));
     try {
-        state.chats = (await api('/chats')).items;
+        await loadChats();
     } catch (error) {
         view.replaceChildren(h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
         return;
@@ -665,17 +777,53 @@ async function renderChats() {
         view.replaceChildren(h('div', { class: 'empty' }, h('h2', { text: 'Чатов пока нет' }), h('p', { text: 'Начните чат в SillyTavern, и он появится здесь' })));
         return;
     }
-    view.replaceChildren(h('div', { class: 'rows' }, state.chats.map(chat =>
-        h('a', { class: 'row', href: `#chat/${encodeURIComponent(chat.id)}` },
-            h('span', { class: 'row-main' },
-                h('span', { class: 'row-title', text: chat.title }),
-                h('span', { class: 'row-sub', text: `${chat.isGroup ? 'группа · ' : ''}${chat.file} · ${when(new Date(chat.mtime).toISOString())}` })),
-            chat.open ? h('span', { class: 'row-side accent', text: `${chat.open} ${plural(chat.open, 'замечание', 'замечания', 'замечаний')}` }) : h('span', { class: 'row-side', text: chat.scannedAt ? 'проверен' : '' }),
-            h('span', { class: 'chev' }, icon('chev'))))));
+
+    const search = h('input', { class: 'input', type: 'search', placeholder: 'Найти чат', value: state.chatQuery, 'aria-label': 'Найти чат', style: 'width:100%' });
+    const list = h('div');
+    const watchedCount = () => state.chats.filter(c => c.watched).length;
+    const tabs = h('div', { class: 'filters', role: 'group' });
+    const hint = h('p', { class: 'small muted', style: 'margin:0 0 12px' });
+
+    const draw = () => {
+        const q = state.chatQuery.trim().toLowerCase();
+        const pool = state.chatsView === 'watched' ? state.chats.filter(c => c.watched) : state.chats;
+        const found = q ? pool.filter(c => `${c.title} ${c.file}`.toLowerCase().includes(q)) : pool;
+        tabs.replaceChildren(...[['all', 'Все', state.chats.length], ['watched', 'Отмеченные', watchedCount()]].map(([key, label, n]) =>
+            h('button', { class: 'filter', type: 'button', 'aria-pressed': String(state.chatsView === key), onclick: () => { state.chatsView = key; draw(); } },
+                label, h('span', { class: 'mono', text: n }))));
+        hint.textContent = state.scanMode === 'watched'
+            ? 'Корректор сам проверяет только отмеченные чаты. Звёздочка — отметить'
+            : 'Сейчас Корректор сам проверяет последние изменённые чаты. Отметьте звёздочкой нужные и включите в настройках «Только отмеченные»';
+        const shown = found.slice(0, 100);
+        list.replaceChildren(...[
+            shown.length ? h('div', { class: 'rows' }, shown.map(chat => h('div', { class: 'row chat-row' },
+                starButton(chat, draw),
+                h('a', { class: 'row-link', href: `#chat/${encodeURIComponent(chat.id)}` },
+                    h('span', { class: 'row-main' },
+                        h('span', { class: 'row-title', text: chat.title }),
+                        h('span', { class: 'row-sub', text: `${chat.isGroup ? 'группа · ' : ''}${chat.file} · ${when(new Date(chat.mtime).toISOString())}` })),
+                    chat.open ? h('span', { class: 'row-side accent', text: `${chat.open} ${plural(chat.open, 'замечание', 'замечания', 'замечаний')}` }) : h('span', { class: 'row-side', text: chat.scannedAt ? 'проверен' : '' }),
+                    h('span', { class: 'chev' }, icon('chev'))))))
+                : h('div', { class: 'empty' }, h('p', { text: state.chatsView === 'watched' && !q ? 'Отмеченных чатов пока нет. Нажмите звёздочку у нужного чата' : 'Ничего не нашлось' })),
+            found.length > shown.length ? h('p', { class: 'small muted', style: 'margin:12px 0 0', text: `Показано ${shown.length} из ${found.length}. Уточните поиск` }) : null,
+        ].filter(Boolean));
+    };
+    search.addEventListener('input', () => { state.chatQuery = search.value; draw(); });
+    draw();
+    view.replaceChildren(h('div', { style: 'margin-bottom:12px' }, search), tabs, hint, list);
 }
 
+const GROUP_STYLE = {
+    history: ['var(--accent)', 'История чата'],
+    preset: ['var(--text)', 'Пресет и системный промпт'],
+    card: ['var(--text-2)', 'Карточка'],
+    lore: ['var(--text-3)', 'Лорбуки'],
+    memory: ['var(--line-strong)', 'Память и заметки'],
+    persona: ['var(--line-strong)', 'Персона'],
+};
+
 async function renderChatSheet(id) {
-    openSheet('Чат', h('p', { class: 'muted', text: 'Загружаю' }));
+    openSheet('Чат', h('p', { class: 'muted', text: 'Считаю, из чего состоит контекст' }));
     let info;
     try {
         info = await api(`/chat?id=${encodeURIComponent(id)}`);
@@ -685,32 +833,41 @@ async function renderChatSheet(id) {
     }
     const u = info.usage;
     const total = Math.max(u.total, u.budget, 1);
-    const pct = (n) => `${(n / total) * 100}%`;
-    const rest = u.parts.note + u.parts.memory + u.parts.overhead;
-    const related = state.proposals.filter(p => p.target?.chatId === info.id);
+    const groups = new Map();
+    for (const item of u.items) groups.set(item.group, (groups.get(item.group) || 0) + item.tokens);
+    const order = ['history', 'preset', 'card', 'lore', 'memory', 'persona'].filter(g => groups.get(g));
+    const related = state.proposals.filter(p => relatedChats(p).has(info.id));
+    const chat = state.chats.find(c => c.id === info.id) || { id: info.id, watched: info.watched };
+    const reasonText = { constant: 'постоянная', key: 'по ключу', recursion: 'по цепочке' };
 
     const body = [
-        h('h1', { class: 'sheet-title', text: info.title }),
-        h('p', { class: 'small muted', style: 'margin:0', text: `${info.messages} сообщений, скрыто из контекста ${u.hiddenCount}` }),
+        h('div', { class: 'field-row', style: 'align-items:flex-start' },
+            h('h1', { class: 'sheet-title', text: info.title }),
+            starButton(chat, () => renderChatSheet(id))),
+        h('p', { class: 'small muted', style: 'margin:0', text: `${info.messages} сообщений, скрыто из контекста ${u.hiddenCount}${u.preset ? ` · пресет «${u.preset}»` : ''}` }),
         h('div', { class: 'section' },
             h('h3', { class: 'section-title', text: 'Контекст' }),
             u.budget
                 ? h('div', {}, h('span', { class: 'big', text: `${Math.round(u.ratio * 100)}%` }), h('span', { class: 'secondary', text: ` ≈${fmt(u.total)} из ${fmt(u.budget)} токенов` }))
-                : h('p', { class: 'secondary', style: 'margin:0', text: 'Размер контекста не задан в SillyTavern' }),
+                : h('p', { class: 'secondary', style: 'margin:0', text: `≈${fmt(u.total)} токенов. Размер контекста не задан в SillyTavern` }),
             h('div', { class: 'bar', role: 'img', 'aria-label': 'Из чего состоит контекст' },
-                h('span', { class: 'p-chat', style: `width:${pct(u.parts.chat)}` }),
-                h('span', { class: 'p-card', style: `width:${pct(u.parts.card)}` }),
-                h('span', { class: 'p-lore', style: `width:${pct(u.parts.lorebook)}` }),
-                h('span', { class: 'p-rest', style: `width:${pct(rest)}` })),
-            h('div', { class: 'legend' },
-                legendRow('var(--accent)', 'Сообщения', u.parts.chat),
-                legendRow('var(--text-2)', 'Карточка', u.parts.card),
-                legendRow('var(--text-3)', 'Постоянные записи лорбуков', u.parts.lorebook),
-                legendRow('var(--line-strong)', 'Заметка автора, резюме, служебное', rest)),
-            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Оценка без учёта пресета и записей лорбука по ключам' })),
+                order.map(g => h('span', { style: `width:${(groups.get(g) / total) * 100}%;background:${GROUP_STYLE[g][0]}` }))),
+            h('div', { class: 'legend' }, order.map(g => legendRow(GROUP_STYLE[g][0], GROUP_STYLE[g][1], groups.get(g)))),
+            u.budget && u.ratio > 1 ? h('p', { class: 'small secondary', style: 'margin:8px 0 0', text: `Всё сразу не влезает: SillyTavern отправляет модели только последние сообщения, а ≈${fmt(u.total - u.budget)} токенов самого начала чата она уже не видит` }) : null),
         h('div', { class: 'section' },
-            h('h3', { class: 'section-title', text: 'Лорбуки' }),
-            h('p', { class: 'secondary', style: 'margin:0', text: info.worlds.length ? info.worlds.join(', ') : 'Не подключены' })),
+            h('h3', { class: 'section-title', text: 'Что больше всего занимает' }),
+            h('div', { class: 'rows' }, u.items.slice(0, 12).map(item => h('div', { class: 'row' },
+                h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: item.label })),
+                h('span', { class: 'row-side', text: `≈${fmt(item.tokens)}` }))))),
+        u.wi.included.length || u.wi.dropped.length ? h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: `Лорбук в запросе: ${u.wi.included.length} ${plural(u.wi.included.length, 'запись', 'записи', 'записей')}, ≈${fmt(u.wi.tokens)} токенов${u.wi.budget ? ` из ${fmt(u.wi.budget)}` : ''}` }),
+            h('div', { class: 'rows' }, u.wi.included.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 10).map(x => h('div', { class: 'row' },
+                h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: x.label }), h('span', { class: 'row-sub', text: `${x.world} · ${reasonText[x.reason] ?? x.reason}` })),
+                h('span', { class: 'row-side', text: `≈${fmt(x.tokens)}` })))),
+            u.wi.dropped.some(x => x.why === 'budget')
+                ? h('p', { class: 'small', style: 'margin:8px 0 0;color:var(--del-text)', text: `Не влезли в бюджет лорбука: ${u.wi.dropped.filter(x => x.why === 'budget').map(x => x.label).join(', ')}` })
+                : null) : null,
+        h('p', { class: 'small muted', style: 'margin:12px 0 0', text: 'Оценка приблизительная: токены считаются без токенизатора модели. Записи лорбука — те, что сработали бы на последнем сообщении, с бюджетом и цепочками, как в SillyTavern' }),
         info.note.prompt ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: 'Заметка автора' }), h('p', { class: 'prose', text: info.note.prompt })) : null,
         info.summary ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: `Резюме (в сообщении #${info.summary.index})` }), h('p', { class: 'prose', text: info.summary.text })) : null,
         related.length ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: 'Замечания' }), h('div', { class: 'list' }, related.map(renderCard))) : null,
@@ -955,9 +1112,15 @@ async function renderSettings(reload = true) {
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Проверка' }),
             h('div', { class: 'rows' },
-                toggleField('Проверять сама', 'Недавние чаты, в которых были изменения', s.scan.auto, (v) => save({ scan: { auto: v } })),
+                toggleField('Проверять сама', 'В фоне, только чаты с новыми изменениями', s.scan.auto, (v) => save({ scan: { auto: v } })),
+                h('div', { class: 'field' },
+                    h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Какие чаты' }),
+                        seg([['recent', 'Недавние'], ['watched', 'Отмеченные']], s.scan.mode, (v) => save({ scan: { mode: v } }, true))),
+                    h('span', { class: 'hint', text: s.scan.mode === 'watched'
+                        ? `Отмечено чатов: ${(s.scan.watched || []).length}. Отмечать — звёздочкой на вкладке «Чаты»`
+                        : 'Последние изменённые чаты. Если чатов много, удобнее отметить нужные звёздочкой и выбрать «Отмеченные»' })),
                 h('div', { class: 'field' }, h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Как часто' }), interval)),
-                numberField('Сколько недавних чатов', null, s.scan.recentChats, (v) => save({ scan: { recentChats: v } }), { min: 1, max: 20 }),
+                s.scan.mode !== 'watched' ? numberField('Сколько недавних чатов', null, s.scan.recentChats, (v) => save({ scan: { recentChats: v } }), { min: 1, max: 20 }) : null,
                 toggleField('Использовать модель', 'Для фактов и противоречий. В фоне — только после 4 новых сообщений', s.scan.useModel, (v) => save({ scan: { useModel: v } })),
                 numberField('Сообщений за один запрос', null, s.scan.maxMessagesPerLlmScan, (v) => save({ scan: { maxMessagesPerLlmScan: v } }), { min: 5, max: 200 }))),
 
@@ -971,6 +1134,7 @@ async function renderSettings(reload = true) {
             h('div', { class: 'rows' },
                 numberField('Предупреждать при заполнении контекста, %', null, Math.round(s.thresholds.contextWarn * 100), (v) => save({ thresholds: { contextWarn: v / 100 } }), { min: 30, max: 100 }),
                 numberField('Карточка тяжелее, токенов', null, s.thresholds.cardTokens, (v) => save({ thresholds: { cardTokens: v } }), { step: 100 }),
+                numberField('Промпт пресета тяжелее, токенов', null, s.thresholds.presetPromptTokens, (v) => save({ thresholds: { presetPromptTokens: v } }), { step: 100 }),
                 numberField('Постоянная запись тяжелее, токенов', null, s.thresholds.entryTokens, (v) => save({ thresholds: { entryTokens: v } }), { step: 50 }),
                 numberField('Фраза считается повтором, если встретилась в N ответах', null, s.thresholds.repeatMinMessages, (v) => save({ thresholds: { repeatMinMessages: v } }), { min: 2, max: 10 }))),
 
@@ -1016,7 +1180,8 @@ async function boot() {
 }
 
 async function refresh(rerender = true) {
-    const results = await Promise.allSettled([loadStatus(), loadProposals()]);
+    // The chat list (for titles and marks) is heavier, so only on open and on return to the app.
+    const results = await Promise.allSettled([loadStatus(), loadProposals(), rerender ? loadChats() : null]);
     const failed = results.find(r => r.status === 'rejected');
     if (failed && !state.status) {
         $('#view').replaceChildren(h('div', { class: 'empty' },

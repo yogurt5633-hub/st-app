@@ -3,7 +3,7 @@ import path from 'node:path';
 import { readChat, writeChat, messageText, setMessageText } from './chats.mjs';
 import { readWorld, writeWorld, freeUid, makeEntry, entryLabel } from './worlds.mjs';
 import { readCard, writeCard, getCardField, setCardField, cardName } from './cards.mjs';
-import { httpError, isInside, newId, nowIso, sha256, withLock, writeJson, readJson } from './util.mjs';
+import { httpError, isInside, newId, nowIso, plainName, safeJoin, sha256, withLock, writeFileAtomic, writeJson, readJson } from './util.mjs';
 import { markTouched } from './touched.mjs';
 
 /*
@@ -20,6 +20,9 @@ import { markTouched } from './touched.mjs';
    world.updateEntry{ world, uid, before:{...}, after:{...} } changed entry fields
    world.deleteEntry{ world, uid, before:entry }              removed entry
    card.setField    { avatar, field, before, after }          character card field
+   settings.setPath { path, before, after }                   a value in SillyTavern's settings.json
+   preset.setPath   { preset, path, before, after }           a value in a Chat Completion preset file
+ A path is a list of keys; a step { key, value } picks the array item whose key equals value.
 */
 
 const MAX_BACKUPS = 100;
@@ -28,6 +31,8 @@ function targetKey(op) {
     if (op.op.startsWith('chat.')) return `chat:${op.chatId}`;
     if (op.op.startsWith('world.')) return `world:${op.world}`;
     if (op.op.startsWith('card.')) return `card:${op.avatar}`;
+    if (op.op.startsWith('settings.')) return 'settings:main';
+    if (op.op.startsWith('preset.')) return `preset:${op.preset}`;
     throw httpError(400, `Неизвестная операция ${op.op}`);
 }
 
@@ -60,8 +65,55 @@ async function loadTarget(ctx, key, ops) {
         const original = world.missing ? null : await fs.promises.readFile(world.path, 'utf8');
         return { type, ref, value: world, path: world.path, original, hash: world.hash };
     }
+    if (type === 'settings' || type === 'preset') {
+        const file = type === 'settings'
+            ? path.join(ctx.dirs.root, 'settings.json')
+            : safeJoin(ctx.dirs.openAI_Settings || path.join(ctx.dirs.root, 'OpenAI Settings'), `${plainName(ref)}.json`);
+        let raw;
+        try {
+            raw = await fs.promises.readFile(file, 'utf8');
+        } catch (error) {
+            if (error.code === 'ENOENT') throw httpError(404, type === 'settings' ? 'Файл настроек SillyTavern не найден' : `Пресет «${ref}» не найден`);
+            throw error;
+        }
+        return { type, ref, value: { data: JSON.parse(raw.replace(/^\uFEFF/, '')) }, path: file, original: raw, hash: sha256(raw) };
+    }
     const card = await readCard(ctx, ref);
     return { type, ref, value: card, path: card.path, original: card.buffer, hash: card.hash };
+}
+
+function resolveStep(container, step) {
+    if (step && typeof step === 'object') {
+        if (!Array.isArray(container)) return undefined;
+        const index = container.findIndex(item => item && item[step.key] === step.value);
+        return index < 0 ? undefined : index;
+    }
+    return step;
+}
+
+export function getPath(data, steps) {
+    let node = data;
+    for (const step of steps) {
+        if (node === null || node === undefined) return undefined;
+        const key = resolveStep(node, step);
+        if (key === undefined) return undefined;
+        node = node[key];
+    }
+    return node;
+}
+
+function setPath(data, steps, value) {
+    let node = data;
+    for (let i = 0; i < steps.length - 1; i++) {
+        const key = resolveStep(node, steps[i]);
+        if (key === undefined) return false;
+        if (node[key] === null || typeof node[key] !== 'object') node[key] = {};
+        node = node[key];
+    }
+    const last = resolveStep(node, steps[steps.length - 1]);
+    if (last === undefined) return false;
+    node[last] = structuredClone(value);
+    return true;
 }
 
 function checkAndApply(target, op, problems) {
@@ -148,6 +200,15 @@ function checkAndApply(target, op, problems) {
             world.data.entries[op.uid] = structuredClone(op.entry);
             return applied;
         }
+        case 'settings.setPath':
+        case 'preset.setPath': {
+            const data = target.value.data;
+            const current = getPath(data, op.path);
+            if (same(current, op.after) && !same(op.before, op.after)) return { ...applied, noop: true };
+            if (!same(current, op.before)) return fail(`${op.label || 'Настройка'}: значение изменилось после анализа`);
+            if (!setPath(data, op.path, op.after)) return fail(`${op.label || 'Настройка'}: не найдено место в файле`);
+            return applied;
+        }
         case 'card.setField': {
             const card = target.value.card;
             const current = getCardField(card, op.field);
@@ -163,6 +224,12 @@ function checkAndApply(target, op, problems) {
 async function writeTarget(target) {
     if (target.type === 'chat') return writeChat(target.value);
     if (target.type === 'world') return writeWorld(target.value);
+    if (target.type === 'settings' || target.type === 'preset') {
+        // Same formatting as SillyTavern uses for these files.
+        const raw = JSON.stringify(target.value.data, null, 4);
+        await writeFileAtomic(target.path, raw);
+        return sha256(raw);
+    }
     return writeCard(target.value);
 }
 
@@ -267,6 +334,8 @@ export function inverseOps(appliedOps) {
             case 'chat.setMeta':
             case 'chat.setMemory':
             case 'card.setField':
+            case 'settings.setPath':
+            case 'preset.setPath':
                 return { ...op, before: op.after, after: op.before };
             case 'chat.setHidden':
                 return { ...op, before: op.after, after: op.before };
@@ -347,6 +416,7 @@ async function pruneBackups(store) {
 
 /** Human-readable view of an op for the app: a label plus before/after text to diff. */
 export function describeOp(op, context = {}) {
+    if (op.view) return { ...op.view, editable: Boolean(op.view.editable) };
     switch (op.op) {
         case 'chat.setMessage':
             return { label: `Сообщение #${op.index}${op.speaker ? ` · ${op.speaker}` : ''}`, before: op.before, after: op.after, editable: true };
@@ -390,6 +460,11 @@ export function describeOp(op, context = {}) {
             return { label: `Удалить запись «${entryLabel(op.before || { uid: op.uid })}» из лорбука «${op.world}»`, before: op.before?.content ?? '', after: '' };
         case 'card.setField':
             return { label: `Карточка «${context.cardName ?? op.avatar}» · ${fieldTitle(op.field)}`, before: op.before ?? '', after: op.after ?? '', editable: true };
+        case 'settings.setPath':
+        case 'preset.setPath': {
+            const text = (v) => (typeof v === 'string' ? v : JSON.stringify(v ?? null, null, 2));
+            return { label: op.label || (op.preset ? `Пресет «${op.preset}»` : 'Настройки SillyTavern'), before: text(op.before), after: text(op.after), editable: typeof op.after === 'string' };
+        }
         default:
             return { label: op.op };
     }
@@ -426,6 +501,9 @@ export function withOverrides(ops, overrides) {
                 return { ...op, entry: { ...op.entry, content: text } };
             case 'world.updateEntry':
                 return 'content' in (op.after || {}) ? { ...op, after: { ...op.after, content: text } } : op;
+            case 'settings.setPath':
+            case 'preset.setPath':
+                return typeof op.after === 'string' ? { ...op, after: text, view: op.view ? { ...op.view, after: text } : op.view } : op;
             default:
                 return op;
         }

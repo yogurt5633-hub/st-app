@@ -6,6 +6,7 @@ import { analyzeContext } from './analyzers/context.mjs';
 import { analyzeRepetition, analyzeSlop } from './analyzers/repetition.mjs';
 import { analyzeDuplicates, analyzeKeys, analyzeLoreBloat } from './analyzers/lorebook.mjs';
 import { analyzeCardBloat } from './analyzers/bloat.mjs';
+import { analyzeTokens } from './analyzers/tokens.mjs';
 import { analyzeContradictions, analyzeFacts } from './analyzers/llm.mjs';
 import { nowIso } from './util.mjs';
 
@@ -14,7 +15,11 @@ const RECENT_DAYS = 14;
 async function pickChats(ctx, settings, state, { chatIds, background }) {
     if (Array.isArray(chatIds) && chatIds.length) return chatIds.map(id => ({ id, mtime: null }));
     const all = await listChats(ctx);
-    const fresh = all.filter(c => Date.now() - c.mtime < RECENT_DAYS * 864e5).slice(0, settings.scan.recentChats);
+    const watched = new Set(Array.isArray(settings.scan.watched) ? settings.scan.watched : []);
+    // Only the chats marked in the app, or the latest changed ones.
+    const fresh = settings.scan.mode === 'watched'
+        ? all.filter(c => watched.has(c.id))
+        : all.filter(c => Date.now() - c.mtime < RECENT_DAYS * 864e5).slice(0, settings.scan.recentChats);
     if (!background) return fresh;
     // In the background only chats that changed since the last scan.
     return fresh.filter(c => (state.chats?.[c.id]?.scannedMtime ?? 0) < c.mtime);
@@ -48,18 +53,31 @@ export async function runScan(ctx, store, { chatIds = null, llm = null, backgrou
         }
     };
 
-    if (!chats.length) log('Новых изменений в чатах нет');
+    // Which scanned chats use each lorebook and card, so their cards show up under those chats.
+    const usedBy = new Map();
+    const link = (key, chatId) => {
+        if (!usedBy.has(key)) usedBy.set(key, new Set());
+        usedBy.get(key).add(chatId);
+    };
+
+    if (!chats.length) log(settings.scan.mode === 'watched' && !(settings.scan.watched || []).length ? 'Нет отмеченных чатов: отметьте их на вкладке «Чаты»' : 'Новых изменений в чатах нет');
 
     for (const item of chats) {
         const cc = await guard(`чат ${item.id}`, () => buildChatContext(ctx, item.id, stSettings));
         if (!cc) continue;
         log(`Чат «${cc.title}»: ${cc.chat.messages.length} сообщений`);
 
+        for (const entry of cc.cards) link(`card:${entry.avatar}`, cc.chatId);
+        for (const world of cc.worlds) link(`world:${world.name}`, cc.chatId);
+
         const chatFound = [];
         if (a.context) chatFound.push(...(await guard('контекст', () => analyzeContext(cc, settings)) ?? []));
         if (a.repetition) chatFound.push(...(await guard('повторы', () => analyzeRepetition(cc, settings)) ?? []));
         if (a.slop) chatFound.push(...(await guard('штампы', () => analyzeSlop(cc, settings)) ?? []));
-        await markResolved(store, `chat:${cc.chatId}`, new Set(chatFound.map(p => p.fingerprint)), ['context', 'repetition', 'slop']);
+        if (a.tokens) chatFound.push(...(await guard('токены', () => analyzeTokens(cc, settings)) ?? []));
+        const chatKinds = ['context', 'repetition', 'slop', 'preset_bloat', 'prompt_reasoning', 'prompt_html', 'advice'];
+        await markResolved(store, `chat:${cc.chatId}`, new Set(chatFound.map(p => p.fingerprint)), chatKinds);
+        for (const p of chatFound) p.chats = [cc.chatId];
         found.push(...chatFound);
 
         for (const entry of cc.cards) {
@@ -113,6 +131,11 @@ export async function runScan(ctx, store, { chatIds = null, llm = null, backgrou
         chatUpdates[cc.chatId] = chatState;
     }
 
+    for (const p of found) {
+        if (p.target?.chatId && !p.chats?.length) p.chats = [p.target.chatId];
+        const key = p.target?.type === 'world' ? `world:${p.target.world}` : p.target?.type === 'card' ? `card:${p.target.avatar}` : null;
+        if (key && usedBy.has(key)) p.chats = [...new Set([...(p.chats || []), ...usedBy.get(key)])];
+    }
     const added = await addProposals(store, found);
     const summary = {
         at: nowIso(),
