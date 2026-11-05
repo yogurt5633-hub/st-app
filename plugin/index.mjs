@@ -205,6 +205,8 @@ export async function init(router) {
         const llm = new LlmClient({ auth: user.auth, settings, stSettings });
         return {
             version: VERSION,
+            // Where SillyTavern loaded the plugin from: shows which folder the installer must update.
+            pluginDir: HERE,
             user: user.ctx.handle,
             connection: connectionInfo(stSettings),
             models: { scan: llm.resolveTier('scan'), heavy: llm.resolveTier('heavy') },

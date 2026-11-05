@@ -1,6 +1,6 @@
 {
   "name": "korrektor",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Корректор: ИИ-ассистент для SillyTavern. Находит проблемы в чатах, лорбуках и карточках и правит их после подтверждения.",
   "main": "index.mjs",
   "type": "module",

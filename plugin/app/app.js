@@ -3,6 +3,7 @@
 
 import { diffWords } from './diff.js';
 
+const APP_VERSION = '0.3.1';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -130,8 +131,10 @@ async function csrfToken(force = false) {
     return state.csrf;
 }
 
-async function api(path, { method = 'GET', body } = {}, retry = true) {
+async function api(path, { method = 'GET', body, timeout = 90000 } = {}, retry = true) {
     let res;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
         const token = await csrfToken();
         res = await fetch(`${BASE}${path}`, {
@@ -139,8 +142,11 @@ async function api(path, { method = 'GET', body } = {}, retry = true) {
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token, 'X-Korrektor': '1' },
             body: body === undefined ? undefined : JSON.stringify(body),
+            signal: controller.signal,
         });
     } catch (error) {
+        clearTimeout(timer);
+        if (error.name === 'AbortError') throw new Error('SillyTavern долго не отвечает. Попробуйте ещё раз');
         if (error.status === 403 || error.status === 401) {
             state.needLogin = true;
             renderBanner();
@@ -150,6 +156,7 @@ async function api(path, { method = 'GET', body } = {}, retry = true) {
         }
         throw new Error(error.status ? error.message : 'SillyTavern не отвечает');
     }
+    clearTimeout(timer);
     state.offline = false;
     if (res.status === 403 && retry) {
         state.csrf = null;
@@ -187,6 +194,11 @@ function h(tag, props = {}, ...children) {
         el.append(child instanceof Node ? child : document.createTextNode(String(child)));
     }
     return el;
+}
+
+/** Like el.replaceChildren, but skips empty values (null would be shown as the word "null"). */
+function put(el, ...children) {
+    el.replaceChildren(...children.flat(Infinity).filter(c => c !== null && c !== undefined && c !== false));
 }
 
 function icon(name) {
@@ -231,10 +243,10 @@ function confirmDialog({ title, text, ok = 'Да', cancel = 'Отмена', dang
         const root = $('#dialog');
         const close = (value) => {
             root.hidden = true;
-            root.replaceChildren();
+            put(root, );
             resolve(value);
         };
-        root.replaceChildren(h('div', { class: 'dialog-box', role: 'dialog', 'aria-modal': 'true' },
+        put(root, h('div', { class: 'dialog-box', role: 'dialog', 'aria-modal': 'true' },
             h('h2', { text: title }),
             text ? h('p', { text }) : null,
             h('div', { class: 'dialog-actions' },
@@ -253,6 +265,7 @@ function confirmDialog({ title, text, ok = 'Да', cancel = 'Отмена', dang
 async function loadStatus() {
     state.status = await api('/status');
     renderTop();
+    renderBanner();
     if (state.status.scanning && !state.job) followJob(state.status.scanning);
 }
 
@@ -322,7 +335,7 @@ async function renderRoute() {
     if (route.name === 'proposal') return renderProposalSheet(route.id);
     if (route.name === 'chat') return renderChatSheet(route.id);
     sheet.hidden = true;
-    sheet.replaceChildren();
+    put(sheet, );
     document.body.style.overflow = '';
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки' };
     $('#page-title').textContent = titles[route.name];
@@ -349,12 +362,19 @@ function renderTop() {
 
 function renderBanner() {
     const el = $('#banner');
+    const pluginVersion = state.status?.version;
+    if (pluginVersion && pluginVersion !== APP_VERSION && !state.needLogin && !state.offline) {
+        put(el, h('strong', { text: 'Версии не совпадают' }), `: приложение ${APP_VERSION}, плагин ${pluginVersion}. `,
+            'Перезапустите SillyTavern в Termux и обновите эту страницу. Если не помогло, запустите установщик ещё раз');
+        el.hidden = false;
+        return;
+    }
     if (state.needLogin) {
-        el.replaceChildren(h('strong', { text: 'Нет входа в SillyTavern' }), '. ',
+        put(el, h('strong', { text: 'Нет входа в SillyTavern' }), '. ',
             'Откройте ', h('a', { href: '/', text: 'SillyTavern' }), ', войдите и вернитесь сюда');
         el.hidden = false;
     } else if (state.offline) {
-        el.replaceChildren(h('strong', { text: 'SillyTavern не запущен' }), '. ',
+        put(el, h('strong', { text: 'SillyTavern не запущен' }), '. ',
             'Запустите его в Termux (виджет «Корректор» или команда ./start.sh), затем обновите страницу');
         el.hidden = false;
     } else {
@@ -383,14 +403,14 @@ function renderScanline() {
     const job = state.job;
     const last = state.status?.lastScan;
     if (job?.kind === 'scan') {
-        holder.replaceChildren(h('span', { text: job.log?.at(-1) || 'Проверка началась' }), h('span', { class: 'mono', text: 'идёт' }));
+        put(holder, h('span', { text: job.log?.at(-1) || 'Проверка началась' }), h('span', { class: 'mono', text: 'идёт' }));
     } else if (last) {
         const parts = [`${last.chats} ${plural(last.chats, 'чат', 'чата', 'чатов')}`];
         if (last.modelUsed) parts.push(`модель: ${last.modelCalls} ${plural(last.modelCalls, 'запрос', 'запроса', 'запросов')}`);
         else parts.push('без модели');
-        holder.replaceChildren(h('span', { text: `Проверено ${when(last.at)}` }), h('span', { class: 'mono', text: parts.join(' · ') }));
+        put(holder, h('span', { text: `Проверено ${when(last.at)}` }), h('span', { class: 'mono', text: parts.join(' · ') }));
     } else {
-        holder.replaceChildren(h('span', { text: 'Проверок ещё не было' }));
+        put(holder, h('span', { text: 'Проверок ещё не было' }));
     }
 }
 
@@ -461,7 +481,7 @@ function renderFeed() {
     } else {
         children.push(h('div', { class: 'list' }, visible.map(renderCard)));
     }
-    view.replaceChildren(...children);
+    put(view, ...children);
     renderScanline();
 }
 
@@ -570,7 +590,7 @@ async function followup(p, index) {
 function openSheet(metaText, body, foot) {
     const sheet = $('#sheet');
     const back = h('button', { class: 'icon-button', type: 'button', 'aria-label': 'Назад', onclick: () => history.length > 1 ? history.back() : (location.hash = '#feed') }, icon('back'));
-    sheet.replaceChildren(
+    put(sheet, 
         h('div', { class: 'sheet-head' }, back, h('span', { class: 'meta', text: metaText })),
         h('div', { class: 'sheet-body' }, body),
         foot ? h('div', { class: 'sheet-foot' }, foot) : null);
@@ -775,15 +795,15 @@ async function loadChats() {
 
 async function renderChats() {
     const view = $('#view');
-    if (!state.chats.length) view.replaceChildren(h('p', { class: 'muted', text: 'Загружаю чаты' }));
+    if (!state.chats.length) put(view, h('p', { class: 'muted', text: 'Загружаю чаты' }));
     try {
         await loadChats();
     } catch (error) {
-        view.replaceChildren(h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
+        put(view, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
         return;
     }
     if (!state.chats.length) {
-        view.replaceChildren(h('div', { class: 'empty' }, h('h2', { text: 'Чатов пока нет' }), h('p', { text: 'Начните чат в SillyTavern, и он появится здесь' })));
+        put(view, h('div', { class: 'empty' }, h('h2', { text: 'Чатов пока нет' }), h('p', { text: 'Начните чат в SillyTavern, и он появится здесь' })));
         return;
     }
 
@@ -797,14 +817,14 @@ async function renderChats() {
         const q = state.chatQuery.trim().toLowerCase();
         const pool = state.chatsView === 'watched' ? state.chats.filter(c => c.watched) : state.chats;
         const found = q ? pool.filter(c => `${c.title} ${c.file}`.toLowerCase().includes(q)) : pool;
-        tabs.replaceChildren(...[['all', 'Все', state.chats.length], ['watched', 'Отмеченные', watchedCount()]].map(([key, label, n]) =>
+        put(tabs, ...[['all', 'Все', state.chats.length], ['watched', 'Отмеченные', watchedCount()]].map(([key, label, n]) =>
             h('button', { class: 'filter', type: 'button', 'aria-pressed': String(state.chatsView === key), onclick: () => { state.chatsView = key; draw(); } },
                 label, h('span', { class: 'mono', text: n }))));
         hint.textContent = state.scanMode === 'watched'
             ? 'Корректор сам проверяет только отмеченные чаты. Звёздочка — отметить'
             : 'Сейчас Корректор сам проверяет последние изменённые чаты. Отметьте звёздочкой нужные и включите в настройках «Только отмеченные»';
         const shown = found.slice(0, 100);
-        list.replaceChildren(...[
+        put(list, ...[
             shown.length ? h('div', { class: 'rows' }, shown.map(chat => h('div', { class: 'row chat-row' },
                 starButton(chat, draw),
                 h('a', { class: 'row-link', href: `#chat/${encodeURIComponent(chat.id)}` },
@@ -819,7 +839,7 @@ async function renderChats() {
     };
     search.addEventListener('input', () => { state.chatQuery = search.value; draw(); });
     draw();
-    view.replaceChildren(h('div', { style: 'margin-bottom:12px' }, search), tabs, hint, list);
+    put(view, h('div', { style: 'margin-bottom:12px' }, search), tabs, hint, list);
 }
 
 // ---------- "Ask Korrektor" ----------
@@ -850,7 +870,7 @@ function renderAsk(chatId) {
             if (st.result.skipped?.length) items.push(h('p', { class: 'small muted', style: 'margin:4px 0 0', text: `Пропущено: ${st.result.skipped.join(', ')}` }));
             if (card) items.push(h('div', { class: 'list', style: 'margin-top:12px' }, renderCard(card)));
         }
-        out.replaceChildren(...items);
+        put(out, ...items);
     };
 
     send.addEventListener('click', async () => {
@@ -1004,16 +1024,16 @@ async function renderHistory() {
         if (state.historyTab === 'changes') await loadHistory();
         else state.backups = (await api('/backups')).items;
     } catch (error) {
-        view.replaceChildren(tabs, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить' }), h('p', { text: error.message })));
+        put(view, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить' }), h('p', { text: error.message })));
         return;
     }
 
     if (state.historyTab === 'changes') {
         if (!state.history.length) {
-            view.replaceChildren(tabs, h('div', { class: 'empty' }, h('h2', { text: 'Изменений пока нет' }), h('p', { text: 'Здесь будут применённые и отклонённые предложения. Применённые можно откатить' })));
+            put(view, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Изменений пока нет' }), h('p', { text: 'Здесь будут применённые и отклонённые предложения. Применённые можно откатить' })));
             return;
         }
-        view.replaceChildren(tabs, h('div', { class: 'rows' }, state.history.map(p =>
+        put(view, tabs, h('div', { class: 'rows' }, state.history.map(p =>
             h('a', { class: 'row', href: `#p/${encodeURIComponent(p.id)}` },
                 h('span', { class: 'row-main' },
                     h('span', { class: 'row-title', text: p.title }),
@@ -1024,10 +1044,10 @@ async function renderHistory() {
     }
 
     if (!state.backups.length) {
-        view.replaceChildren(tabs, h('div', { class: 'empty' }, h('h2', { text: 'Копий пока нет' }), h('p', { text: 'Перед каждым изменением файл копируется в data/<пользователь>/korrektor/backups' })));
+        put(view, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Копий пока нет' }), h('p', { text: 'Перед каждым изменением файл копируется в data/<пользователь>/korrektor/backups' })));
         return;
     }
-    view.replaceChildren(tabs,
+    put(view, tabs,
         h('p', { class: 'small muted', style: 'margin:0 0 12px', text: 'Хранятся последние 100 копий. Восстановление возвращает файлы целиком, текущее состояние при этом тоже сохраняется' }),
         h('div', { class: 'rows' }, state.backups.map(b =>
             h('div', { class: 'row' },
@@ -1076,7 +1096,7 @@ async function fillModels(source, datalist) {
             state.modelLists[source] = [];
         }
     }
-    datalist.replaceChildren(...state.modelLists[source].map(id => h('option', { value: id })));
+    put(datalist, ...state.modelLists[source].map(id => h('option', { value: id })));
 }
 
 let saveTimer = null;
@@ -1114,7 +1134,7 @@ async function renderSettings(reload = true) {
             state.settings = settings;
             state.worlds = worlds.items;
         } catch (error) {
-            view.replaceChildren(h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить настройки' }), h('p', { text: error.message })));
+            put(view, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить настройки' }), h('p', { text: error.message })));
             return;
         }
     }
@@ -1197,7 +1217,7 @@ async function renderSettings(reload = true) {
     interval.value = String(s.scan.intervalMinutes);
     interval.addEventListener('change', () => save({ scan: { intervalMinutes: Number(interval.value) } }));
 
-    view.replaceChildren(
+    put(view, 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Подключение' }),
             h('div', { class: 'rows' },
@@ -1266,7 +1286,8 @@ async function renderSettings(reload = true) {
             h('div', { class: 'rows' },
                 toggleField('Уведомление Android о находках', state.status?.termux ? 'Через Termux:API' : 'Нужны приложение Termux:API и пакет termux-api: pkg install termux-api', s.notify.termux, (v) => save({ notify: { termux: v } })))),
 
-        h('p', { class: 'small muted', style: 'margin:24px 0 0', text: `Корректор ${state.status?.version ?? ''} · пользователь ${state.status?.user ?? ''}` }),
+        h('p', { class: 'small muted', style: 'margin:24px 0 0', text: `Приложение ${APP_VERSION} · плагин ${state.status?.version ?? '?'} · пользователь ${state.status?.user ?? ''}` }),
+        state.status?.pluginDir ? h('p', { class: 'small muted mono', style: 'margin:4px 0 0;overflow-wrap:anywhere', text: `Плагин загружен из ${state.status.pluginDir}` }) : null,
     );
 }
 
@@ -1298,7 +1319,7 @@ async function refresh(rerender = true) {
     const results = await Promise.allSettled([loadStatus(), loadProposals(), rerender ? loadChats() : null]);
     const failed = results.find(r => r.status === 'rejected');
     if (failed && !state.status) {
-        $('#view').replaceChildren(h('div', { class: 'empty' },
+        put($('#view'), h('div', { class: 'empty' },
             h('h2', { text: 'Нет связи с SillyTavern' }),
             h('p', { text: failed.reason?.message ?? '' })));
         return;

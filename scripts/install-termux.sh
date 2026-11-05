@@ -11,23 +11,49 @@ say() { printf '%s\n' "$*"; }
 
 is_st() { [ -f "$1/server.js" ] && grep -qi '"name": *"sillytavern"' "$1/package.json" 2>/dev/null; }
 
-# Папка SillyTavern: из ST_DIR, из обычных мест или поиском по домашней папке
-# (лаунчеры кладут её глубже, например ~/SillyTavern-Launcher/SillyTavern).
-if [ -z "${ST_DIR:-}" ]; then
-    for dir in "$HOME/SillyTavern" "$HOME/SillyTavern-Launcher/SillyTavern" "$HOME/sillytavern" "$HOME/ST"; do
-        if is_st "$dir"; then ST_DIR="$dir"; break; fi
+# Папка SillyTavern, где она уже запущена (самый надёжный признак).
+running_dir() {
+    local proc cmd
+    for proc in /proc/[0-9]*; do
+        cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
+        case "$cmd" in
+            *node*server.js*) readlink "$proc/cwd" 2>/dev/null && return 0 ;;
+        esac
     done
-fi
+    return 1
+}
+RUNNING_DIR="$(running_dir || true)"
+if [ -n "$RUNNING_DIR" ] && ! is_st "$RUNNING_DIR"; then RUNNING_DIR=""; fi
+
+# Все папки SillyTavern в домашней папке (лаунчеры кладут её глубже,
+# например ~/SillyTavern-Launcher/SillyTavern).
+CANDIDATES=()
+for dir in "$HOME/SillyTavern" "$HOME/SillyTavern-Launcher/SillyTavern" "$HOME/sillytavern" "$HOME/ST"; do
+    is_st "$dir" && CANDIDATES+=("$(cd "$dir" && pwd)")
+done
+while IFS= read -r found; do
+    dir="$(cd "$(dirname "$found")" && pwd)"
+    is_st "$dir" || continue
+    case " ${CANDIDATES[*]:-} " in *" $dir "*) ;; *) CANDIDATES+=("$dir") ;; esac
+done < <(find "$HOME" -maxdepth 4 -name server.js -not -path '*/node_modules/*' 2>/dev/null)
+
 if [ -z "${ST_DIR:-}" ]; then
-    while IFS= read -r found; do
-        dir="$(dirname "$found")"
-        if is_st "$dir"; then ST_DIR="$dir"; break; fi
-    done < <(find "$HOME" -maxdepth 4 -name server.js -not -path '*/node_modules/*' 2>/dev/null)
+    if [ -n "$RUNNING_DIR" ]; then
+        ST_DIR="$RUNNING_DIR"
+    elif [ "${#CANDIDATES[@]}" -gt 0 ]; then
+        ST_DIR="${CANDIDATES[0]}"
+    fi
 fi
 if [ -z "${ST_DIR:-}" ] || ! is_st "$ST_DIR"; then
     say "Не нашёл папку SillyTavern${ST_DIR:+ в $ST_DIR}"
     say "Укажите её: ST_DIR=/путь/к/SillyTavern bash $0"
     exit 1
+fi
+if [ "${#CANDIDATES[@]}" -gt 1 ]; then
+    say "Нашлось несколько папок SillyTavern:"
+    for dir in "${CANDIDATES[@]}"; do say "  $dir"; done
+    if [ -n "$RUNNING_DIR" ]; then which="в ту, которая сейчас запущена"; else which="в первую из списка"; fi
+    say "Ставлю $which. Другую можно выбрать так: ST_DIR=/путь bash $0"
 fi
 say "SillyTavern: $ST_DIR"
 
@@ -35,7 +61,8 @@ say "SillyTavern: $ST_DIR"
 mkdir -p "$ST_DIR/plugins"
 rm -rf "$ST_DIR/plugins/korrektor"
 cp -r "$SRC" "$ST_DIR/plugins/korrektor"
-say "Плагин скопирован в $ST_DIR/plugins/korrektor"
+VERSION="$(grep -m1 '"version"' "$SRC/package.json" | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
+say "Плагин Корректор $VERSION скопирован в $ST_DIR/plugins/korrektor"
 
 # 2. Расширение-компаньон: обновляет открытый в SillyTavern чат после правки
 EXT_SRC="$HERE/../st-extension"
@@ -83,7 +110,15 @@ if [ -d "$HOME" ]; then
 fi
 
 say ""
-say "Готово. Перезапустите SillyTavern и откройте:"
+if [ -n "$RUNNING_DIR" ] && [ "$(cd "$RUNNING_DIR" && pwd)" != "$(cd "$ST_DIR" && pwd)" ]; then
+    say "Внимание: сейчас запущен SillyTavern из $RUNNING_DIR, а Корректор поставлен в $ST_DIR"
+    say "Запускайте SillyTavern из $ST_DIR или поставьте Корректор так: ST_DIR=$RUNNING_DIR bash $0"
+    say ""
+fi
+if [ -n "$RUNNING_DIR" ]; then
+    say "SillyTavern сейчас работает: остановите его (Ctrl+C в его окне Termux) и запустите снова, иначе останется старая версия"
+fi
+say "Готово. Версия $VERSION. Перезапустите SillyTavern и откройте:"
 say "  $URL"
 say "В Chrome: меню ⋮ → «Добавить на главный экран» (или «Установить приложение»)"
 say ""
