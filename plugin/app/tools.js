@@ -411,27 +411,60 @@ export async function renderCatalog() {
     const data = await loadCatalogData();
     if (location.hash !== '#tools/catalog') return;
 
+    // What is already in this tavern: { [id]: { file, where } }. Checked after the list is shown.
+    let installed = null;
     const install = async (item, button) => {
         const ok = await ui.confirmDialog({ title: `Установить «${item.name}»?`, text: `${CATALOG_NAMES[item.type]} от ${item.author || 'автора'} скачается в SillyTavern. Ваши файлы не перезаписываются: если имя занято, у нового будет номер`, ok: 'Установить' });
         if (!ok) return;
         button.disabled = true;
+        button.textContent = 'Устанавливаю…';
         try {
             const result = await ui.api('/catalog/install', { method: 'POST', body: { id: item.id }, timeout: 120000 });
             ui.toast(`Установлено: ${result.where} → ${result.name}`);
+            installed = { ...(installed || {}), [item.id]: { file: result.file, where: result.where } };
+            drawList();
         } catch (error) {
             ui.toast(error.message, true);
-        } finally {
+            button.disabled = false;
+            button.textContent = 'Установить';
+        }
+    };
+    const uninstall = async (item, button) => {
+        const where = installed?.[item.id];
+        const ok = await ui.confirmDialog({
+            title: `Удалить «${item.name}» из таверны?`,
+            text: `Файл «${where?.file || item.name}» уйдёт из раздела «${where?.where || CATALOG_NAMES[item.type]}». Его копия останется в резервных копиях Корректора (korrektor/backups/catalog)${item.type === 'card' ? '. Чаты с персонажем не удаляются' : ''}`,
+            ok: 'Удалить', danger: true,
+        });
+        if (!ok) return;
+        button.disabled = true;
+        try {
+            await ui.api('/catalog/uninstall', { method: 'POST', body: { id: item.id }, timeout: 60000 });
+            ui.toast(`Удалено из таверны: ${item.name}`);
+            installed = { ...(installed || {}) };
+            delete installed[item.id];
+            drawList();
+        } catch (error) {
+            ui.toast(error.message, true);
             button.disabled = false;
         }
+    };
+    const actionsFor = (item) => {
+        const page = item.page ? h('a', { class: 'btn secondary small', href: item.page, target: '_blank', rel: 'noopener', text: 'Страница автора' }) : null;
+        if (!installed) return [h('button', { class: 'btn secondary small', type: 'button', disabled: true, text: 'Проверяю…' }), page];
+        if (installed[item.id]) {
+            const remove = h('button', { class: 'btn quiet small', type: 'button', text: 'Удалить' });
+            remove.addEventListener('click', () => uninstall(item, remove));
+            return [h('button', { class: 'btn secondary small installed', type: 'button', disabled: true, text: '✓ Установлено' }), remove, page];
+        }
+        const button = h('button', { class: 'btn primary small', type: 'button', text: 'Установить' });
+        button.addEventListener('click', () => install(item, button));
+        return [button, page];
     };
     const list = h('div', { class: 'list catalog-list' });
     const drawList = () => {
         const items = data.items.filter(i => filter === 'all' || i.type === filter);
-        put(list, items.length ? items.map(item => {
-            const button = h('button', { class: 'btn primary small', type: 'button', text: 'Установить' });
-            button.addEventListener('click', () => install(item, button));
-            return catalogEntry(item, [button, item.page ? h('a', { class: 'btn secondary small', href: item.page, target: '_blank', rel: 'noopener', text: 'Страница автора' }) : null]);
-        }) : h('div', { class: 'empty' }, mascot('books', 150),
+        put(list, items.length ? items.map(item => catalogEntry(item, actionsFor(item))) : h('div', { class: 'empty' }, mascot('books', 150),
             h('h2', { text: data.items.length ? 'В этом разделе пусто' : 'Каталог пока пуст' }),
             h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять' })));
     };
@@ -456,6 +489,10 @@ export async function renderCatalog() {
                 h('a', { class: 'btn secondary', href: '#tools/catalog-suggest', text: 'Предложить своё' }),
                 h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); renderCatalog(); } }))));
     authorEntrance();
+    if (data.items.length) {
+        ui.api('/catalog/status', { timeout: 120000 }).then((r) => { installed = r.installed || {}; }, () => { installed = {}; })
+            .then(() => { if (list.isConnected) drawList(); });
+    }
 }
 
 /** The author's page opens with a long press on the «Каталог» title: other people do not need it. */
@@ -677,7 +714,7 @@ export async function renderCatalogAuthor() {
         const button = e.currentTarget;
         if (source === 'local' ? !file : !upload) return ui.toast('Сначала выберите файл', true);
         button.disabled = true;
-        status.textContent = 'Публикую на GitHub…';
+        status.textContent = 'Отправляю на GitHub: файл и запись в каталоге. Большой лорбук на мобильном интернете — до минуты…';
         try {
             const r = await ui.api('/catalog/publish', {
                 method: 'POST', timeout: 120000,

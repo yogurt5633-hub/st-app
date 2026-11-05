@@ -49,6 +49,8 @@ async function handle(items) {
             const module = await worldInfoModule();
             if (module) {
                 module.worldInfoCache?.delete?.(item.ref);
+                // A lorebook added or removed by Korrektor (catalog): the list in SillyTavern changes too.
+                await module.updateWorldInfoList?.();
                 module.reloadEditor?.(item.ref);
             }
         } else if (item.type === 'card') {

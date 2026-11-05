@@ -147,3 +147,55 @@ test('catalog author: ids are latin, presets keep their own settings', () => {
     assert.deepEqual(json, { max_tokens: 10, openai_max_tokens: 20, temperature: 0.7 });
     assert.deepEqual(removed.sort(), ['custom_include_headers', 'token']);
 });
+
+test('catalog status: already in the tavern by content (any formatting), removing keeps a backup', async () => {
+    const { catalogStatus, uninstallItem, fingerprint } = await import('../plugin/lib/catalog-status.mjs');
+    const t = tavern();
+    // The same lorebook as in the catalog, written with other formatting and another name.
+    const lore = { entries: { 0: { content: 'драконы и подземелья' } } };
+    fs.writeFileSync(path.join(t.ctx.dirs.worlds, 'Мой DnD.json'), JSON.stringify(lore));
+    const published = Buffer.from(JSON.stringify(lore, null, 4));
+    const card = writeCardJson(tinyPng(), { name: 'Ника', data: { name: 'Ника' } });
+    const items = [
+        { id: 'lorebook-dnd', type: 'lorebook', name: 'ДНД', url: 'https://x/dnd.json', ...fingerprint('lorebook', published) },
+        { id: 'lorebook-old', type: 'lorebook', name: 'Старый', url: 'https://x/old.json' }, // no fingerprint: downloaded once
+        { id: 'card-nika', type: 'card', name: 'Ника', url: 'https://x/nika.png' },
+        { id: 'preset-other', type: 'preset', name: 'Другой', url: 'https://x/p.json', hash: 'f'.repeat(64), size: 10 },
+    ];
+    let downloads = 0;
+    const fetchImpl = async (url) => {
+        downloads++;
+        const body = url.endsWith('.png') ? card : published;
+        return { ok: true, status: 200, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.length) };
+    };
+    const status = await catalogStatus({ ctx: t.ctx, korrektorDir: t.korrektorDir, items, fetchImpl });
+    assert.deepEqual(Object.keys(status).sort(), ['card-nika', 'lorebook-dnd', 'lorebook-old']);
+    assert.equal(status['lorebook-dnd'].file, 'Мой DnD.json');
+    assert.equal(downloads, 2);
+    await catalogStatus({ ctx: t.ctx, korrektorDir: t.korrektorDir, items, fetchImpl });
+    assert.equal(downloads, 2, 'fingerprints of downloaded files are remembered');
+
+    // Tracked installs count even when the content was changed afterwards.
+    fs.writeFileSync(path.join(t.ctx.dirs.openAI_Settings, 'Другой.json'), '{"temperature":2}');
+    const withTracked = await catalogStatus({ ctx: t.ctx, korrektorDir: t.korrektorDir, items, tracked: { 'preset-other': { type: 'preset', file: 'Другой.json' } }, fetchImpl });
+    assert.equal(withTracked['preset-other'].file, 'Другой.json');
+
+    const r = await uninstallItem({ ctx: t.ctx, korrektorDir: t.korrektorDir, item: items[0], file: 'Мой DnD.json' });
+    assert.equal(fs.existsSync(path.join(t.ctx.dirs.worlds, 'Мой DnD.json')), false);
+    assert.ok(fs.existsSync(path.join(t.root, r.backup)), 'a copy stays in the backups');
+    await assert.rejects(uninstallItem({ ctx: t.ctx, korrektorDir: t.korrektorDir, item: items[0], file: 'Мой DnD.json' }), /уже нет/);
+});
+
+test('catalog: a publish carries the fingerprint; an older copy from GitHub cache does not hide it', async () => {
+    const { setCatalogCache, loadCatalog } = await import('../plugin/lib/catalog.mjs');
+    const t = tavern();
+    const gh = fakeGitHub();
+    const r = await publishItem({ ...t, token: 'github_pat_test', type: 'lorebook', source: { file: 'Мир.json' }, meta: { ...META, name: 'Мир' }, fetchImpl: gh.fetchImpl });
+    assert.match(r.item.hash, /^[0-9a-f]{64}$/);
+    assert.equal(r.localFile, 'Мир.json');
+    const fresh = gh.catalog();
+    assert.ok(fresh.updated);
+    // GitHub's file cache still serves the version from before the publish.
+    setCatalogCache({ items: [], updated: '2020-01-01T00:00:00.000Z' });
+    assert.equal((await loadCatalog()).items[0].id, r.item.id);
+});

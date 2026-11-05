@@ -13,7 +13,7 @@ export const CATALOG_URL = 'https://raw.githubusercontent.com/yogurt5633-hub/st-
 const TYPES = new Set(['lorebook', 'preset', 'card']);
 const MAX_BYTES = 20 * 1024 * 1024;
 const CACHE_MS = 30 * 60 * 1000;
-let cache = { at: 0, items: [], error: '', submit: '' };
+let cache = { at: 0, items: [], error: '', submit: '', updated: '' };
 
 /** An https link, or '' for anything else. */
 export function cleanLink(value) {
@@ -23,7 +23,13 @@ export function cleanLink(value) {
 
 /** After the author published a change: show it at once, without waiting for GitHub's cache. */
 export function setCatalogCache(json) {
-    cache = { at: Date.now(), items: cleanItems(json), error: '', submit: cleanLink(json?.submit) };
+    const updated = typeof json?.updated === 'string' ? json.updated : '';
+    // GitHub's file cache may still serve the copy from before the author's change: keep the newer one.
+    if (cache.updated && updated && updated < cache.updated && Date.now() - cache.at < 15 * 60 * 1000) {
+        cache = { ...cache, at: Date.now(), error: '' };
+        return;
+    }
+    cache = { at: Date.now(), items: cleanItems(json), error: '', submit: cleanLink(json?.submit), updated };
 }
 
 export function cleanItems(data) {
@@ -39,6 +45,8 @@ export function cleanItems(data) {
             url: item.url,
             page: cleanLink(item.page),
             added: /^\d{4}-\d{2}-\d{2}$/.test(String(item.added || '')) ? item.added : '',
+            hash: /^[0-9a-f]{64}$/.test(String(item.hash || '')) ? item.hash : '',
+            size: Number.isFinite(Number(item.size)) && Number(item.size) > 0 ? Number(item.size) : 0,
         }));
 }
 
@@ -97,7 +105,7 @@ export async function installItem(ctx, item, { fetchImpl = globalThis.fetch } = 
         await fs.promises.mkdir(ctx.dirs.worlds, { recursive: true });
         await fs.promises.writeFile(path.join(ctx.dirs.worlds, `${name}.json`), JSON.stringify(json, null, 4));
         markTouched(ctx.handle, 'world', name);
-        return { type: 'lorebook', name, where: 'Лорбуки' };
+        return { type: 'lorebook', name, file: `${name}.json`, where: 'Лорбуки' };
     }
     if (item.type === 'preset') {
         let json;
@@ -112,7 +120,7 @@ export async function installItem(ctx, item, { fetchImpl = globalThis.fetch } = 
         await fs.promises.mkdir(dir, { recursive: true });
         await fs.promises.writeFile(path.join(dir, `${name}.json`), JSON.stringify(json, null, 4));
         markTouched(ctx.handle, 'preset', name);
-        return { type: 'preset', name, where: 'Пресеты Chat Completion' };
+        return { type: 'preset', name, file: `${name}.json`, where: 'Пресеты Chat Completion' };
     }
     if (item.type === 'card') {
         let card = null;
@@ -125,7 +133,7 @@ export async function installItem(ctx, item, { fetchImpl = globalThis.fetch } = 
         const name = await freeName(ctx.dirs.characters, base, '.png');
         await fs.promises.writeFile(path.join(ctx.dirs.characters, `${name}.png`), data);
         markTouched(ctx.handle, 'card', `${name}.png`);
-        return { type: 'card', name, where: 'Персонажи' };
+        return { type: 'card', name, file: `${name}.png`, where: 'Персонажи' };
     }
     throw httpError(400, 'Неизвестный тип');
 }

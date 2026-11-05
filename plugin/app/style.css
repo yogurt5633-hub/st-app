@@ -410,3 +410,4 @@ button.row, a.row { width: 100%; border-left: 0; border-right: 0; border-bottom:
 .author-field { display: grid; gap: 4px; }
 .card-actions.centered { justify-content: center; }
 #page-title { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.btn.installed:disabled { opacity: 1; color: var(--text-2); }

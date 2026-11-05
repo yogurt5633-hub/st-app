@@ -4,6 +4,7 @@
 // The GitHub token is kept in korrektor/catalog-admin.json of this SillyTavern user.
 // It is never sent back to the page, never synced and never packed into backups.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readCardJson } from './cards.mjs';
@@ -220,12 +221,24 @@ async function readCatalogFile(token, fetchImpl) {
     }
 }
 
-/** Changes catalog.json with `change(json)`; on a conflict (someone changed it meanwhile) tries again. */
-async function updateCatalog(token, message, change, fetchImpl) {
+/** The catalog as it is on GitHub right now (GitHub's file cache can lag a few minutes). */
+export async function readCatalogFresh(token, { fetchImpl } = {}) {
+    const { json } = await readCatalogFile(token, fetchImpl);
+    setCatalogCache(json);
+    return json;
+}
+
+/**
+ * Changes catalog.json with `change(json)`; on a conflict (someone changed it meanwhile)
+ * reads it again and retries. `first` is a copy read just before, to save a request.
+ */
+async function updateCatalog(token, message, change, fetchImpl, first = null) {
     for (let attempt = 0; attempt < 3; attempt++) {
-        const { json, sha } = await readCatalogFile(token, fetchImpl);
+        const { json, sha } = attempt === 0 && first ? first : await readCatalogFile(token, fetchImpl);
         if (!Array.isArray(json.items)) json.items = [];
         const result = change(json);
+        // Lets the app tell a fresh copy from an older one still in GitHub's cache.
+        json.updated = new Date().toISOString();
         try {
             await gh(token, 'PUT', contentsUrl(CATALOG_PATH), {
                 message,
@@ -284,7 +297,8 @@ export async function publishItem({ ctx, korrektorDir, token, type, source, meta
     const date = new Date().toISOString().slice(0, 10);
 
     // A free id: the file name in the repository is the id, so it must not clash.
-    const { json: current } = await readCatalogFile(token, fetchImpl);
+    const first = await readCatalogFile(token, fetchImpl);
+    const current = first.json;
     const taken = new Set((current.items || []).map(i => i.id));
     const base = `${type}-${slug(info.name)}`;
     let id = base;
@@ -297,13 +311,15 @@ export async function publishItem({ ctx, korrektorDir, token, type, source, meta
         branch: CATALOG_BRANCH,
     }, fetchImpl);
 
-    const item = { id, type, ...info, url: rawUrl(repoPath), added: date };
+    // The fingerprint lets every tavern see whether it already has this file.
+    const hash = crypto.createHash('sha256').update(file.data).digest('hex');
+    const item = { id, type, ...info, url: rawUrl(repoPath), added: date, hash, size: file.data.length };
     if (!item.page) delete item.page;
     await updateCatalog(token, `Каталог: добавлен «${info.name}» (${info.author})`, (json) => {
         json.items = [item, ...json.items.filter(i => i?.id !== id)];
-    }, fetchImpl);
+    }, fetchImpl, first);
     if (uploadFile) await fs.promises.rm(uploadFile, { force: true });
-    return { item: cleanItems({ items: [item] })[0], removed: file.removed };
+    return { item: cleanItems({ items: [item] })[0], removed: file.removed, localFile: uploadFile ? null : file.fileName };
 }
 
 /** Removes a record; its file goes too when it lives in this repository's catalog/files/. */

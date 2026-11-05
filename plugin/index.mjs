@@ -30,7 +30,8 @@ import { translateText } from './lib/translate.mjs';
 import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
 import { loadCatalog, installItem } from './lib/catalog.mjs';
-import { listLocal, readLocal, saveCatalogUpload, readAdmin, saveAdmin, checkToken, publishItem, removeItem, setSubmitLink, CATALOG_REPO } from './lib/catalog-publish.mjs';
+import { listLocal, readLocal, saveCatalogUpload, readAdmin, saveAdmin, checkToken, publishItem, removeItem, setSubmitLink, readCatalogFresh, CATALOG_REPO } from './lib/catalog-publish.mjs';
+import { catalogStatus, uninstallItem } from './lib/catalog-status.mjs';
 import { markTouched } from './lib/touched.mjs';
 import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
 import { readJson, writeJson } from './lib/util.mjs';
@@ -513,8 +514,35 @@ export async function init(router) {
 
     // ---------- catalog ----------
     router.get('/catalog', route(async (req, user) => {
-        const catalog = await loadCatalog({ force: Boolean(req.query.force) });
+        // The catalog's author asking for a fresh list gets it straight from GitHub, past its cache.
+        let fresh = false;
+        if (req.query.force) {
+            const admin = await readAdmin(user.store.dir);
+            if (admin.token) fresh = Boolean(await readCatalogFresh(admin.token).catch(() => null));
+        }
+        const catalog = await loadCatalog({ force: Boolean(req.query.force) && !fresh });
         return { items: catalog.items, error: catalog.error, submit: catalog.submit };
+    }));
+    // Installs and publishes made from this tavern: { [id]: { type, file } }.
+    const tracked = async (user) => (await user.store.getState()).catalogInstalled || {};
+    const track = (user, id, value) => user.store.updateState(s => {
+        s.catalogInstalled = { ...(s.catalogInstalled || {}) };
+        if (value) s.catalogInstalled[id] = value;
+        else delete s.catalogInstalled[id];
+    });
+    router.get('/catalog/status', route(async (req, user) => {
+        const catalog = await loadCatalog();
+        return { installed: await catalogStatus({ ctx: user.ctx, korrektorDir: user.store.dir, items: catalog.items, tracked: await tracked(user) }) };
+    }));
+    router.post('/catalog/uninstall', route(async (req, user) => {
+        const catalog = await loadCatalog();
+        const item = catalog.items.find(i => i.id === String(req.body?.id || ''));
+        if (!item) throw httpError(404, 'Такой записи в каталоге нет');
+        const status = await catalogStatus({ ctx: user.ctx, korrektorDir: user.store.dir, items: [item], tracked: await tracked(user) });
+        if (!status[item.id]) throw httpError(404, 'В таверне этого уже нет');
+        const result = await uninstallItem({ ctx: user.ctx, korrektorDir: user.store.dir, item, file: status[item.id].file });
+        await track(user, item.id, null);
+        return result;
     }));
     // Presets, lorebooks and cards of this SillyTavern: to send to the catalog's author or to publish.
     router.get('/catalog/local', route(async (req, user) => ({ items: await listLocal(user.ctx, String(req.query.type || '')) })));
@@ -562,7 +590,7 @@ export async function init(router) {
     }));
     router.post('/catalog/publish', route(async (req, user) => {
         const body = req.body || {};
-        return publishItem({
+        const result = await publishItem({
             ctx: user.ctx,
             korrektorDir: user.store.dir,
             token: await adminToken(user),
@@ -570,6 +598,9 @@ export async function init(router) {
             source: body.upload ? { upload: String(body.upload) } : { file: String(body.file || '') },
             meta: body.meta || {},
         });
+        // Published from this tavern: it already has the file.
+        if (result.localFile) await track(user, result.item.id, { type: result.item.type, file: result.localFile });
+        return result;
     }));
     router.post('/catalog/remove', route(async (req, user) => removeItem({ token: await adminToken(user), id: String(req.body?.id || '') })));
     router.post('/catalog/submit-link', route(async (req, user) => setSubmitLink({ token: await adminToken(user), link: String(req.body?.link || '') })));
@@ -577,7 +608,9 @@ export async function init(router) {
         const catalog = await loadCatalog();
         const item = catalog.items.find(i => i.id === String(req.body?.id || ''));
         if (!item) throw httpError(404, 'Такой записи в каталоге нет');
-        return installItem(user.ctx, item);
+        const result = await installItem(user.ctx, item);
+        await track(user, item.id, { type: item.type, file: result.file });
+        return result;
     }));
 
     // ---------- sync: the side that answers ----------
