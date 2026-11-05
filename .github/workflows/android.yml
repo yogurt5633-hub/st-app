@@ -76,6 +76,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "app-${APP_CODE}" korrektor.apk \
-            --title "Корректор ${APP_NAME}" \
+            --title "Корректор ${APP_NAME} (бета)" \
             --notes "Приложение Корректор для Android. Установите korrektor.apk или обновите на вкладке «Ещё» в самом приложении." \
             --latest
