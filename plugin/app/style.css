@@ -364,13 +364,9 @@ button.row, a.row { width: 100%; border-left: 0; border-right: 0; border-bottom:
 }
 
 /* ---------- mascot ---------- */
-/* The mascot is drawn for a dark background: on the light theme it sits on a small dark stage. */
+/* Two drawings of the mascot: img/ for the dark theme, img/light/ for the light one (chosen in tools.js). */
 .mascot { display: block; flex: none; object-fit: contain; }
 .empty .mascot { margin: 0 auto 12px; }
-:root[data-theme="light"] .mascot { background: #1c1a18; border-radius: 20px; padding: 8px; box-sizing: content-box; }
-@media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) .mascot { background: #1c1a18; border-radius: 20px; padding: 8px; box-sizing: content-box; }
-}
 .with-mascot { display: flex; align-items: center; gap: 12px; }
 .with-mascot > div { min-width: 0; }
 
