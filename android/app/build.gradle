@@ -20,7 +20,7 @@ android {
 
     // Updates install over the old app only if every APK is signed with the same private key.
     // That key is never stored in the repository: CI takes it from GitHub secrets
-    // (KORREKTOR_KEYSTORE_BASE64 and passwords). Without it builds use the debug key: fine for testing only.
+    // (scripts/setup-signing.sh puts it there). Without it builds use the debug key: fine for testing only.
     def keystore = System.getenv('KORREKTOR_KEYSTORE')
     signingConfigs {
         if (keystore) {

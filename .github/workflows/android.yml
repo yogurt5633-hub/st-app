@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+# One build per branch at a time.
+concurrency:
+  group: android-${{ github.ref }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,24 +26,36 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # Updates install over the old app only if every APK has the same signing key.
+      # The key lives only in repository secrets; scripts/setup-signing.sh puts it there.
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KORREKTOR_KEYSTORE_BASE64 }}
+          PW: ${{ secrets.KORREKTOR_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$PW" ]; then
+            echo "::warning::No signing key in secrets (run scripts/setup-signing.sh): building a test APK, no release is published"
+            exit 0
+          fi
+          KEY="$RUNNER_TEMP/release.p12"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEY"
+          if ! keytool -list -keystore "$KEY" -storetype PKCS12 -storepass:env PW -alias korrektor >/dev/null 2>&1; then
+            echo "::error::The signing key in secrets cannot be opened with KORREKTOR_SIGNING_PASSWORD: run scripts/setup-signing.sh again"
+            exit 1
+          fi
+          {
+            echo "KORREKTOR_KEYSTORE=$KEY"
+            echo "KORREKTOR_KEY_ALIAS=korrektor"
+            echo "SIGNED=1"
+          } >> "$GITHUB_ENV"
 
+      # The runner already has the Android SDK (ANDROID_HOME).
       - name: Build APK
         working-directory: android
         env:
-          # The signing key lives only in repository secrets, never in the code.
-          KORREKTOR_KEYSTORE_BASE64: ${{ secrets.KORREKTOR_KEYSTORE_BASE64 }}
-          KORREKTOR_STORE_PASSWORD: ${{ secrets.KORREKTOR_STORE_PASSWORD }}
-          KORREKTOR_KEY_ALIAS: ${{ secrets.KORREKTOR_KEY_ALIAS }}
-          KORREKTOR_KEY_PASSWORD: ${{ secrets.KORREKTOR_KEY_PASSWORD }}
+          KORREKTOR_STORE_PASSWORD: ${{ secrets.KORREKTOR_SIGNING_PASSWORD }}
+          KORREKTOR_KEY_PASSWORD: ${{ secrets.KORREKTOR_SIGNING_PASSWORD }}
         run: |
-          if [ -n "$KORREKTOR_KEYSTORE_BASE64" ]; then
-            echo "$KORREKTOR_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            export KORREKTOR_KEYSTORE="$RUNNER_TEMP/release.jks"
-            echo "SIGNED=1" >> "$GITHUB_ENV"
-          else
-            echo "::warning::No signing key in secrets: building a test APK with a temporary key, no release is published"
-          fi
           CODE=$((100 + GITHUB_RUN_NUMBER))
           NAME="1.0.${GITHUB_RUN_NUMBER}"
           echo "APP_CODE=$CODE" >> "$GITHUB_ENV"
