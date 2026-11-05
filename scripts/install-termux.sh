@@ -9,41 +9,9 @@ SRC="$HERE/../plugin"
 
 say() { printf '%s\n' "$*"; }
 
-is_st() { [ -f "$1/server.js" ] && grep -qi '"name": *"sillytavern"' "$1/package.json" 2>/dev/null; }
+source "$HERE/st-dir.sh"
+find_st_dir
 
-# Папка SillyTavern, где она уже запущена (самый надёжный признак).
-running_dir() {
-    local proc cmd
-    for proc in /proc/[0-9]*; do
-        cmd="$(tr '\0' ' ' < "$proc/cmdline" 2>/dev/null || true)"
-        case "$cmd" in
-            *node*server.js*) readlink "$proc/cwd" 2>/dev/null && return 0 ;;
-        esac
-    done
-    return 1
-}
-RUNNING_DIR="$(running_dir || true)"
-if [ -n "$RUNNING_DIR" ] && ! is_st "$RUNNING_DIR"; then RUNNING_DIR=""; fi
-
-# Все папки SillyTavern в домашней папке (лаунчеры кладут её глубже,
-# например ~/SillyTavern-Launcher/SillyTavern).
-CANDIDATES=()
-for dir in "$HOME/SillyTavern" "$HOME/SillyTavern-Launcher/SillyTavern" "$HOME/sillytavern" "$HOME/ST"; do
-    is_st "$dir" && CANDIDATES+=("$(cd "$dir" && pwd)")
-done
-while IFS= read -r found; do
-    dir="$(cd "$(dirname "$found")" && pwd)"
-    is_st "$dir" || continue
-    case " ${CANDIDATES[*]:-} " in *" $dir "*) ;; *) CANDIDATES+=("$dir") ;; esac
-done < <(find "$HOME" -maxdepth 4 -name server.js -not -path '*/node_modules/*' 2>/dev/null)
-
-if [ -z "${ST_DIR:-}" ]; then
-    if [ -n "$RUNNING_DIR" ]; then
-        ST_DIR="$RUNNING_DIR"
-    elif [ "${#CANDIDATES[@]}" -gt 0 ]; then
-        ST_DIR="${CANDIDATES[0]}"
-    fi
-fi
 if [ -z "${ST_DIR:-}" ] || ! is_st "$ST_DIR"; then
     say "Не нашёл папку SillyTavern${ST_DIR:+ в $ST_DIR}"
     say "Укажите её: ST_DIR=/путь/к/SillyTavern bash $0"

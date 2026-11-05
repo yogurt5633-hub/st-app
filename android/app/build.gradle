@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Version comes from the CI build number; local builds get 1 / 1.0.0-dev.
+def code = (project.findProperty('versionCode') ?: '1') as int
+def name = (project.findProperty('versionName') ?: '1.0.0-dev') as String
+
+android {
+    namespace 'io.github.yogurt5633.korrektor'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.github.yogurt5633.korrektor'
+        minSdk 24
+        targetSdk 34
+        versionCode code
+        versionName name
+    }
+
+    // Updates install over the old app only if every APK is signed with the same private key.
+    // That key is never stored in the repository: CI takes it from GitHub secrets
+    // (KORREKTOR_KEYSTORE_BASE64 and passwords). Without it builds use the debug key: fine for testing only.
+    def keystore = System.getenv('KORREKTOR_KEYSTORE')
+    signingConfigs {
+        if (keystore) {
+            release {
+                storeFile file(keystore)
+                storePassword System.getenv('KORREKTOR_STORE_PASSWORD')
+                keyAlias System.getenv('KORREKTOR_KEY_ALIAS')
+                keyPassword System.getenv('KORREKTOR_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
