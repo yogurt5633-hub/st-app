@@ -2,6 +2,22 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "preset-nemo-engine-v11-3",
+            "type": "preset",
+            "name": "Nemo Engine v11.3",
+            "author": "поделился @hahahahajjja",
+            "description": "",
+            "tags": [],
+            "models": [
+                "универсально"
+            ],
+            "regex": 120,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/presets/preset-nemo-engine-v11-3.json",
+            "added": "2026-11-05",
+            "hash": "43c47a44289fa6f7d6428a8bc27c4152f63070f75ccc8ccea4bff1407f011655",
+            "size": 1507017
+        },
+        {
             "id": "lorebook-dnd",
             "type": "lorebook",
             "name": "ДНД",
@@ -14,5 +30,6 @@
             "added": "2026-11-05"
         }
     ],
-    "submit": "https://t.me/correct0r?direct"
+    "submit": "https://t.me/correct0r?direct",
+    "updated": "2026-11-05T18:51:50.092Z"
 }
