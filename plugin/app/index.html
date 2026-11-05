@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#161513" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#f7f4ee" media="(prefers-color-scheme: light)">
+    <meta name="description" content="Проверяет ролевые чаты SillyTavern, лорбуки и карточки и предлагает правки">
+    <title>Корректор</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app" class="app">
+        <header class="topbar">
+            <h1 id="page-title" class="topbar-title">Лента</h1>
+            <div class="topbar-side">
+                <span id="scan-meta" class="meta"></span>
+                <button id="scan-button" class="icon-button" type="button" aria-label="Проверить сейчас">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/></svg>
+                </button>
+            </div>
+        </header>
+        <div id="banner" class="banner" hidden></div>
+        <main id="view" class="view" tabindex="-1"></main>
+        <nav class="tabbar" aria-label="Разделы">
+            <a href="#feed" class="tab" data-tab="feed">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>
+                <span>Лента</span><span id="feed-count" class="tab-count"></span>
+            </a>
+            <a href="#chats" class="tab" data-tab="chats">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4z"/></svg>
+                <span>Чаты</span>
+            </a>
+            <a href="#history" class="tab" data-tab="history">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.34-5.66"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg>
+                <span>История</span>
+            </a>
+            <a href="#settings" class="tab" data-tab="settings">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/><path d="M4 17h4"/><path d="M12 17h8"/><circle cx="10" cy="17" r="2"/></svg>
+                <span>Настройки</span>
+            </a>
+        </nav>
+    </div>
+    <div id="sheet" class="sheet" hidden></div>
+    <div id="dialog" class="dialog" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
