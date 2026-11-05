@@ -63,5 +63,6 @@ final class Prefs {
     static final String AUTO_UPDATE = "autoUpdate";         // update Korrektor before starting SillyTavern
     static final String NOTIFY = "notify";                  // notifications about new cards and updates
     static final String LAST_TAB = "lastTab";
+    static final String SHOW_SITES = "showSites";           // the "Sites" tab with AI providers' pages
     static final String START_CMD = "startCmd";             // the user's own command to start SillyTavern; empty = automatic
 }

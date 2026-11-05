@@ -50,6 +50,7 @@ final class ControlBridge {
             s.put("stDir", activity.stDir);
             s.put("startCmd", prefs.text(Prefs.START_CMD));
             s.put("permissionDenied", activity.permissionDenied);
+            s.put("showSites", prefs.flag(Prefs.SHOW_SITES, true));
         } catch (Exception ignored) {
             // all puts are simple values
         }
@@ -149,9 +150,10 @@ final class ControlBridge {
 
     @JavascriptInterface
     public void setFlag(String key, boolean value) {
-        if (Prefs.AUTO_START.equals(key) || Prefs.AUTO_UPDATE.equals(key) || Prefs.NOTIFY.equals(key)) {
+        if (Prefs.AUTO_START.equals(key) || Prefs.AUTO_UPDATE.equals(key) || Prefs.NOTIFY.equals(key) || Prefs.SHOW_SITES.equals(key)) {
             activity.prefs.setFlag(key, value);
         }
+        if (Prefs.SHOW_SITES.equals(key)) activity.runOnUiThread(() -> activity.setSitesVisible(value));
     }
 
     @JavascriptInterface
@@ -160,6 +162,29 @@ final class ControlBridge {
             ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
             clipboard.setPrimaryClip(ClipData.newPlainText("Корректор", text));
             activity.toast("Скопировано");
+        });
+    }
+
+    /** Provider sites for the "Sites" tab: [{name, url}]. */
+    @JavascriptInterface
+    public String sites() {
+        return activity.sites.sites().toString();
+    }
+
+    @JavascriptInterface
+    public void setSites(String json) {
+        activity.runOnUiThread(() -> {
+            String error = activity.sites.save(json);
+            activity.toast(error == null ? "Список сайтов сохранён" : error);
+            activity.notifyHome();
+        });
+    }
+
+    @JavascriptInterface
+    public void openSite(int index) {
+        activity.runOnUiThread(() -> {
+            activity.showTab(MainActivity.SITES);
+            activity.sites.open(index);
         });
     }
 

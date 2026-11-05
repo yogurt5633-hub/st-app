@@ -51,6 +51,7 @@ public class MainActivity extends Activity {
     static final String TAVERN = "tavern";
     static final String KORREKTOR = "korrektor";
     static final String HOME = "home";
+    static final String SITES = "sites";
 
     private static final int REQ_FILE = 1;
     private static final int REQ_TERMUX = 2;
@@ -101,6 +102,7 @@ public class MainActivity extends Activity {
     private WebView tavern;
     private WebView korrektor;
     private WebView home;
+    SitesTab sites;
     private final Map<String, TextView> tabs = new LinkedHashMap<>();
     private String current = HOME;
     private boolean loaded;
@@ -136,6 +138,8 @@ public class MainActivity extends Activity {
             frame.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
         home.loadUrl("file:///android_asset/home.html");
+        sites = new SitesTab(this);
+        frame.addView(sites.view(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         View line = new View(this);
         line.setBackgroundColor(LINE);
@@ -146,7 +150,9 @@ public class MainActivity extends Activity {
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
         addTab(bar, TAVERN, "Таверна");
         addTab(bar, KORREKTOR, "Корректор");
+        addTab(bar, SITES, "Сайты");
         addTab(bar, HOME, "Ещё");
+        setSitesVisible(prefs.flag(Prefs.SHOW_SITES, true));
 
         setContentView(root);
         showTab(HOME);
@@ -363,12 +369,13 @@ public class MainActivity extends Activity {
     // ---------- tabs and server state ----------
 
     private WebView viewOf(String tab) {
-        return TAVERN.equals(tab) ? tavern : KORREKTOR.equals(tab) ? korrektor : home;
+        return TAVERN.equals(tab) ? tavern : KORREKTOR.equals(tab) ? korrektor : SITES.equals(tab) ? sites.webView() : home;
     }
 
     void showTab(String name) {
-        String tab = TAVERN.equals(name) || KORREKTOR.equals(name) ? name : HOME;
-        if (!HOME.equals(tab) && !stUp) {
+        String tab = TAVERN.equals(name) || KORREKTOR.equals(name) || SITES.equals(name) ? name : HOME;
+        // Provider sites work without SillyTavern; the other tabs need it running.
+        if (!HOME.equals(tab) && !SITES.equals(tab) && !stUp) {
             message = starting ? message : "SillyTavern не запущен";
             tab = HOME;
         }
@@ -381,7 +388,9 @@ public class MainActivity extends Activity {
         tavern.setVisibility(TAVERN.equals(tab) ? View.VISIBLE : View.GONE);
         korrektor.setVisibility(KORREKTOR.equals(tab) ? View.VISIBLE : View.GONE);
         home.setVisibility(HOME.equals(tab) ? View.VISIBLE : View.GONE);
-        if (!HOME.equals(tab)) prefs.setText(Prefs.LAST_TAB, tab);
+        sites.view().setVisibility(SITES.equals(tab) ? View.VISIBLE : View.GONE);
+        if (SITES.equals(tab)) sites.onShown();
+        if (TAVERN.equals(tab) || KORREKTOR.equals(tab)) prefs.setText(Prefs.LAST_TAB, tab);
         notifyHome();
     }
 
@@ -627,6 +636,23 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /** "Edit list" in the Sites tab: the list is edited on the More page. */
+    void showSitesSettings() {
+        homeChosen = true;
+        showTab(HOME);
+        try {
+            sendToHome("focus", new JSONObject().put("section", "sites"));
+        } catch (Exception ignored) {
+            // a plain string always fits
+        }
+    }
+
+    void setSitesVisible(boolean on) {
+        TextView tab = tabs.get(SITES);
+        if (tab != null) tab.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (!on && SITES.equals(current)) showTab(HOME);
+    }
+
     void openTermux() {
         Intent intent = getPackageManager().getLaunchIntentForPackage(Termux.PACKAGE);
         if (intent != null) startActivity(intent);
@@ -781,6 +807,12 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (SITES.equals(current)) {
+            WebView site = sites.webView();
+            if (site.canGoBack()) site.goBack();
+            else showTab(stUp ? TAVERN : HOME);
+            return;
+        }
         WebView view = viewOf(current);
         if (view == home) {
             if (stUp) showTab(TAVERN);
@@ -799,7 +831,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (running == this) running = null;
         handler.removeCallbacksAndMessages(null);
-        for (WebView view : new WebView[]{tavern, korrektor, home}) {
+        for (WebView view : new WebView[]{tavern, korrektor, home, sites == null ? null : sites.webView()}) {
             if (view != null) view.destroy();
         }
         super.onDestroy();

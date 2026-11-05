@@ -71,6 +71,8 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
     var logsLoading = false;
     var drafts = {};          // what the user typed and has not saved yet
     var pendingRender = false;
+    var siteList = [];        // provider sites of the "Sites" tab
+    var siteEdit = null;      // index being edited, or 'new'
     var root = document.getElementById('root');
 
     function h(tag, props) {
@@ -256,6 +258,65 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         ];
     }
 
+    function sitesSection() {
+        var s = state;
+        function saveList(list) {
+            app.setSites(JSON.stringify(list));
+        }
+        function form(index) {
+            var item = index === 'new' ? { name: '', url: '' } : siteList[index];
+            var name = h('input', { type: 'text', 'aria-label': 'Название', placeholder: 'Название, например Link API', autocomplete: 'off' });
+            var url = h('input', { type: 'text', 'aria-label': 'Адрес', placeholder: 'https://…', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false', style: 'margin-top:8px' });
+            name.value = drafts.siteName !== undefined ? drafts.siteName : item.name;
+            url.value = drafts.siteUrl !== undefined ? drafts.siteUrl : item.url;
+            name.addEventListener('input', function () { drafts.siteName = name.value; });
+            url.addEventListener('input', function () { drafts.siteUrl = url.value; });
+            function done() {
+                delete drafts.siteName;
+                delete drafts.siteUrl;
+                siteEdit = null;
+                if (document.activeElement) document.activeElement.blur();
+                render();
+            }
+            var keep = function (e) { e.preventDefault(); };
+            return h('div', { class: 'row' }, name, url,
+                h('div', { class: 'actions' },
+                    h('button', { class: 'btn primary small', type: 'button', onmousedown: keep, onclick: function () {
+                        var list = siteList.slice();
+                        var entry = { name: name.value.trim(), url: url.value.trim() };
+                        if (!entry.name || !entry.url) { alert('Впишите название и адрес'); return; }
+                        if (index === 'new') list.push(entry); else list[index] = entry;
+                        saveList(list);
+                        done();
+                    }, text: 'Сохранить' }),
+                    h('button', { class: 'btn quiet small', type: 'button', onmousedown: keep, onclick: done, text: 'Отмена' })));
+        }
+        var rows = siteList.map(function (item, i) {
+            if (siteEdit === i) return form(i);
+            return h('div', { class: 'row' },
+                h('div', { class: 'line' },
+                    h('div', { style: 'min-width:0' }, h('div', { text: item.name }), h('div', { class: 'small muted', style: 'overflow-wrap:anywhere', text: item.url.replace(/^https?:\/\//, '') })),
+                    h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openSite(i); }, text: 'Открыть' })),
+                h('div', { class: 'actions', style: 'margin-top:4px' },
+                    h('button', { class: 'btn quiet small', type: 'button', onclick: function () { siteEdit = i; render(); }, text: 'Изменить' }),
+                    h('button', { class: 'btn quiet small', type: 'button', onclick: function () {
+                        if (!confirm('Убрать «' + item.name + '» из списка?')) return;
+                        var list = siteList.slice();
+                        list.splice(i, 1);
+                        saveList(list);
+                    }, text: 'Убрать' })));
+        });
+        return [
+            h('h2', { id: 'sites', text: 'Сайты провайдеров' }),
+            h('div', { class: 'box' },
+                toggle('Вкладка «Сайты»', 'Сайты провайдеров ИИ прямо в приложении: войти, взять ключ, сменить модель, пополнить баланс. Ключ потом вставьте в таверне, в настройках подключения к API', s.showSites, function (v) { app.setFlag('showSites', v); }),
+                rows,
+                siteEdit === 'new' ? form('new') : h('div', { class: 'row' },
+                    h('button', { class: 'btn secondary small', type: 'button', onclick: function () { siteEdit = 'new'; render(); }, text: 'Добавить сайт' }),
+                    h('p', { class: 'hint', text: 'Вход через Google внутри приложения может не сработать: войдите по почте или откройте сайт кнопкой «В браузере» на вкладке «Сайты»' }))),
+        ];
+    }
+
     function notifySection() {
         var s = state;
         return [
@@ -284,6 +345,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             tavernSection(),
             setupSection() || [],
             updatesSection(),
+            sitesSection(),
             notifySection(),
             h('p', { class: 'hint', style: 'margin-top:24px' }, 'Журналы в Termux: ~/.korrektor-ctl.log и ~/.korrektor-st.log · ',
                 h('a', { href: '#', onclick: function (e) { e.preventDefault(); app.openLink('project'); }, text: 'проект на GitHub' }))
@@ -296,6 +358,11 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         } catch (e) {
             state = {};
         }
+        try {
+            siteList = JSON.parse(app.sites()) || [];
+        } catch (e) {
+            siteList = [];
+        }
         render();
     }
 
@@ -307,6 +374,12 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         if (type === 'updates') {
             updates = data;
             checking = false;
+        }
+        if (type === 'focus' && data && data.section) {
+            refresh();
+            var target = document.getElementById(data.section);
+            if (target) target.scrollIntoView({ block: 'start' });
+            return;
         }
         if (type === 'logs') {
             logs = (data && data.text) || '';
