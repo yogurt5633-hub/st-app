@@ -120,7 +120,7 @@ a { color: var(--accent); }
             h('div', { class: 'box' },
                 h('div', { class: 'row' },
                     h('div', { class: 'status' }, h('span', { class: 'dot ' + dot }), title),
-                    s.message ? h('p', { class: 'message', text: s.message }) : null,
+                    s.message && s.message !== title ? h('p', { class: 'message', text: s.message }) : null,
                     h('div', { class: 'actions' }, actions)),
                 h('div', { class: 'row' },
                     h('span', { class: 'small muted', text: 'Адрес SillyTavern' }),

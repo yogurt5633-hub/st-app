@@ -87,7 +87,9 @@ final class Updater {
                         break;
                     }
                 }
-                app.put("latest", json.optString("name", tag));
+                // Release titles look like "Корректор 1.0.5": show only the version.
+                String title = json.optString("name", "").replaceFirst("^[^0-9]*", "");
+                app.put("latest", title.isEmpty() ? tag : title);
                 app.put("latestCode", code);
                 app.put("url", apk);
                 app.put("available", code > current && !apk.isEmpty());
