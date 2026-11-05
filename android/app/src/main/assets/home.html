@@ -203,7 +203,8 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         var actions = [];
         if (s.stUp) {
             actions.push(h('button', { class: 'btn primary', type: 'button', onclick: function () { app.showTab('tavern'); }, text: 'Открыть таверну' }));
-            actions.push(h('button', { class: 'btn secondary', type: 'button', onclick: function () { app.action('restart'); }, text: 'Перезапустить' }));
+            actions.push(h('button', { class: 'btn secondary', type: 'button', onclick: function () { app.reloadTavern(); }, text: 'Обновить страницу' }));
+            actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: function () { app.action('restart'); }, text: 'Перезапустить' }));
             actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: function () { app.action('stop'); }, text: 'Остановить' }));
         } else {
             actions.push(h('button', { class: 'btn primary', type: 'button', disabled: s.starting, onclick: startTavern, text: s.starting ? 'Запускаю' : 'Запустить' }));
@@ -225,6 +226,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                 h('div', { class: 'row' },
                     h('div', { class: 'status' }, h('span', { class: 'dot ' + dot }), title),
                     s.message && s.message !== title ? h('p', { class: 'message', text: s.message }) : null,
+                    s.starting && s.progress ? h('p', { class: 'hint mono', style: 'margin-top:6px;overflow-wrap:anywhere', text: s.progress }) : null,
                     h('div', { class: 'actions' }, actions)),
                 logRow,
                 h('div', { class: 'row' },
@@ -439,7 +441,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                     seg([['dark', 'Тёмная'], ['light', 'Светлая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
                 h('div', { class: 'row' }, h('span', { text: 'Цвет акцента' }),
                     seg([['amber', 'Янтарь', '#e3a54a'], ['rose', 'Роза', '#e58aa0'], ['mint', 'Мята', '#5fc9a0'], ['sky', 'Небо', '#6aaee8'], ['lavender', 'Лаванда', '#a99be8']], s.accent, function (v) { app.setTheme(s.theme, v); })),
-                toggle('Строка модели над таверной', 'Модель и пресет Chat Completion меняются одним нажатием, не заходя в настройки SillyTavern', s.showModelBar, function (v) { app.setFlag('showModelBar', v); })),
+                toggle('Модель и пресет над таверной', 'В строке над таверной: модель и пресет Chat Completion меняются одним нажатием. Обновить страницу, перевод, фоны и аватар там есть всегда', s.showModelBar, function (v) { app.setFlag('showModelBar', v); })),
         ];
     }
 

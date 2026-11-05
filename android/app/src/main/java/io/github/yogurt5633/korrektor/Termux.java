@@ -33,8 +33,9 @@ final class Termux {
     private static final String BOOT = VARS
             + "if [ ! -d \"$SRC/.git\" ]; then command -v git >/dev/null || { echo 'В Termux нет git: нажмите «Установить SillyTavern» или выполните pkg install git'; exit 1; }; "
             + "git clone -q " + REPO + " \"$SRC\" 2>&1 | tee -a \"$LOG\"; fi; ";
-    private static final String PULL = "git -C \"$SRC\" pull -q --ff-only 2>&1 | tee -a \"$LOG\"; ";
-    private static final String ENSURE = "grep -q 'status)' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
+    // ~/korrektor-src is the app's own copy of the code: it always follows main exactly.
+    private static final String PULL = "{ git -C \"$SRC\" fetch -q origin main && git -C \"$SRC\" reset -q --hard origin/main; } 2>&1 | tee -a \"$LOG\"; ";
+    private static final String ENSURE = "grep -q 'cd_only_dir' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
     private static final String CTL = "exec bash \"$SRC/scripts/korrektor-ctl.sh\" ";
 
     private Termux() {
@@ -88,13 +89,15 @@ final class Termux {
                         + "echo '== Корректор: установка SillyTavern'; "
                         + "command -v git >/dev/null || { apt-get update && apt-get -y install git; } || { echo 'Не удалось поставить git'; exit 1; }; "
                         + "[ -d \"$SRC/.git\" ] || git clone -q " + REPO + " \"$SRC\" || exit 1; "
-                        + "git -C \"$SRC\" pull -q --ff-only; "
+                        + PULL
                         + "exec bash \"$SRC/scripts/install-st.sh\"";
             case "status":
                 // Quick check that Termux accepts commands, and what is there.
                 return VARS + "echo termux=1; command -v git >/dev/null && echo git=1; "
                         + "[ -d \"$SRC/.git\" ] && echo src=1; "
                         + "[ -f \"$SRC/scripts/korrektor-ctl.sh\" ] && bash \"$SRC/scripts/korrektor-ctl.sh\" status; exit 0";
+            case "progress":
+                return "S=\"$HOME/.korrektor-st.log\"; [ -f \"$S\" ] && tail -n 30 \"$S\" | sed 's/\\x1b\\[[0-9;]*[A-Za-z]//g' | grep -v '^[[:space:]]*$' | tail -n 1; exit 0";
             case "logs":
                 return "L=\"$HOME/.korrektor-ctl.log\"; S=\"$HOME/.korrektor-st.log\"; "
                         + "[ -f \"$L\" ] || [ -f \"$S\" ] || { echo 'Журналов пока нет: из приложения SillyTavern ещё не запускался'; exit 0; }; "

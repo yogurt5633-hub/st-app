@@ -1,0 +1,25 @@
+/* Корректор: backgrounds sheet and avatar window, in SillyTavern's own theme colours. */
+.kg-sheet { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; z-index: 10050; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-end; justify-content: center; }
+.kg-sheet-box { width: min(640px, 100%); max-height: 82vh; overflow: auto; background: var(--SmartThemeBlurTintColor, #171717); color: var(--SmartThemeBodyColor, #ddd); border: 1px solid var(--SmartThemeBorderColor, #333); border-radius: 16px 16px 0 0; padding: 12px 14px 18px; box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35); }
+.kg-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-size: 1.05em; }
+.kg-x { min-width: 36px; }
+.kg-seg { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.kg-seg button { border: 1px solid var(--SmartThemeBorderColor, #444); background: transparent; color: inherit; border-radius: 16px; padding: 6px 12px; font: inherit; cursor: pointer; }
+.kg-seg button.on { background: var(--SmartThemeQuoteColor, #e3a54a); border-color: transparent; color: #161513; }
+.kg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.kg-grid-avatars { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+.kg-tile { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 0; border: 2px solid transparent; border-radius: 10px; background: rgba(127, 127, 127, 0.12); color: inherit; font: inherit; font-size: 0.8em; cursor: pointer; overflow: hidden; }
+.kg-tile img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; }
+.kg-grid-avatars .kg-tile img { aspect-ratio: 3 / 4; }
+.kg-tile span { padding: 0 6px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.kg-tile.on { border-color: var(--SmartThemeQuoteColor, #e3a54a); }
+.kg-add { align-items: center; justify-content: center; min-height: 112px; }
+.kg-add b { font-size: 2em; line-height: 1; }
+.kg-hint { opacity: 0.7; font-size: 0.85em; margin: 10px 0 0; }
+.kg-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.kg-win { position: fixed; z-index: 10040; display: flex; flex-direction: column; background: var(--SmartThemeBlurTintColor, #171717); border: 1px solid var(--SmartThemeBorderColor, #333); border-radius: 12px; overflow: hidden; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); }
+.kg-win-head { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 10px; cursor: move; touch-action: none; user-select: none; background: rgba(127, 127, 127, 0.12); }
+.kg-win-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.9em; }
+.kg-win-btn { border: 0; background: transparent; color: inherit; font-size: 16px; width: 32px; height: 28px; border-radius: 6px; cursor: pointer; }
+.kg-win-img { flex: 1; min-height: 0; width: 100%; object-fit: contain; cursor: pointer; }
+.kg-win-resize { position: absolute; right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 50%, rgba(127, 127, 127, 0.55) 50%); }

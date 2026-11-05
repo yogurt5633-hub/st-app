@@ -107,6 +107,13 @@ public class MainActivity extends Activity {
     private View barLine;
     private String pendingImport;
     private boolean reportPending;
+    private boolean korrektorLoaded;
+    /** The latest line SillyTavern printed while starting: shown on the home page. */
+    String progress = "";
+    private View updateBar;
+    private TextView updateText;
+    private TextView updateButton;
+    private JSONObject updates;
     private final Map<String, TextView> tabs = new LinkedHashMap<>();
     private String current = HOME;
     private boolean loaded;
@@ -150,6 +157,8 @@ public class MainActivity extends Activity {
         sites = new SitesTab(this);
         frame.addView(sites.view(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        root.addView(makeUpdateBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         barLine = new View(this);
         root.addView(barLine, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
@@ -170,6 +179,115 @@ public class MainActivity extends Activity {
         handleIntent(getIntent());
         checkServer(true);
         checkTermux();
+        checkUpdates(false);
+        // While the app is open, look for new versions every half hour.
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                checkUpdates(false);
+                handler.postDelayed(this, 30 * 60_000);
+            }
+        }, 30 * 60_000);
+    }
+
+    // ---------- updates ----------
+
+    private View makeUpdateBar() {
+        LinearLayout box = new LinearLayout(this);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(dp(16), dp(8), dp(8), dp(8));
+        updateText = new TextView(this);
+        updateText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        box.addView(updateText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        updateButton = new TextView(this);
+        updateButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        updateButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        updateButton.setPadding(dp(14), dp(8), dp(14), dp(8));
+        box.addView(updateButton);
+        TextView later = new TextView(this);
+        later.setText("Позже");
+        later.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        later.setPadding(dp(12), dp(8), dp(8), dp(8));
+        later.setOnClickListener(v -> dismissUpdate());
+        later.setTag("later");
+        box.addView(later);
+        box.setVisibility(View.GONE);
+        updateBar = box;
+        return box;
+    }
+
+    /**
+     * Looks for new versions of the app and of Korrektor. Without force, not more
+     * often than every 20 minutes (GitHub limits anonymous requests).
+     */
+    void checkUpdates(boolean force) {
+        if (!force && System.currentTimeMillis() - prefs.number("lastCheck") < 20 * 60_000) {
+            showUpdateBar();
+            return;
+        }
+        new Thread(() -> {
+            JSONObject found = Updater.check(this, prefs);
+            runOnUiThread(() -> {
+                updates = found;
+                showUpdateBar();
+                sendToHome("updates", found);
+            });
+        }).start();
+    }
+
+    private void showUpdateBar() {
+        long current = Updater.appVersionCode(this);
+        long apkCode = prefs.number("apkCode");
+        JSONObject k = updates == null ? null : updates.optJSONObject("korrektor");
+        boolean app = apkCode > current && !prefs.text("apkUrl").isEmpty() && prefs.number("dismissedApp") != apkCode;
+        boolean plugin = !app && k != null && k.optBoolean("available") && stUp && !k.optString("latest").equals(prefs.text("dismissedKorrektor"));
+        if (!app && !plugin) {
+            updateBar.setVisibility(View.GONE);
+            return;
+        }
+        paintUpdateBar();
+        if (app) {
+            updateText.setText("Вышла новая версия приложения. Данные сохранятся");
+            updateButton.setText("Обновить");
+            updateButton.setOnClickListener(v -> {
+                String error = Updater.downloadAndInstall(this, prefs, () -> toast("Скачиваю новую версию, потом откроется установка"));
+                if (error != null) toast(error);
+            });
+        } else {
+            updateText.setText("Новая версия Корректора " + k.optString("latest") + " для таверны");
+            updateButton.setText("Обновить");
+            updateButton.setOnClickListener(v -> new android.app.AlertDialog.Builder(this)
+                    .setTitle("Обновить Корректор?")
+                    .setMessage("Таверна перезапустится: это займёт около минуты")
+                    .setPositiveButton("Обновить", (d, w) -> {
+                        updateBar.setVisibility(View.GONE);
+                        runAction("update-korrektor");
+                    })
+                    .setNegativeButton("Отмена", null)
+                    .show());
+        }
+        updateBar.setVisibility(View.VISIBLE);
+    }
+
+    private void dismissUpdate() {
+        long apkCode = prefs.number("apkCode");
+        if (apkCode > Updater.appVersionCode(this)) prefs.setNumber("dismissedApp", apkCode);
+        JSONObject k = updates == null ? null : updates.optJSONObject("korrektor");
+        if (k != null) prefs.setText("dismissedKorrektor", k.optString("latest"));
+        updateBar.setVisibility(View.GONE);
+    }
+
+    private void paintUpdateBar() {
+        if (updateBar == null) return;
+        updateBar.setBackgroundColor(palette.card);
+        updateText.setTextColor(palette.text);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setCornerRadius(dp(10));
+        bg.setColor(palette.text);
+        updateButton.setBackground(bg);
+        updateButton.setTextColor(palette.onPrimary);
+        View later = updateBar.findViewWithTag("later");
+        if (later instanceof TextView) ((TextView) later).setTextColor(palette.muted);
     }
 
     private int dp(int value) {
@@ -401,6 +519,7 @@ public class MainActivity extends Activity {
         paintTabs();
         tavernBox.setVisibility(TAVERN.equals(tab) ? View.VISIBLE : View.GONE);
         if (TAVERN.equals(tab)) modelBar.refresh();
+        if (KORREKTOR.equals(tab) && loaded && !korrektorLoaded) loadKorrektor();
         korrektor.setVisibility(KORREKTOR.equals(tab) ? View.VISIBLE : View.GONE);
         home.setVisibility(HOME.equals(tab) ? View.VISIBLE : View.GONE);
         sites.view().setVisibility(SITES.equals(tab) ? View.VISIBLE : View.GONE);
@@ -429,9 +548,12 @@ public class MainActivity extends Activity {
             message = "";
             if (!loaded) {
                 tavern.loadUrl(prefs.stUrl() + "/");
-                korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/");
+                // The Korrektor page loads on first visit: the phone has less work while the tavern starts.
+                korrektorLoaded = false;
+                if (KORREKTOR.equals(current)) loadKorrektor();
                 loaded = true;
             }
+            progress = "";
             if (pendingImport != null && loaded) deliverImport();
             if (pendingTab != null) {
                 showTab(pendingTab);
@@ -505,6 +627,7 @@ public class MainActivity extends Activity {
             message = "SillyTavern остановлен";
             tavern.loadUrl("about:blank");
             korrektor.loadUrl("about:blank");
+            korrektorLoaded = false;
             showTab(HOME);
             return;
         }
@@ -520,7 +643,8 @@ public class MainActivity extends Activity {
         }
         homeChosen = false;
         showTab(HOME);
-        waitForServer(restart ? 4000 : 1500, "update-tavern".equals(action) ? 600_000 : 240_000);
+        // The first start installs dependencies: on a phone that can take many minutes.
+        waitForServer(restart ? 4000 : 1500, 20 * 60_000);
     }
 
     private int nextRun() {
@@ -596,6 +720,13 @@ public class MainActivity extends Activity {
                     if (!o.failedToRun() && known && !stUp && !starting) {
                         runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
                     }
+                }
+                break;
+            case "progress":
+                if (starting && !o.failedToRun()) {
+                    String line = o.stdout.trim();
+                    if (line.length() > 160) line = line.substring(0, 160) + "…";
+                    progress = line;
                 }
                 break;
             case "logs":
@@ -704,7 +835,13 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             long until = System.currentTimeMillis() + timeout;
             sleep(firstDelay);
+            long nextProgress = 0;
             while (token == waitToken && System.currentTimeMillis() < until) {
+                // What SillyTavern is doing right now, from its output in Termux.
+                if (System.currentTimeMillis() > nextProgress) {
+                    nextProgress = System.currentTimeMillis() + 8000;
+                    runOnUiThread(() -> runQuiet("progress"));
+                }
                 if (Net.alive(prefs.stUrl())) {
                     runOnUiThread(() -> {
                         if (token != waitToken) return;
@@ -717,7 +854,7 @@ public class MainActivity extends Activity {
             }
             if (token != waitToken) return;
             starting = false;
-            message = "SillyTavern не запустился. Проверьте шаги ниже и журнал в Termux: tail ~/.korrektor-ctl.log ~/.korrektor-st.log";
+            message = "SillyTavern так и не ответил за 20 минут. Нажмите «Журнал», чтобы увидеть, на чём он остановился";
             notifyHome();
         }).start();
     }
@@ -751,6 +888,7 @@ public class MainActivity extends Activity {
         modelBar.setPalette(palette);
         sites.setPalette(palette);
         paintTabs();
+        paintUpdateBar();
         passTheme();
         notifyHome();
     }
@@ -773,6 +911,23 @@ public class MainActivity extends Activity {
     }
 
     // ---------- links shared to the app ----------
+
+    private void loadKorrektor() {
+        korrektorLoaded = true;
+        korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/");
+    }
+
+    /** Reloads SillyTavern's page (the tavern tab). */
+    void reloadTavern() {
+        if (!stUp) {
+            checkServer();
+            return;
+        }
+        String url = tavern.getUrl();
+        if (url != null && url.startsWith(prefs.stUrl())) tavern.reload();
+        else tavern.loadUrl(prefs.stUrl() + "/");
+        toast("Обновляю страницу таверны");
+    }
 
     private void deliverImport() {
         String url = pendingImport;
@@ -993,6 +1148,7 @@ public class MainActivity extends Activity {
         super.onResume();
         visible = true;
         if (!starting) checkServer(false);
+        checkUpdates(false);
         if (termuxReady != Boolean.TRUE && !termuxChecking) checkTermux();
     }
 

@@ -1,11 +1,11 @@
 {
-    "display_name": "Корректор: синхронизация",
+    "display_name": "Корректор",
     "loading_order": 100,
     "requires": [],
     "optional": [],
     "js": "index.js",
-    "css": "",
+    "css": "style.css",
     "author": "Корректор",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "homePage": ""
 }

@@ -27,8 +27,12 @@ say "SillyTavern: $ST_DIR"
 
 # 1. Плагин
 mkdir -p "$ST_DIR/plugins"
+# Копия рядом и одно переименование: SillyTavern никогда не видит наполовину скопированный плагин.
+TMP_PLUGIN="$ST_DIR/plugins/.korrektor-new"
+rm -rf "$TMP_PLUGIN"
+cp -r "$SRC" "$TMP_PLUGIN"
 rm -rf "$ST_DIR/plugins/korrektor"
-cp -r "$SRC" "$ST_DIR/plugins/korrektor"
+mv "$TMP_PLUGIN" "$ST_DIR/plugins/korrektor"
 VERSION="$(grep -m1 '"version"' "$SRC/package.json" | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
 say "Плагин Корректор $VERSION скопирован в $ST_DIR/plugins/korrektor"
 

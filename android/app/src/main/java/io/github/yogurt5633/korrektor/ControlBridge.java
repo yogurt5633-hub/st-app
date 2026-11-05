@@ -43,6 +43,7 @@ final class ControlBridge {
             s.put("notify", prefs.flag(Prefs.NOTIFY, true));
             s.put("lastCheck", prefs.number("lastCheck"));
             s.put("message", activity.message);
+            s.put("progress", activity.progress);
             s.put("termuxReady", activity.termuxReady == null ? JSONObject.NULL : activity.termuxReady);
             s.put("termuxError", activity.termuxError);
             s.put("termuxChecking", activity.termuxChecking);
@@ -70,7 +71,12 @@ final class ControlBridge {
 
     @JavascriptInterface
     public void checkUpdates() {
-        new Thread(() -> activity.sendToHome("updates", Updater.check(activity, activity.prefs))).start();
+        activity.runOnUiThread(() -> activity.checkUpdates(true));
+    }
+
+    @JavascriptInterface
+    public void reloadTavern() {
+        activity.runOnUiThread(activity::reloadTavern);
     }
 
     @JavascriptInterface

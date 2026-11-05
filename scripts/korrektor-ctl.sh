@@ -97,13 +97,75 @@ watch_companion() {
     done
 }
 
+# Один запуск за раз: два установщика сразу ломали друг другу файлы плагина.
+LOCK="$HOME/.korrektor-ctl.lock"
+take_lock() {
+    local pid
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        pid="$(cat "$LOCK/pid" 2>/dev/null)"
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 1; fi
+        rm -rf "$LOCK"
+        mkdir "$LOCK" 2>/dev/null || return 1
+    fi
+    echo "$$" > "$LOCK/pid"
+    trap 'rm -rf "$LOCK"' EXIT
+    return 0
+}
+drop_lock() { rm -rf "$LOCK"; }
+
+# «cd папка» только переходит в папку и сразу заканчивается: такую команду
+# понимаем как «запустить таверну из этой папки».
+cd_only_dir() {
+    local dir
+    [[ "$1" =~ ^[[:space:]]*cd[[:space:]]+([^\;\&\|]+)$ ]] || return 1
+    dir="${BASH_REMATCH[1]}"
+    dir="${dir%"${dir##*[![:space:]]}"}"
+    dir="${dir%/}"
+    dir="${dir/#\~/$HOME}"
+    [[ "$dir" = /* ]] || dir="$HOME/$dir"
+    printf '%s' "$dir"
+}
+
+# Зависимости SillyTavern ставятся только когда они поменялись: npm install на
+# телефоне занимает от десятков секунд до минут при каждом запуске.
+deps_stamp() { cat "$ST_DIR/package.json" "$ST_DIR/package-lock.json" 2>/dev/null | cksum | cut -d' ' -f1; }
+DEPS_FILE="$HOME/.korrektor-st-deps"
+
+# Ждёт в фоне, пока таверна начнёт отвечать: тогда снимает блокировку и
+# запоминает, что зависимости в порядке.
+watch_ready() {
+    local from="$1" stamp="$2" i
+    for i in $(seq 1 900); do
+        sleep 2
+        if tail -c +"$((from + 1))" "$ST_LOG" 2>/dev/null | grep -qE 'is listening|Go to:|listening on'; then
+            [ -n "$stamp" ] && printf '%s' "$stamp" > "$DEPS_FILE"
+            drop_lock
+            return 0
+        fi
+    done
+}
+
 # SillyTavern работает в этой сессии Termux: пока он жив, Termux не засыпает.
 # Вывод виден в сессии и пишется в ~/.korrektor-st.log.
 run_st() {
-    local code
+    local code dir started from stamp
     termux-wake-lock >/dev/null 2>&1 || true
     trim_log "$ST_LOG"
     trim_log "$LOG"
+    started=$SECONDS
+    from=0
+    [ -f "$ST_LOG" ] && from="$(wc -c < "$ST_LOG")"
+    if [ -n "$START_CMD" ] && dir="$(cd_only_dir "$START_CMD")"; then
+        if is_st "$dir"; then
+            say "Команда «$START_CMD» только переходит в папку: запускаю таверну из $dir"
+            ST_DIR="$dir"
+            SEARCHED=1
+            START_CMD=""
+        else
+            say "Команда «$START_CMD» переходит в папку, где нет SillyTavern. Исправьте поле «Команда запуска» на вкладке «Главная» или оставьте его пустым"
+            return 3
+        fi
+    fi
     if [ -n "$START_CMD" ]; then
         say "Запускаю SillyTavern командой: $START_CMD"
         have_dir && { watch_companion >/dev/null 2>&1 & }
@@ -114,15 +176,33 @@ run_st() {
             source "$HOME/.bashrc" >/dev/null 2>&1
         fi
         shopt -s expand_aliases
+        watch_ready "$from" "" &
         eval "$START_CMD" 2>&1 | tee -a "$ST_LOG"
         code=${PIPESTATUS[0]}
     else
         need_dir || return 1
         cd "$ST_DIR" || return 1
-        say "Запускаю SillyTavern из $ST_DIR"
         watch_companion >/dev/null 2>&1 &
-        bash ./start.sh 2>&1 | tee -a "$ST_LOG"
-        code=${PIPESTATUS[0]}
+        stamp="$(deps_stamp)"
+        export NODE_ENV=production
+        if [ -d node_modules ] && [ "$(cat "$DEPS_FILE" 2>/dev/null)" = "$stamp" ] && command -v node >/dev/null; then
+            say "Запускаю SillyTavern из $ST_DIR (зависимости не менялись, без npm install)"
+            watch_ready "$from" "$stamp" &
+            node server.js 2>&1 | tee -a "$ST_LOG"
+            code=${PIPESTATUS[0]}
+        else
+            say "Запускаю SillyTavern из $ST_DIR. Сначала ставятся зависимости: в первый раз это может занять несколько минут"
+            watch_ready "$from" "$stamp" &
+            bash ./start.sh 2>&1 | tee -a "$ST_LOG"
+            code=${PIPESTATUS[0]}
+        fi
+    fi
+    # Команда закончилась сразу, а таверна так и не появилась: скорее всего,
+    # в поле «Команда запуска» не та команда.
+    if [ "$code" = 0 ] && [ $((SECONDS - started)) -lt 20 ] && [ -z "$(running_pids)" ]; then
+        say "Команда запуска закончилась через $((SECONDS - started)) с, а SillyTavern так и не запустился."
+        say "Проверьте поле «Команда запуска»: она должна запускать таверну, например: cd ~/SillyTavern && ./start.sh. Или оставьте поле пустым"
+        code=3
     fi
     say "SillyTavern остановился (код $code)"
     termux-wake-unlock >/dev/null 2>&1 || true
@@ -133,6 +213,10 @@ case "${1:-}" in
     start)
         if [ -n "$(running_pids)" ]; then
             say "SillyTavern уже работает"
+            exit 0
+        fi
+        if ! take_lock; then
+            say "SillyTavern уже запускается: второй запуск не нужен"
             exit 0
         fi
         if [ "${2:-}" = "--install" ] && have_dir; then
@@ -148,10 +232,12 @@ case "${1:-}" in
         ;;
     restart)
         stop_st
+        take_lock || { say "SillyTavern уже запускается"; exit 0; }
         sleep 1
         run_st
         ;;
     update-korrektor)
+        take_lock || { say "SillyTavern уже запускается: обновление подождёт"; exit 0; }
         install_korrektor
         stop_st
         sleep 1
@@ -159,11 +245,16 @@ case "${1:-}" in
         ;;
     update-tavern)
         need_dir || exit 1
+        take_lock || { say "SillyTavern уже запускается: обновление подождёт"; exit 0; }
         say "Обновляю SillyTavern в $ST_DIR"
         git -C "$ST_DIR" pull --ff-only 2>&1 | tee -a "$LOG" || say "git pull в SillyTavern не удался"
         stop_st
         sleep 1
         run_st
+        ;;
+    progress)
+        # Последняя строка вывода таверны: показывается, пока она запускается.
+        tail -n 30 "$ST_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -v '^[[:space:]]*$' | tail -n 1
         ;;
     status)
         echo "ctl=1"
