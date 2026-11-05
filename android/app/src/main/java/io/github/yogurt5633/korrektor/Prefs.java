@@ -11,6 +11,7 @@ final class Prefs {
 
     Prefs(Context context) {
         sp = context.getSharedPreferences("korrektor", Context.MODE_PRIVATE);
+        Net.auth = auth();
     }
 
     String stUrl() {
@@ -44,6 +45,17 @@ final class Prefs {
 
     void setText(String key, String value) {
         sp.edit().putString(key, value).apply();
+    }
+
+    /** Login and password when SillyTavern has basicAuth on. Kept only in this app's private storage. */
+    String[] auth() {
+        String user = sp.getString("authUser", "");
+        return user.isEmpty() ? null : new String[]{user, sp.getString("authPass", "")};
+    }
+
+    void setAuth(String user, String pass) {
+        sp.edit().putString("authUser", user).putString("authPass", pass).apply();
+        Net.auth = auth();
     }
 
     // Option keys

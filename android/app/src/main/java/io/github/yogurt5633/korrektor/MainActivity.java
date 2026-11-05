@@ -2,6 +2,7 @@ package io.github.yogurt5633.korrektor;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.ClipData;
 import android.content.Intent;
@@ -19,7 +20,9 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.text.InputType;
 import android.webkit.CookieManager;
+import android.webkit.HttpAuthHandler;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -28,6 +31,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -88,6 +92,8 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private int waitToken;
+    private String pendingTab;
+    private final java.util.List<HttpAuthHandler> authWaiting = new java.util.ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -168,10 +174,22 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
 
         view.setWebViewClient(new WebViewClient() {
+            private int authTries;
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if (isLocal(uri)) return false;
+                // The "More" page has the app's controls, so it never leaves its own file.
+                if (!pageTab) {
+                    String url = uri.toString();
+                    if (url.startsWith("file:///android_asset/")) return false;
+                    if (isLocal(uri)) {
+                        showTab(TAVERN);
+                        return true;
+                    }
+                } else if (isLocal(uri)) {
+                    return false;
+                }
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, uri));
                 } catch (Exception e) {
@@ -183,6 +201,22 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView v, String url) {
                 if (pageTab) v.evaluateJavascript(FilesBridge.HOOK, null);
+                authTries = 0;
+            }
+
+            @Override
+            public void onReceivedHttpAuthRequest(WebView v, HttpAuthHandler auth, String host, String realm) {
+                // SillyTavern with basicAuth: the login goes only to SillyTavern's own address.
+                if (!pageTab || !isLocal(Uri.parse("http://" + host + "/"))) {
+                    auth.cancel();
+                    return;
+                }
+                String[] saved = prefs.auth();
+                if (saved != null && authTries++ == 0) {
+                    auth.proceed(saved[0], saved[1]);
+                    return;
+                }
+                askLogin(auth, saved != null);
             }
 
             @Override
@@ -223,6 +257,43 @@ public class MainActivity extends Activity {
         return view;
     }
 
+    private void askLogin(HttpAuthHandler auth, boolean failed) {
+        // Both web tabs may ask at once: one dialog answers all of them.
+        authWaiting.add(auth);
+        if (authWaiting.size() > 1) return;
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        EditText user = new EditText(this);
+        user.setHint("Логин");
+        user.setSingleLine(true);
+        EditText pass = new EditText(this);
+        pass.setHint("Пароль");
+        pass.setSingleLine(true);
+        pass.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        String[] saved = prefs.auth();
+        if (saved != null) user.setText(saved[0]);
+        box.addView(user);
+        box.addView(pass);
+        new AlertDialog.Builder(this)
+                .setTitle("Вход в SillyTavern")
+                .setMessage(failed ? "Логин или пароль не подошли. Это данные basicAuth из config.yaml" : "В SillyTavern включён basicAuth: введите логин и пароль из config.yaml")
+                .setView(box)
+                .setCancelable(false)
+                .setPositiveButton("Войти", (d, w) -> {
+                    String name = user.getText().toString();
+                    String word = pass.getText().toString();
+                    prefs.setAuth(name, word);
+                    for (HttpAuthHandler h : authWaiting) h.proceed(name, word);
+                    authWaiting.clear();
+                })
+                .setNegativeButton("Отмена", (d, w) -> {
+                    for (HttpAuthHandler h : authWaiting) h.cancel();
+                    authWaiting.clear();
+                })
+                .show();
+    }
+
     private boolean isLocal(Uri uri) {
         String scheme = uri.getScheme();
         if (scheme == null) return true;
@@ -254,6 +325,11 @@ public class MainActivity extends Activity {
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
             String cookies = CookieManager.getInstance().getCookie(url);
             if (cookies != null) request.addRequestHeader("Cookie", cookies);
+            String[] login = prefs.auth();
+            if (login != null && isLocal(Uri.parse(url))) {
+                String pair = login[0] + ":" + login[1];
+                request.addRequestHeader("Authorization", "Basic " + android.util.Base64.encodeToString(pair.getBytes(java.nio.charset.StandardCharsets.UTF_8), android.util.Base64.NO_WRAP));
+            }
             request.addRequestHeader("User-Agent", userAgent);
             request.setMimeType(mime);
             request.setTitle(name);
@@ -313,7 +389,10 @@ public class MainActivity extends Activity {
                 korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/");
                 loaded = true;
             }
-            if (HOME.equals(current) && !homeChosen) {
+            if (pendingTab != null) {
+                showTab(pendingTab);
+                pendingTab = null;
+            } else if (HOME.equals(current) && !homeChosen) {
                 String last = prefs.text(Prefs.LAST_TAB);
                 showTab(KORREKTOR.equals(last) ? KORREKTOR : TAVERN);
             }
@@ -371,8 +450,8 @@ public class MainActivity extends Activity {
                 if (Net.alive(prefs.stUrl())) {
                     runOnUiThread(() -> {
                         if (token != waitToken) return;
+                        if (pendingTab == null && !homeChosen) pendingTab = TAVERN;
                         onServerState(true, false);
-                        if (!homeChosen) showTab(TAVERN);
                     });
                     return;
                 }
@@ -466,6 +545,7 @@ public class MainActivity extends Activity {
         String tab = intent == null ? null : intent.getStringExtra("tab");
         if (tab == null) return;
         homeChosen = HOME.equals(tab);
+        if (!HOME.equals(tab) && !stUp) pendingTab = tab;
         showTab(tab);
     }
 
