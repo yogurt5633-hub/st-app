@@ -20,10 +20,35 @@ START_CMD="${KORREKTOR_START_CMD:-}"
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
 say() { printf '%s\n' "$*"; log "$*"; }
 
+# Вывод таверны. Из приложения скрипт работает фоновой командой Termux, без окна:
+# тогда вывод идёт только в журнал (Termux не копит его в памяти). Руками — ещё и на экран.
+st_output() {
+    if [ -t 1 ]; then tee -a "$ST_LOG"; else cat >> "$ST_LOG"; fi
+}
+
 # Можно закрепить папку SillyTavern: echo 'ST_DIR=/путь' > ~/.korrektor-app.env
 [ -f "$HOME/.korrektor-app.env" ] && source "$HOME/.korrektor-app.env"
 
 source "$HERE/st-dir.sh"
+
+# Вывод таверны для журнала: без цветовых кодов, только после метки последнего запуска
+# и без длинных списков моделей, которые печатает SillyTavern.
+clean_output() {
+    sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\r//g' \
+        | awk '/^== Корректор: запуск/{b="";next}{b=b $0 "\n"}END{printf "%s",b}' \
+        | grep -vE "^[[:space:]]*\$|^[[:space:]]*['\"]|^[[:space:]]*[][{}][,;]?[[:space:]]*\$"
+}
+
+# Приложение по этому файлу видит, что Termux действительно начал выполнять команду.
+# Метка в выводе таверны отделяет этот запуск от прошлых: приложение показывает только новое.
+case "${1:-}" in
+    start|stop|restart|update-korrektor|update-tavern) date +%s > "$HOME/.korrektor-ctl.seen" ;;
+esac
+case "${1:-}" in
+    start|restart|update-korrektor|update-tavern)
+        [ -z "$(running_pids 2>/dev/null)" ] || [ "${1:-}" != start ] && printf '\n== Корректор: запуск %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$ST_LOG"
+        ;;
+esac
 
 # Папку ищем только когда она нужна: журналам и остановке поиск не нужен.
 SEARCHED=0
@@ -195,7 +220,7 @@ run_st() {
         fi
         shopt -s expand_aliases
         watch_ready "$from" "" &
-        eval "$START_CMD" 2>&1 | tee -a "$ST_LOG"
+        eval "$START_CMD" 2>&1 | st_output
         code=${PIPESTATUS[0]}
     else
         need_dir || return 1
@@ -206,12 +231,12 @@ run_st() {
         if [ -d node_modules ] && [ "$(cat "$DEPS_FILE" 2>/dev/null)" = "$stamp" ] && command -v node >/dev/null; then
             say "Запускаю SillyTavern из $ST_DIR (зависимости не менялись, без npm install)"
             watch_ready "$from" "$stamp" &
-            node server.js 2>&1 | tee -a "$ST_LOG"
+            node server.js 2>&1 | st_output
             code=${PIPESTATUS[0]}
         else
             say "Запускаю SillyTavern из $ST_DIR. Сначала ставятся зависимости: в первый раз это может занять несколько минут"
             watch_ready "$from" "$stamp" &
-            bash ./start.sh 2>&1 | tee -a "$ST_LOG"
+            bash ./start.sh 2>&1 | st_output
             code=${PIPESTATUS[0]}
         fi
     fi
@@ -271,8 +296,10 @@ case "${1:-}" in
         run_st
         ;;
     progress)
-        # Последняя строка вывода таверны: показывается, пока она запускается.
-        tail -n 30 "$ST_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -v '^[[:space:]]*$' | tail -n 1
+        # Последняя содержательная строка этого запуска: показывается, пока таверна запускается.
+        line="$(tail -n 600 "$ST_LOG" 2>/dev/null | clean_output | tail -n 1)"
+        [ -n "$line" ] || line="$(tail -n 1 "$LOG" 2>/dev/null | cut -d' ' -f3-)"
+        printf '%s\n' "$line"
         ;;
     status)
         echo "ctl=1"
@@ -280,12 +307,11 @@ case "${1:-}" in
         if [ -n "$(running_pids)" ]; then echo "running=1"; else echo "running=0"; fi
         ;;
     logs)
-        strip() { sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
         echo "— Корректор (~/.korrektor-ctl.log)"
-        tail -n 25 "$LOG" 2>/dev/null | strip
+        tail -n 25 "$LOG" 2>/dev/null
         echo
-        echo "— SillyTavern (~/.korrektor-st.log)"
-        tail -n 60 "$ST_LOG" 2>/dev/null | strip
+        echo "— SillyTavern, последний запуск (~/.korrektor-st.log)"
+        tail -n 3000 "$ST_LOG" 2>/dev/null | clean_output | tail -n 40
         ;;
     *)
         echo "Использование: bash $0 start [--install] | stop | restart | update-korrektor | update-tavern | status | logs"

@@ -24,9 +24,8 @@ final class Termux {
     private static final String HOME = "/data/data/com.termux/files/home";
     private static final String REPO = "https://github.com/yogurt5633-hub/st-app";
 
-    // Session actions of RUN_COMMAND: open Termux on the new session, or create it without opening Termux.
+    // Session action of RUN_COMMAND: open Termux on the new session (only for the installer).
     private static final String SHOW_SESSION = "0";
-    private static final String HIDDEN_SESSION = "2";
 
     private static final String VARS = "SRC=\"$HOME/korrektor-src\"; LOG=\"$HOME/.korrektor-ctl.log\"; export KORREKTOR_START_CMD=\"$1\"; ";
     // Make sure ~/korrektor-src exists (clone on first use).
@@ -38,8 +37,15 @@ final class Termux {
     private static final String PULL = "T=; command -v timeout >/dev/null && T='timeout 90'; "
             + "{ $T git -C \"$SRC\" fetch -q --depth 1 origin main && git -C \"$SRC\" reset -q --hard origin/main "
             + "|| echo 'Не удалось скачать обновление с GitHub (нет интернета или GitHub недоступен): ставлю то, что уже скачано'; } 2>&1 | tee -a \"$LOG\"; ";
-    private static final String ENSURE = "grep -q 'wait_lock' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
+    private static final String ENSURE = "grep -q 'korrektor-ctl.seen' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
+    // The very first thing a command does: the app sees that Termux really started it.
+    private static final String SEEN = "date +%s > \"$HOME/.korrektor-ctl.seen\"; ";
     private static final String CTL = "exec bash \"$SRC/scripts/korrektor-ctl.sh\" ";
+    // For the journal and the progress line: no colour codes, only this start's output
+    // (after the ctl marker), and without the long model lists SillyTavern prints.
+    private static final String STRIP = "sed 's/\\x1b\\[[0-9;]*[A-Za-z]//g; s/\\r//g'";
+    private static final String SINCE_START = "awk '/^== Корректор: запуск/{b=\"\";next}{b=b $0 \"\\n\"}END{printf \"%s\",b}'";
+    private static final String NOISE = "grep -vE \"^[[:space:]]*\\$|^[[:space:]]*['\\\"]|^[[:space:]]*[][{}][,;]?[[:space:]]*\\$\"";
 
     private Termux() {
     }
@@ -76,17 +82,17 @@ final class Termux {
     static String scriptFor(String action) {
         switch (action) {
             case "start":
-                return BOOT + ENSURE + CTL + "start";
+                return SEEN + BOOT + ENSURE + CTL + "start";
             case "start-update":
-                return BOOT + PULL + CTL + "start --install";
+                return SEEN + BOOT + PULL + CTL + "start --install";
             case "stop":
-                return BOOT + ENSURE + CTL + "stop";
+                return SEEN + BOOT + ENSURE + CTL + "stop";
             case "restart":
-                return BOOT + ENSURE + CTL + "restart";
+                return SEEN + BOOT + ENSURE + CTL + "restart";
             case "update-korrektor":
-                return BOOT + PULL + CTL + "update-korrektor";
+                return SEEN + BOOT + PULL + CTL + "update-korrektor";
             case "update-tavern":
-                return BOOT + ENSURE + CTL + "update-tavern";
+                return SEEN + BOOT + ENSURE + CTL + "update-tavern";
             case "install-tavern":
                 return VARS
                         + "echo '== Корректор: установка SillyTavern'; "
@@ -100,12 +106,19 @@ final class Termux {
                         + "[ -d \"$SRC/.git\" ] && echo src=1; "
                         + "[ -f \"$SRC/scripts/korrektor-ctl.sh\" ] && bash \"$SRC/scripts/korrektor-ctl.sh\" status; exit 0";
             case "progress":
-                return "S=\"$HOME/.korrektor-st.log\"; [ -f \"$S\" ] && tail -n 30 \"$S\" | sed 's/\\x1b\\[[0-9;]*[A-Za-z]//g' | grep -v '^[[:space:]]*$' | tail -n 1; exit 0";
+                // First line: when ctl last started (the app sees whether Termux ran the command at all).
+                // Then the latest meaningful line of this start: SillyTavern's output, or Korrektor's own step.
+                return "S=\"$HOME/.korrektor-st.log\"; L=\"$HOME/.korrektor-ctl.log\"; "
+                        + "echo \"seen=$(cat \"$HOME/.korrektor-ctl.seen\" 2>/dev/null || echo 0)\"; line=; "
+                        + "[ -f \"$S\" ] && line=\"$(tail -n 600 \"$S\" | " + STRIP + " | " + SINCE_START + " | " + NOISE + " | tail -n 1)\"; "
+                        + "[ -n \"$line\" ] || line=\"$(tail -n 1 \"$L\" 2>/dev/null | cut -d' ' -f3-)\"; "
+                        + "echo \"$line\"; exit 0";
             case "logs":
                 return "L=\"$HOME/.korrektor-ctl.log\"; S=\"$HOME/.korrektor-st.log\"; "
                         + "[ -f \"$L\" ] || [ -f \"$S\" ] || { echo 'Журналов пока нет: из приложения SillyTavern ещё не запускался'; exit 0; }; "
-                        + "echo '— Корректор (~/.korrektor-ctl.log)'; tail -n 25 \"$L\" 2>/dev/null; echo; "
-                        + "echo '— SillyTavern (~/.korrektor-st.log)'; tail -n 60 \"$S\" 2>/dev/null | sed 's/\\x1b\\[[0-9;]*[A-Za-z]//g'";
+                        + "echo '— Корректор в Termux (~/.korrektor-ctl.log)'; tail -n 25 \"$L\" 2>/dev/null; echo; "
+                        + "echo '— SillyTavern, последний запуск (~/.korrektor-st.log)'; "
+                        + "tail -n 3000 \"$S\" 2>/dev/null | " + STRIP + " | " + SINCE_START + " | " + NOISE + " | tail -n 40";
             default:
                 return null;
         }
@@ -121,7 +134,10 @@ final class Termux {
         if (!permitted(context)) return "Нет разрешения запускать команды в Termux";
         String script = scriptFor(action);
         if (script == null) return "Неизвестное действие";
-        boolean session = runsTavern(action);
+        // Everything runs as a background command: it starts at once. A command in a new
+        // Termux session would wait until Termux is opened (the session starts with its window).
+        // Only the installer opens Termux, so its progress is visible there.
+        boolean show = "install-tavern".equals(action);
 
         Intent intent = new Intent();
         intent.setClassName(PACKAGE, "com.termux.app.RunCommandService");
@@ -129,10 +145,9 @@ final class Termux {
         intent.putExtra("com.termux.RUN_COMMAND_PATH", BASH);
         intent.putExtra("com.termux.RUN_COMMAND_ARGUMENTS", new String[]{"-c", script, "korrektor", startCommand == null ? "" : startCommand});
         intent.putExtra("com.termux.RUN_COMMAND_WORKDIR", HOME);
-        // SillyTavern runs in a Termux session: its output is visible there, like when started by hand.
-        intent.putExtra("com.termux.RUN_COMMAND_BACKGROUND", !session);
-        intent.putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", "install-tavern".equals(action) ? SHOW_SESSION : HIDDEN_SESSION);
-        intent.putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", session ? "SillyTavern (Корректор)" : "Корректор: " + action);
+        intent.putExtra("com.termux.RUN_COMMAND_BACKGROUND", !show);
+        if (show) intent.putExtra("com.termux.RUN_COMMAND_SESSION_ACTION", SHOW_SESSION);
+        intent.putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", runsTavern(action) ? "SillyTavern (Корректор)" : "Корректор: " + action);
 
         Intent reply = new Intent(context, TermuxResult.class);
         reply.putExtra(TermuxResult.ACTION, action);

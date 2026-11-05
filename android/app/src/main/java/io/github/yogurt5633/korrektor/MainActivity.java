@@ -574,6 +574,11 @@ public class MainActivity extends Activity {
 
     private void onServerState(boolean up, boolean mayAutoStart) {
         if (up != stUp) KorrektorWidget.refresh(this);
+        if (up && starting) {
+            long sent = prefs.number("startSentAt");
+            appLog("SillyTavern отвечает" + (sent > 0 ? " через " + (System.currentTimeMillis() - sent) / 1000 + " с после запуска" : ""));
+            prefs.setNumber("startSentAt", 0);
+        }
         stUp = up;
         if (up) {
             starting = false;
@@ -602,6 +607,15 @@ public class MainActivity extends Activity {
                 // Start once Termux has answered the check and SillyTavern is known to be there.
                 boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
                 if (termuxReady == Boolean.TRUE && !termuxChecking) {
+                    if (known && System.currentTimeMillis() - prefs.number("startSentAt") < 3 * 60_000) {
+                        // A start was sent a moment ago (the app was closed meanwhile): wait for it, do not send another.
+                        starting = true;
+                        message = "SillyTavern запускается";
+                        showTab(HOME);
+                        waitForServer(1500, 20 * 60_000);
+                        notifyHome();
+                        return;
+                    }
                     if (known) {
                         runAction(prefs.startAction());
                         return;
@@ -642,9 +656,17 @@ public class MainActivity extends Activity {
             return;
         }
         int run = nextRun();
-        if (Termux.runsTavern(action)) setTavernRun(run);
-        else if ("stop".equals(action)) setTavernRun(0);
+        if (Termux.runsTavern(action)) {
+            setTavernRun(run);
+            prefs.setNumber("startSentAt", System.currentTimeMillis());
+            termuxStalled = false;
+            progress = "";
+        } else if ("stop".equals(action)) {
+            setTavernRun(0);
+            prefs.setNumber("startSentAt", 0);
+        }
         String error = Termux.run(this, action, prefs.text(Prefs.START_CMD), run);
+        appLog(actionName(action) + (error == null ? ": команда отправлена в Termux" : ": " + error));
         if (error != null) {
             message = error;
             toast(error);
@@ -677,7 +699,7 @@ public class MainActivity extends Activity {
         boolean restart = !action.startsWith("start");
         message = "update-tavern".equals(action) ? "Обновляю SillyTavern, это может занять несколько минут"
                 : "update-korrektor".equals(action) ? "Обновляю Корректор и перезапускаю SillyTavern"
-                : "start-update".equals(action) ? "Ставлю новую версию Корректора и запускаю SillyTavern"
+                : "start-update".equals(action) ? "Вышел Корректор " + prefs.text("korrektorLatest") + ": ставлю его (один раз) и запускаю SillyTavern"
                 : restart ? "Перезапускаю SillyTavern" : "Запускаю SillyTavern";
         if (restart) {
             stUp = false;
@@ -687,6 +709,40 @@ public class MainActivity extends Activity {
         showTab(HOME);
         // The first start installs dependencies: on a phone that can take many minutes.
         waitForServer(restart ? 4000 : 1500, 20 * 60_000);
+    }
+
+    // ---------- the app's own journal: what it asked Termux to do and what came of it ----------
+
+    static final String APP_LOG = "appLog";
+    boolean termuxStalled;
+
+    void appLog(String line) {
+        String stamp = new java.text.SimpleDateFormat("dd.MM HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
+        String all = prefs.text(APP_LOG) + stamp + " " + line + "\n";
+        String[] lines = all.split("\n");
+        if (lines.length > 30) all = String.join("\n", java.util.Arrays.copyOfRange(lines, lines.length - 30, lines.length)) + "\n";
+        prefs.setText(APP_LOG, all);
+    }
+
+    private static String actionName(String action) {
+        switch (action) {
+            case "start": return "Запуск";
+            case "start-update": return "Запуск с обновлением Корректора";
+            case "restart": return "Перезапуск";
+            case "stop": return "Остановка";
+            case "update-korrektor": return "Обновление Корректора";
+            case "update-tavern": return "Обновление SillyTavern";
+            case "install-tavern": return "Установка SillyTavern";
+            default: return action;
+        }
+    }
+
+    private static long parseLong(String text) {
+        try {
+            return Long.parseLong(text.trim());
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private int nextRun() {
@@ -766,15 +822,34 @@ public class MainActivity extends Activity {
                 break;
             case "progress":
                 if (starting && !o.failedToRun()) {
-                    String line = o.stdout.trim();
+                    long seen = 0;
+                    String line = "";
+                    for (String part : o.stdout.trim().split("\n")) {
+                        if (part.startsWith("seen=")) seen = parseLong(part.substring(5)) * 1000;
+                        else if (!part.trim().isEmpty()) line = part.trim();
+                    }
+                    long sent = prefs.number("startSentAt");
+                    if (sent > 0 && seen + 5000 < sent && System.currentTimeMillis() - sent > 30_000) {
+                        // Termux took the command but has not run it: usually Android holds it in the background.
+                        line = "Termux пока не выполнил команду. Откройте Termux на пару секунд и вернитесь — запуск продолжится";
+                        if (!termuxStalled) {
+                            termuxStalled = true;
+                            appLog("Termux за 30 с не начал выполнять команду");
+                        }
+                    } else if (seen + 5000 >= sent && termuxStalled) {
+                        termuxStalled = false;
+                    }
                     if (line.length() > 160) line = line.substring(0, 160) + "…";
                     progress = line;
                 }
                 break;
-            case "logs":
-                if (reportPending) shareReport(o.failedToRun() ? termuxError : o.output());
-                else sendLogs(o.failedToRun() ? termuxError : o.output().isEmpty() ? "Журналы пусты" : o.output());
+            case "logs": {
+                String termux = o.failedToRun() ? "Termux не отдал журнал: " + termuxError : o.output().isEmpty() ? "Журналы пусты" : o.output();
+                String text = "— Приложение\n" + prefs.text(APP_LOG) + "\n" + termux;
+                if (reportPending) shareReport(text);
+                else sendLogs(text);
                 break;
+            }
             case "stop":
                 if (o.failedToRun()) message = "Не удалось остановить: " + termuxError;
                 break;
@@ -797,7 +872,9 @@ public class MainActivity extends Activity {
 
     /** The Termux session that ran SillyTavern ended. */
     private void onTavernEnded(TermuxResult.Outcome o) {
-        if (o.run != prefs.number("tavernRun")) return; // an older session we already replaced or stopped
+        appLog(actionName(o.action) + ": команда в Termux закончилась"
+                + (o.failedToRun() ? " с ошибкой: " + termuxError : " (код " + (o.exitCode == null ? 0 : o.exitCode) + ")"));
+        if (o.run != prefs.number("tavernRun")) return; // an older run we already replaced or stopped
         setTavernRun(0);
         int code = o.exitCode == null ? 0 : o.exitCode;
         boolean byHand = code == 130 || code == 143; // Ctrl+C or a stop signal
@@ -919,6 +996,8 @@ public class MainActivity extends Activity {
             }
             if (token != waitToken) return;
             starting = false;
+            prefs.setNumber("startSentAt", 0);
+            appLog("SillyTavern не ответил за 20 минут");
             message = "SillyTavern так и не ответил за 20 минут. Нажмите «Журнал», чтобы увидеть, на чём он остановился";
             notifyHome();
         }).start();
