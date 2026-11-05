@@ -1,5 +1,18 @@
 {
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
-    "items": [],
+    "items": [
+        {
+            "id": "lorebook-dnd",
+            "type": "lorebook",
+            "name": "ДНД",
+            "author": "поделился @CMDR_Patrin",
+            "description": "лорбук днд на русском",
+            "tags": [
+                "фэнтези"
+            ],
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/lorebooks/lorebook-dnd.json",
+            "added": "2026-11-05"
+        }
+    ],
     "submit": "https://t.me/correct0r?direct"
 }
