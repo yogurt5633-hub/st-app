@@ -1,7 +1,6 @@
 package io.github.yogurt5633.korrektor;
 
 import android.content.Intent;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -34,24 +33,21 @@ final class SitesTab {
             + "]";
     static final int MAX_SITES = 20;
 
-    private static final int BG = Color.parseColor("#161513");
-    private static final int LINE = Color.parseColor("#2a2824");
-    private static final int RAISED = Color.parseColor("#262421");
-    private static final int TEXT = Color.parseColor("#efe9de");
-    private static final int MUTED = Color.parseColor("#aaa398");
-    private static final int ON_PRIMARY = Color.parseColor("#161513");
 
     private final MainActivity activity;
     private final LinearLayout root;
     private final LinearLayout chips;
     private final WebView web;
+    private final View line;
     private int selected = -1;
+    private Palette palette;
 
     SitesTab(MainActivity activity) {
         this.activity = activity;
+        this.palette = activity.palette;
         root = new LinearLayout(activity);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
+        root.setBackgroundColor(palette.bg);
 
         HorizontalScrollView scroll = new HorizontalScrollView(activity);
         scroll.setHorizontalScrollBarEnabled(false);
@@ -60,12 +56,12 @@ final class SitesTab {
         chips.setPadding(dp(12), dp(8), dp(12), dp(8));
         scroll.addView(chips);
         root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        View line = new View(activity);
-        line.setBackgroundColor(LINE);
+        line = new View(activity);
+        line.setBackgroundColor(palette.line);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
         web = new WebView(activity);
-        web.setBackgroundColor(BG);
+        web.setBackgroundColor(palette.bg);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -90,6 +86,14 @@ final class SitesTab {
 
     View view() {
         return root;
+    }
+
+    void setPalette(Palette palette) {
+        this.palette = palette;
+        root.setBackgroundColor(palette.bg);
+        line.setBackgroundColor(palette.line);
+        web.setBackgroundColor(palette.bg);
+        rebuild();
     }
 
     WebView webView() {
@@ -190,12 +194,12 @@ final class SitesTab {
         chip.setText(text);
         chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         chip.setTypeface(Typeface.DEFAULT, on ? Typeface.BOLD : Typeface.NORMAL);
-        chip.setTextColor(on ? ON_PRIMARY : quiet ? MUTED : TEXT);
+        chip.setTextColor(on ? palette.onPrimary : quiet ? palette.muted : palette.text);
         chip.setPadding(dp(14), dp(8), dp(14), dp(8));
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(18));
-        bg.setColor(on ? TEXT : quiet ? BG : RAISED);
-        if (quiet) bg.setStroke(1, LINE);
+        bg.setColor(on ? palette.text : quiet ? palette.bg : palette.raised);
+        if (quiet) bg.setStroke(1, palette.line);
         chip.setBackground(bg);
         chip.setOnClickListener(click);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);

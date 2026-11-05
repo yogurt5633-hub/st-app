@@ -51,6 +51,11 @@ final class ControlBridge {
             s.put("startCmd", prefs.text(Prefs.START_CMD));
             s.put("permissionDenied", activity.permissionDenied);
             s.put("showSites", prefs.flag(Prefs.SHOW_SITES, true));
+            s.put("showModelBar", prefs.flag(Prefs.SHOW_MODEL_BAR, true));
+            s.put("theme", prefs.text(Prefs.THEME).isEmpty() ? "dark" : prefs.text(Prefs.THEME));
+            s.put("resolvedTheme", Palette.resolvedTheme(activity, prefs));
+            s.put("accent", prefs.text(Prefs.ACCENT).isEmpty() ? "amber" : prefs.text(Prefs.ACCENT));
+            s.put("onboardingDone", prefs.number(Prefs.ONBOARDING) >= Prefs.ONBOARDING_VERSION);
         } catch (Exception ignored) {
             // all puts are simple values
         }
@@ -150,10 +155,11 @@ final class ControlBridge {
 
     @JavascriptInterface
     public void setFlag(String key, boolean value) {
-        if (Prefs.AUTO_START.equals(key) || Prefs.AUTO_UPDATE.equals(key) || Prefs.NOTIFY.equals(key) || Prefs.SHOW_SITES.equals(key)) {
+        if (Prefs.AUTO_START.equals(key) || Prefs.AUTO_UPDATE.equals(key) || Prefs.NOTIFY.equals(key) || Prefs.SHOW_SITES.equals(key) || Prefs.SHOW_MODEL_BAR.equals(key)) {
             activity.prefs.setFlag(key, value);
         }
         if (Prefs.SHOW_SITES.equals(key)) activity.runOnUiThread(() -> activity.setSitesVisible(value));
+        if (Prefs.SHOW_MODEL_BAR.equals(key)) activity.runOnUiThread(activity::refreshModelBar);
     }
 
     @JavascriptInterface
@@ -163,6 +169,45 @@ final class ControlBridge {
             clipboard.setPrimaryClip(ClipData.newPlainText("Корректор", text));
             activity.toast("Скопировано");
         });
+    }
+
+    /** dark | light | system, and the accent colour. */
+    @JavascriptInterface
+    public void setTheme(String theme, String accent) {
+        String t = "light".equals(theme) || "system".equals(theme) ? theme : "dark";
+        String a = accent != null && accent.matches("amber|rose|mint|sky|lavender") ? accent : "amber";
+        activity.prefs.setText(Prefs.THEME, t);
+        activity.prefs.setText(Prefs.ACCENT, a);
+        activity.runOnUiThread(activity::applyPalette);
+    }
+
+    /** Numbers for the home page; they arrive as onNative("dashboard", …). */
+    @JavascriptInterface
+    public void dashboard() {
+        activity.runOnUiThread(activity::loadDashboard);
+    }
+
+    @JavascriptInterface
+    public void openChat(String chatId) {
+        if (chatId == null || !chatId.matches("^[cg]/.+")) return;
+        activity.runOnUiThread(() -> activity.openChat(chatId));
+    }
+
+    /** Opens a screen of the Korrektor tab, for example "#tools/spend". */
+    @JavascriptInterface
+    public void openKorrektor(String hash) {
+        if (hash == null || !hash.matches("^#[a-z/]*$")) return;
+        activity.runOnUiThread(() -> activity.openKorrektor(hash));
+    }
+
+    @JavascriptInterface
+    public void report() {
+        activity.runOnUiThread(activity::reportProblem);
+    }
+
+    @JavascriptInterface
+    public void finishOnboarding() {
+        activity.runOnUiThread(activity::finishOnboarding);
     }
 
     /** Provider sites for the "Sites" tab: [{name, url}]. */

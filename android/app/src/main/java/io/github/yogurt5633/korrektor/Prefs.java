@@ -47,6 +47,13 @@ final class Prefs {
         sp.edit().putString(key, value).apply();
     }
 
+    /** Number for the next Termux command: comes back with its result. Survives restarts. */
+    int nextRun() {
+        long next = number("runCounter") % 1_000_000 + 1;
+        setNumber("runCounter", next);
+        return (int) next;
+    }
+
     /** Login and password when SillyTavern has basicAuth on. Kept only in this app's private storage. */
     String[] auth() {
         String user = sp.getString("authUser", "");
@@ -65,4 +72,9 @@ final class Prefs {
     static final String LAST_TAB = "lastTab";
     static final String SHOW_SITES = "showSites";           // the "Sites" tab with AI providers' pages
     static final String START_CMD = "startCmd";             // the user's own command to start SillyTavern; empty = automatic
+    static final String THEME = "theme";                    // dark | light | system
+    static final String ACCENT = "accent";                  // amber | rose | mint | sky | lavender
+    static final String SHOW_MODEL_BAR = "showModelBar";    // model and preset row above the tavern
+    static final String ONBOARDING = "onboarding";          // version of the welcome screens already seen
+    static final int ONBOARDING_VERSION = 1;
 }

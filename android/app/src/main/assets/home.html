@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ещё</title>
+<title>Главная</title>
 <style>
 :root {
     --bg-deep: #12110f; --bg: #161513; --card: #1c1a18; --raised: #262421;
@@ -14,6 +14,21 @@
     --mono: "Roboto Mono", ui-monospace, monospace;
     --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
+html[data-theme="light"] {
+    --bg-deep: #efe9df; --bg: #f7f4ee; --card: #fdfbf7; --raised: #efe9df;
+    --line: rgba(31, 27, 22, 0.08); --line-strong: rgba(31, 27, 22, 0.14);
+    --text: #1f1b16; --text-2: #5e554a; --text-3: #7b7266;
+    --accent: #8a5200; --primary: #1f1b16; --on-primary: #fdfbf7;
+    --pos: #16a34a; --neg: #dc2626;
+}
+html[data-accent="rose"] { --accent: #e58aa0; }
+html[data-accent="mint"] { --accent: #5fc9a0; }
+html[data-accent="sky"] { --accent: #6aaee8; }
+html[data-accent="lavender"] { --accent: #a99be8; }
+html[data-theme="light"][data-accent="rose"] { --accent: #a8325a; }
+html[data-theme="light"][data-accent="mint"] { --accent: #0f7a55; }
+html[data-theme="light"][data-accent="sky"] { --accent: #1d5f9e; }
+html[data-theme="light"][data-accent="lavender"] { --accent: #5b47b3; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/22px system-ui, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
 main { padding: 16px 16px 32px; max-width: 640px; margin: 0 auto; }
@@ -53,6 +68,39 @@ input[type="text"] { width: 100%; height: 40px; padding: 0 12px; border-radius: 
 .switch input:checked + span::after { transform: translateX(18px); background: #1d1608; }
 .badge { font-family: var(--mono); font-size: 12px; color: var(--accent); }
 a { color: var(--accent); }
+/* home dashboard */
+.hello { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; }
+.hello h1 { margin: 0; }
+.mascot { display: block; flex: none; object-fit: contain; }
+html[data-theme="light"] .mascot { background: #1c1a18; border-radius: 16px; padding: 6px; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; text-align: left; color: var(--text); font: inherit; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; min-width: 0; }
+.tile:active { transform: scale(0.98); }
+.tile.wide { grid-column: span 2; }
+.tile .k { font-size: 12px; line-height: 16px; color: var(--text-3); }
+.tile .v { font-size: 20px; line-height: 28px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .s { font-size: 13px; line-height: 18px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .v.pos { color: var(--pos); }
+.tile .v.neg { color: var(--neg); }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.seg button { height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); font: inherit; font-size: 14px; }
+.seg button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 5px; margin-right: 6px; vertical-align: 0; }
+/* welcome screens */
+.onb { position: fixed; inset: 0; z-index: 50; background: var(--bg); overflow: auto; }
+.onb-in { min-height: 100%; display: flex; flex-direction: column; padding: 16px 20px 24px; max-width: 520px; margin: 0 auto; }
+.onb-skip { align-self: flex-end; background: none; border: 0; color: var(--text-3); font: inherit; font-size: 14px; padding: 8px; }
+.onb-art { align-self: center; margin: 8px 0; }
+.onb .title { font-size: 24px; line-height: 32px; margin: 8px 0; font-weight: 600; color: var(--text); text-align: center; }
+.onb .lead { color: var(--text-2); text-align: center; margin: 0 0 12px; }
+.onb ul { margin: 8px 0; padding-left: 20px; color: var(--text-2); }
+.onb li { margin: 6px 0; }
+.onb .box { margin-top: 8px; }
+.onb-dots { display: flex; gap: 6px; justify-content: center; margin: 20px 0 12px; }
+.onb-dots span { width: 6px; height: 6px; border-radius: 3px; background: var(--line-strong); transition: width 150ms var(--ease); }
+.onb-dots span.on { background: var(--accent); width: 18px; }
+.onb-foot { margin-top: auto; display: flex; gap: 8px; }
+.onb-foot .btn { flex: 1; }
 .error { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: #f0a0a2; overflow-wrap: anywhere; }
 pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto; border-radius: 8px; background: var(--bg-deep); font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .field + .field { margin-top: 12px; }
@@ -71,6 +119,8 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
     var logsLoading = false;
     var drafts = {};          // what the user typed and has not saved yet
     var pendingRender = false;
+    var dashboard = null;     // numbers for the home tiles
+    var onbStep = 0;          // welcome screens: which one is shown
     var siteList = [];        // provider sites of the "Sites" tab
     var siteEdit = null;      // index being edited, or 'new'
     var root = document.getElementById('root');
@@ -117,6 +167,16 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             h('span', { class: 'small muted', text: label }),
             h('div', { class: 'line', style: 'margin-top:4px' }, input, save),
             hint ? h('p', { class: 'hint' }, hint) : null);
+    }
+
+    function seg(options, value, onchange) {
+        return h('div', { class: 'seg', role: 'group' }, options.map(function (o) {
+            return h('button', { type: 'button', 'aria-pressed': String(value === o[0]), onclick: function () { onchange(o[0]); } }, o[2] ? h('span', { class: 'swatch', style: 'background:' + o[2] }) : null, o[1]);
+        }));
+    }
+
+    function mascot(name, size) {
+        return h('img', { class: 'mascot', src: 'img/' + name + '.png', width: size, height: size, alt: '' });
     }
 
     function startTavern() {
@@ -328,6 +388,158 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         ];
     }
 
+
+    // ---------- home: tiles ----------
+    function fmt(n) {
+        return Math.round(Number(n) || 0).toLocaleString('ru-RU');
+    }
+
+    function dashboardSection() {
+        var s = state;
+        var d = dashboard || {};
+        var status = d.status || {};
+        var tiles = [];
+        if (s.stUp && d.lastChat) {
+            var c = d.lastChat;
+            tiles.push(h('button', { class: 'tile wide', type: 'button', onclick: function () { app.openChat(c.id); } },
+                h('span', { class: 'k', text: 'Продолжить' }),
+                h('span', { class: 'v', text: c.title || 'Последний чат' }),
+                h('span', { class: 's', text: c.isGroup ? 'групповой чат' : (c.file || '') })));
+        }
+        if (s.stUp) {
+            var open = typeof status.open === 'number' ? status.open : null;
+            tiles.push(h('button', { class: 'tile', type: 'button', onclick: function () { app.openKorrektor('#feed'); } },
+                h('span', { class: 'k', text: 'Замечания' }),
+                h('span', { class: 'v', text: open === null ? '…' : open ? String(open) : 'нет' }),
+                h('span', { class: 's', text: open ? 'ждут решения' : 'всё спокойно' })));
+            var today = d.today ? d.today.roleplay + d.today.korrektor : null;
+            tiles.push(h('button', { class: 'tile', type: 'button', onclick: function () { app.openKorrektor('#tools/spend'); } },
+                h('span', { class: 'k', text: 'Сегодня' }),
+                h('span', { class: 'v', text: today === null ? '…' : fmt(today) }),
+                h('span', { class: 's', text: d.today && d.today.cost ? '≈$' + d.today.cost.toFixed(2) : 'токенов' })));
+            var check = status.connectionCheck;
+            tiles.push(h('button', { class: 'tile wide', type: 'button', onclick: function () { app.openKorrektor('#tools'); } },
+                h('span', { class: 'k', text: 'Подключение к модели' }),
+                h('span', { class: 'v' + (check && check.ok === true ? ' pos' : check && check.ok === false ? ' neg' : ''), text: !check ? 'не проверялось' : check.ok === true ? 'ключ работает' : check.ok === false ? 'есть проблема' : 'не ясно' }),
+                h('span', { class: 's', text: check ? (check.model || check.message) : 'Нажмите, чтобы проверить ключ' })));
+        }
+        return [
+            h('div', { class: 'hello' }, mascot(s.stUp ? 'wave' : s.starting ? 'write' : 'sleep', 56),
+                h('div', {}, h('h1', { text: 'Главная' }), h('div', { class: 'small muted', text: s.stUp ? 'Таверна работает' : s.starting ? 'Таверна запускается' : 'Таверна выключена' }))),
+            tiles.length ? h('div', { class: 'tiles' }, tiles) : null,
+        ];
+    }
+
+    function appearanceSection() {
+        var s = state;
+        return [
+            h('h2', { text: 'Оформление' }),
+            h('div', { class: 'box' },
+                h('div', { class: 'row' }, h('span', { text: 'Тема' }),
+                    seg([['dark', 'Тёмная'], ['light', 'Светлая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
+                h('div', { class: 'row' }, h('span', { text: 'Цвет акцента' }),
+                    seg([['amber', 'Янтарь', '#e3a54a'], ['rose', 'Роза', '#e58aa0'], ['mint', 'Мята', '#5fc9a0'], ['sky', 'Небо', '#6aaee8'], ['lavender', 'Лаванда', '#a99be8']], s.accent, function (v) { app.setTheme(s.theme, v); })),
+                toggle('Строка модели над таверной', 'Модель и пресет Chat Completion меняются одним нажатием, не заходя в настройки SillyTavern', s.showModelBar, function (v) { app.setFlag('showModelBar', v); })),
+        ];
+    }
+
+    function helpSection() {
+        return [
+            h('h2', { text: 'Помощь' }),
+            h('div', { class: 'box' },
+                h('div', { class: 'row' },
+                    h('div', {}, 'Что-то не работает?'),
+                    h('p', { class: 'hint', text: 'Соберу версии, состояние Termux и последние строки журнала в один текст: он скопируется, и его можно сразу отправить. Проверьте текст перед отправкой' }),
+                    h('div', { class: 'actions' }, h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.report(); }, text: 'Сообщить о проблеме' })),
+                ),
+                h('div', { class: 'row' },
+                    h('button', { class: 'btn quiet small', type: 'button', onclick: function () { onbStep = 0; showOnboarding = true; render(); }, text: 'Показать знакомство ещё раз' }))),
+        ];
+    }
+
+    // ---------- welcome screens (once for everyone, also after an update) ----------
+    var showOnboarding = false;
+
+    function onboarding() {
+        var s = state;
+        if (s.onboardingDone && !showOnboarding) return null;
+        var steps = 5;
+        function finish() {
+            showOnboarding = false;
+            app.finishOnboarding();
+            render();
+        }
+        function next() { onbStep = Math.min(steps - 1, onbStep + 1); render(); }
+        function back() { onbStep = Math.max(0, onbStep - 1); render(); }
+        function okLine(done, text, body) {
+            return h('div', { class: 'row step' + (done ? ' done' : '') }, h('span', { class: 'num', text: done ? 'ok' : '·' }), h('div', {}, h('div', { text: text }), body));
+        }
+        var ready = s.termuxReady === true;
+        var art, title, lead, body = null, primary = 'Дальше', action = next;
+        if (onbStep === 0) {
+            art = 'wave'; title = 'Привет! Я Корректор';
+            lead = 'Помогаю вести ролёвки в SillyTavern на телефоне. Таверна живёт прямо в приложении, а я присматриваю за чатами';
+        } else if (onbStep === 1) {
+            art = 'write'; title = 'Что я делаю';
+            lead = 'Читаю чаты, лорбуки и карточки и предлагаю правки';
+            body = h('ul', {},
+                h('li', { text: 'Нахожу противоречия, повторы и переполненный контекст и показываю правку «было / станет»' }),
+                h('li', { text: 'Ничего не меняю без вашего «Применить». Перед каждой правкой делаю копию, всё можно откатить' }),
+                h('li', { text: 'Показываю, куда уходят токены и деньги, и помогаю сжать чат' }),
+                h('li', { text: 'Делаю резервную копию всего: чатов, карточек, лорбуков, настроек' }),
+                h('li', { text: 'Ключи остаются в SillyTavern: я их не вижу' }));
+        } else if (onbStep === 2) {
+            art = 'key'; title = 'Связь с Termux';
+            lead = 'SillyTavern работает в Termux, а я запускаю и обновляю её оттуда. Это настраивается один раз';
+            body = h('div', { class: 'box' },
+                okLine(s.termuxInstalled, 'Termux из F-Droid или GitHub', s.termuxInstalled ? null : h('div', { class: 'actions' }, h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openLink('termux'); }, text: 'Открыть F-Droid' }))),
+                okLine(s.termuxPermission, 'Разрешение запускать команды в Termux', s.termuxPermission ? null : h('div', { class: 'actions' },
+                    h('button', { class: 'btn primary small', type: 'button', disabled: !s.termuxInstalled, onclick: function () { app.requestTermux(); }, text: 'Разрешить' }),
+                    s.permissionDenied ? h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openAppSettings(); }, text: 'Открыть настройки' }) : null)),
+                okLine(ready, 'Команда в Termux, чтобы он принимал команды', ready ? null : [
+                    h('code', { text: s.termuxSetup || '' }),
+                    h('div', { class: 'actions' },
+                        h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.copy(s.termuxSetup); }, text: 'Скопировать' }),
+                        h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.openTermux(); }, text: 'Открыть Termux' }),
+                        s.termuxPermission ? h('button', { class: 'btn secondary small', type: 'button', disabled: s.termuxChecking, onclick: function () { app.recheck(); }, text: s.termuxChecking ? 'Проверяю…' : 'Проверить' }) : null),
+                    s.termuxReady === false && s.termuxError ? h('p', { class: 'error', text: s.termuxError }) : null]));
+            if (!(s.termuxInstalled && s.termuxPermission && ready)) primary = 'Настрою позже';
+        } else if (onbStep === 3) {
+            art = 'books'; title = 'SillyTavern';
+            var known = !!(s.stDir || s.startCmd);
+            lead = s.stDir ? 'Нашёл таверну: ' + s.stDir.replace(/^\/data\/data\/com\.termux\/files\/home/, '~') : s.startCmd ? 'Таверна запускается вашей командой: ' + s.startCmd : ready ? 'В Termux таверну не нашёл. Могу установить её сам или запускать вашей командой' : 'Сначала закончите прошлый шаг: без него я не вижу, что стоит в Termux';
+            body = h('div', { class: 'box' },
+                h('div', { class: 'row' }, field('cmd', 'Команда запуска в Termux', s.startCmd, 'автоматически', function (v) { app.setStartCommand(v); },
+                    'Если вы запускаете таверну своей командой, например st, впишите её. Пусто — найду папку сама и запущу start.sh')),
+                !known && ready ? h('div', { class: 'row' }, h('button', { class: 'btn primary small', type: 'button', onclick: function () {
+                    if (confirm('Установить SillyTavern в Termux? Откроется Termux, там будет видно, как идёт установка')) app.action('install-tavern');
+                }, text: 'Установить SillyTavern' })) : null);
+        } else {
+            art = 'done'; title = 'Готово!';
+            lead = 'Вот где что лежит';
+            body = h('ul', {},
+                h('li', { text: '«Главная» — сводка, запуск таверны, обновления и настройки' }),
+                h('li', { text: '«Таверна» — сама SillyTavern, в ней можно ролить' }),
+                h('li', { text: '«Корректор» — замечания, расходы, резервные копии и каталог' }),
+                h('li', { text: '«Сайты» — провайдеры ИИ: ключи, модели, баланс' }));
+            primary = 'Начать';
+            action = finish;
+        }
+        var dots = [];
+        for (var i = 0; i < steps; i++) dots.push(h('span', { class: i === onbStep ? 'on' : '' }));
+        return h('div', { class: 'onb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Знакомство' },
+            h('div', { class: 'onb-in' },
+                onbStep < steps - 1 ? h('button', { class: 'onb-skip', type: 'button', onclick: finish, text: 'Пропустить' }) : h('span', { style: 'height:38px' }),
+                h('div', { class: 'onb-art' }, mascot(art, 150)),
+                h('div', { class: 'title', text: title }),
+                h('p', { class: 'lead', text: lead }),
+                body,
+                h('div', { class: 'onb-dots' }, dots),
+                h('div', { class: 'onb-foot' },
+                    onbStep > 0 ? h('button', { class: 'btn secondary', type: 'button', onclick: back, text: 'Назад' }) : null,
+                    h('button', { class: 'btn primary', type: 'button', onclick: action, text: primary }))));
+    }
+
     function typing() {
         var el = document.activeElement;
         return el && el.tagName === 'INPUT' && el.type === 'text' && root.contains(el);
@@ -340,24 +552,37 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             return;
         }
         pendingRender = false;
+        applyLook();
         root.replaceChildren.apply(root, [].concat(
-            h('h1', { text: 'Корректор' }),
+            dashboardSection(),
             tavernSection(),
             setupSection() || [],
             updatesSection(),
             sitesSection(),
+            appearanceSection(),
             notifySection(),
+            helpSection(),
+            onboarding() || [],
             h('p', { class: 'hint', style: 'margin-top:24px' }, 'Журналы в Termux: ~/.korrektor-ctl.log и ~/.korrektor-st.log · ',
                 h('a', { href: '#', onclick: function (e) { e.preventDefault(); app.openLink('project'); }, text: 'проект на GitHub' }))
         ).filter(Boolean));
     }
 
+    function applyLook() {
+        var el = document.documentElement;
+        el.dataset.theme = state.resolvedTheme === 'light' ? 'light' : 'dark';
+        if (state.accent && state.accent !== 'amber') el.dataset.accent = state.accent;
+        else delete el.dataset.accent;
+    }
+
     function refresh() {
+        var wasUp = state.stUp;
         try {
             state = JSON.parse(app.state());
         } catch (e) {
             state = {};
         }
+        if (state.stUp && !wasUp) app.dashboard();
         try {
             siteList = JSON.parse(app.sites()) || [];
         } catch (e) {
@@ -385,10 +610,17 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             logs = (data && data.text) || '';
             logsLoading = false;
         }
+        if (type === 'dashboard') {
+            dashboard = data;
+            render();
+            return;
+        }
         refresh();
     };
 
     refresh();
+    // Tiles stay fresh while the page is open.
+    setInterval(function () { if (state.stUp && document.visibilityState === 'visible') app.dashboard(); }, 30000);
     setInterval(function () { if (state.starting || state.termuxChecking) refresh(); }, 2000);
     if (!state.lastCheck || Date.now() - state.lastCheck > 6 * 3600 * 1000) {
         checking = true;

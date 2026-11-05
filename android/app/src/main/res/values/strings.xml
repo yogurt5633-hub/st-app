@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Корректор</string>
+    <string name="widget_unknown">Проверяю таверну…</string>
+    <string name="widget_open">Открыть</string>
+    <string name="widget_description">Таверна: работает ли, сколько замечаний, запуск одной кнопкой</string>
 </resources>

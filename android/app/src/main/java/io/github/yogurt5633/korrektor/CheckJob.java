@@ -16,6 +16,7 @@ import org.json.JSONObject;
  */
 public class CheckJob extends JobService {
     private static final int JOB_ID = 1;
+    private static final int WIDGET_JOB_ID = 2;
     private static final long DAY = 24L * 60 * 60 * 1000;
 
     static void schedule(Context context) {
@@ -31,11 +32,26 @@ public class CheckJob extends JobService {
         scheduler.schedule(info);
     }
 
+    /** One look at the tavern for the widget, a minute from now (after "Запустить"). */
+    static void scheduleWidgetRefresh(Context context) {
+        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+        if (scheduler == null) return;
+        scheduler.schedule(new JobInfo.Builder(WIDGET_JOB_ID, new ComponentName(context, CheckJob.class))
+                .setMinimumLatency(60_000)
+                .setOverrideDeadline(120_000)
+                .build());
+    }
+
     @Override
     public boolean onStartJob(JobParameters params) {
+        if (params.getJobId() == WIDGET_JOB_ID) {
+            KorrektorWidget.refresh(getApplicationContext());
+            return false;
+        }
         new Thread(() -> {
             try {
                 work(getApplicationContext());
+                KorrektorWidget.refresh(getApplicationContext());
             } finally {
                 jobFinished(params, false);
             }

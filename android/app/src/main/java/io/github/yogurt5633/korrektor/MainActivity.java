@@ -57,11 +57,8 @@ public class MainActivity extends Activity {
     private static final int REQ_TERMUX = 2;
     private static final int REQ_NOTIFY = 3;
 
-    private static final int BG = Color.parseColor("#161513");
-    private static final int DEEP = Color.parseColor("#12110f");
-    private static final int LINE = Color.parseColor("#2a2824");
-    private static final int TEXT = Color.parseColor("#efe9de");
-    private static final int MUTED = Color.parseColor("#8a847a");
+    // Colours of the native parts; they follow the theme chosen on the home page.
+    Palette palette;
 
     // Back button: close what is open inside the page first (SillyTavern panels and popups, Korrektor dialogs).
     private static final String BACK_SCRIPT = "(function(){"
@@ -103,6 +100,13 @@ public class MainActivity extends Activity {
     private WebView korrektor;
     private WebView home;
     SitesTab sites;
+    private ModelBar modelBar;
+    private LinearLayout tavernBox;
+    private LinearLayout root;
+    private LinearLayout bar;
+    private View barLine;
+    private String pendingImport;
+    private boolean reportPending;
     private final Map<String, TextView> tabs = new LinkedHashMap<>();
     private String current = HOME;
     private boolean loaded;
@@ -118,13 +122,11 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         running = this;
         prefs = new Prefs(this);
+        palette = Palette.of(this, prefs);
         Notifier.createChannel(this);
-        getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(DEEP);
 
-        LinearLayout root = new LinearLayout(this);
+        root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
         root.setFitsSystemWindows(true);
 
         FrameLayout frame = new FrameLayout(this);
@@ -134,27 +136,35 @@ public class MainActivity extends Activity {
         home.addJavascriptInterface(new ControlBridge(this), ControlBridge.NAME);
         tavern = makeWebView(true);
         korrektor = makeWebView(true);
-        for (WebView view : new WebView[]{tavern, korrektor, home}) {
+        // The tavern tab: the model/preset row above SillyTavern itself.
+        tavernBox = new LinearLayout(this);
+        tavernBox.setOrientation(LinearLayout.VERTICAL);
+        modelBar = new ModelBar(this, tavern, palette);
+        tavernBox.addView(modelBar.view(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        tavernBox.addView(tavern, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        frame.addView(tavernBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        for (WebView view : new WebView[]{korrektor, home}) {
             frame.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
         home.loadUrl("file:///android_asset/home.html");
         sites = new SitesTab(this);
         frame.addView(sites.view(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        View line = new View(this);
-        line.setBackgroundColor(LINE);
-        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        barLine = new View(this);
+        root.addView(barLine, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
-        LinearLayout bar = new LinearLayout(this);
-        bar.setBackgroundColor(DEEP);
-        root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
-        addTab(bar, TAVERN, "Таверна");
-        addTab(bar, KORREKTOR, "Корректор");
-        addTab(bar, SITES, "Сайты");
-        addTab(bar, HOME, "Ещё");
+        bar = new LinearLayout(this);
+        root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
+        addTab(bar, HOME, "Главная", R.drawable.ic_tab_home);
+        addTab(bar, TAVERN, "Таверна", R.drawable.ic_tab_tavern);
+        addTab(bar, KORREKTOR, "Корректор", R.drawable.ic_tab_korrektor);
+        addTab(bar, SITES, "Сайты", R.drawable.ic_tab_sites);
         setSitesVisible(prefs.flag(Prefs.SHOW_SITES, true));
 
         setContentView(root);
+        applyPalette();
+        // Everyone sees the welcome screens once, also after an update: stay on the home tab for them.
+        if (prefs.number(Prefs.ONBOARDING) < Prefs.ONBOARDING_VERSION) homeChosen = true;
         showTab(HOME);
         CheckJob.schedule(this);
         handleIntent(getIntent());
@@ -166,12 +176,14 @@ public class MainActivity extends Activity {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics()));
     }
 
-    private void addTab(LinearLayout bar, String name, String label) {
+    private void addTab(LinearLayout bar, String name, String label, int iconRes) {
         TextView view = new TextView(this);
         view.setText(label);
         view.setGravity(Gravity.CENTER);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        view.setTextColor(MUTED);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        view.setCompoundDrawablesWithIntrinsicBounds(null, getDrawable(iconRes), null, null);
+        view.setCompoundDrawablePadding(dp(2));
+        view.setPadding(0, dp(8), 0, dp(6));
         view.setOnClickListener(v -> {
             if (HOME.equals(name)) homeChosen = true;
             showTab(name);
@@ -184,7 +196,7 @@ public class MainActivity extends Activity {
 
     private WebView makeWebView(boolean pageTab) {
         WebView view = new WebView(this);
-        view.setBackgroundColor(BG);
+        view.setBackgroundColor(palette.bg);
         WebSettings s = view.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -226,6 +238,12 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView v, String url) {
                 if (pageTab) v.evaluateJavascript(FilesBridge.HOOK, null);
                 authTries = 0;
+                if (v == korrektor) {
+                    passTheme();
+                    if (pendingImport != null && stUp) deliverImport();
+                }
+                // SillyTavern fills its menus a little after the page loads.
+                if (v == tavern) handler.postDelayed(modelBar::refresh, 4000);
             }
 
             @Override
@@ -380,12 +398,9 @@ public class MainActivity extends Activity {
             tab = HOME;
         }
         current = tab;
-        for (Map.Entry<String, TextView> e : tabs.entrySet()) {
-            boolean on = e.getKey().equals(tab);
-            e.getValue().setTextColor(on ? TEXT : MUTED);
-            e.getValue().setTypeface(Typeface.DEFAULT, on ? Typeface.BOLD : Typeface.NORMAL);
-        }
-        tavern.setVisibility(TAVERN.equals(tab) ? View.VISIBLE : View.GONE);
+        paintTabs();
+        tavernBox.setVisibility(TAVERN.equals(tab) ? View.VISIBLE : View.GONE);
+        if (TAVERN.equals(tab)) modelBar.refresh();
         korrektor.setVisibility(KORREKTOR.equals(tab) ? View.VISIBLE : View.GONE);
         home.setVisibility(HOME.equals(tab) ? View.VISIBLE : View.GONE);
         sites.view().setVisibility(SITES.equals(tab) ? View.VISIBLE : View.GONE);
@@ -407,6 +422,7 @@ public class MainActivity extends Activity {
     }
 
     private void onServerState(boolean up, boolean mayAutoStart) {
+        if (up != stUp) KorrektorWidget.refresh(this);
         stUp = up;
         if (up) {
             starting = false;
@@ -416,6 +432,7 @@ public class MainActivity extends Activity {
                 korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/");
                 loaded = true;
             }
+            if (pendingImport != null && loaded) deliverImport();
             if (pendingTab != null) {
                 showTab(pendingTab);
                 pendingTab = null;
@@ -507,9 +524,7 @@ public class MainActivity extends Activity {
     }
 
     private int nextRun() {
-        long next = prefs.number("runCounter") % 1_000_000 + 1;
-        prefs.setNumber("runCounter", next);
-        return (int) next;
+        return prefs.nextRun();
     }
 
     private void setTavernRun(int run) {
@@ -584,7 +599,8 @@ public class MainActivity extends Activity {
                 }
                 break;
             case "logs":
-                sendLogs(o.failedToRun() ? termuxError : o.output().isEmpty() ? "Журналы пусты" : o.output());
+                if (reportPending) shareReport(o.failedToRun() ? termuxError : o.output());
+                else sendLogs(o.failedToRun() ? termuxError : o.output().isEmpty() ? "Журналы пусты" : o.output());
                 break;
             case "stop":
                 if (o.failedToRun()) message = "Не удалось остановить: " + termuxError;
@@ -634,6 +650,25 @@ public class MainActivity extends Activity {
                 onServerState(false, false);
             });
         }).start();
+    }
+
+    void openKorrektor(String hash) {
+        homeChosen = false;
+        showTab(KORREKTOR);
+        if (KORREKTOR.equals(current)) korrektor.evaluateJavascript("location.hash=" + JSONObject.quote(hash), null);
+    }
+
+    void refreshModelBar() {
+        modelBar.refresh();
+    }
+
+    void finishOnboarding() {
+        prefs.setNumber(Prefs.ONBOARDING, Prefs.ONBOARDING_VERSION);
+        homeChosen = false;
+        if (stUp) showTab(TAVERN);
+        else if (termuxReady == Boolean.TRUE && (!stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty()) && !starting) {
+            runAction(prefs.flag(Prefs.AUTO_UPDATE, true) ? "start-update" : "start");
+        } else notifyHome();
     }
 
     /** "Edit list" in the Sites tab: the list is edited on the More page. */
@@ -697,6 +732,151 @@ public class MainActivity extends Activity {
 
     void notifyHome() {
         sendToHome("state", null);
+    }
+
+    // ---------- look ----------
+
+    void applyPalette() {
+        palette = Palette.of(this, prefs);
+        getWindow().setStatusBarColor(palette.bg);
+        getWindow().setNavigationBarColor(palette.deep);
+        int flags = getWindow().getDecorView().getSystemUiVisibility();
+        if (palette.light) flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        else flags &= ~(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        getWindow().getDecorView().setSystemUiVisibility(flags);
+        root.setBackgroundColor(palette.bg);
+        barLine.setBackgroundColor(palette.line);
+        bar.setBackgroundColor(palette.deep);
+        for (WebView view : new WebView[]{tavern, korrektor, home}) view.setBackgroundColor(palette.bg);
+        modelBar.setPalette(palette);
+        sites.setPalette(palette);
+        paintTabs();
+        passTheme();
+        notifyHome();
+    }
+
+    private void paintTabs() {
+        for (Map.Entry<String, TextView> e : tabs.entrySet()) {
+            boolean on = e.getKey().equals(current);
+            int color = on ? palette.text : palette.muted;
+            e.getValue().setTextColor(color);
+            e.getValue().setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(on ? palette.accent : palette.muted));
+            e.getValue().setTypeface(Typeface.DEFAULT, on ? Typeface.BOLD : Typeface.NORMAL);
+        }
+    }
+
+    /** The Korrektor page draws itself in the same theme and accent. */
+    private void passTheme() {
+        String theme = Palette.resolvedTheme(this, prefs);
+        String accent = prefs.text(Prefs.ACCENT);
+        korrektor.evaluateJavascript("window.korrektorTheme&&window.korrektorTheme(" + JSONObject.quote(theme) + "," + JSONObject.quote(accent) + ")", null);
+    }
+
+    // ---------- links shared to the app ----------
+
+    private void deliverImport() {
+        String url = pendingImport;
+        if (url == null) return;
+        pendingImport = null;
+        homeChosen = false;
+        showTab(KORREKTOR);
+        korrektor.evaluateJavascript("window.korrektorImport?window.korrektorImport(" + JSONObject.quote(url) + "):'missing'", value -> {
+            if ("\"missing\"".equals(value)) {
+                // The page is still loading: try once more when it is ready.
+                pendingImport = url;
+            }
+        });
+    }
+
+    // ---------- home page: dashboard, continue a chat, problem report ----------
+
+    /** Numbers for the home page: last chat, findings, key check, tokens today. */
+    void loadDashboard() {
+        if (!stUp) {
+            sendToHome("dashboard", null);
+            return;
+        }
+        String base = prefs.stUrl() + "/api/plugins/korrektor";
+        new Thread(() -> {
+            JSONObject out = new JSONObject();
+            try {
+                Net.Reply status = Net.get(base + "/status", 8000, true);
+                if (status.ok()) out.put("status", new JSONObject(status.body));
+                Net.Reply chats = Net.get(base + "/chats?limit=1", 8000, true);
+                if (chats.ok()) {
+                    org.json.JSONArray items = new JSONObject(chats.body).optJSONArray("items");
+                    if (items != null && items.length() > 0) out.put("lastChat", items.getJSONObject(0));
+                }
+                Net.Reply usage = Net.get(base + "/usage?days=1", 8000, true);
+                if (usage.ok()) {
+                    JSONObject u = new JSONObject(usage.body);
+                    org.json.JSONArray days = u.optJSONArray("byDay");
+                    if (days != null && days.length() > 0) out.put("today", days.getJSONObject(days.length() - 1));
+                }
+                out.put("needsLogin", status.status == 401 || status.status == 403);
+            } catch (Exception ignored) {
+                // partial numbers are fine
+            }
+            sendToHome("dashboard", out);
+        }).start();
+    }
+
+    /** Opens a chat in the tavern tab, as if chosen in SillyTavern's list. */
+    void openChat(String chatId) {
+        homeChosen = false;
+        showTab(TAVERN);
+        String js = "(async function(id){try{var ctx=SillyTavern.getContext();var parts=id.split('/');"
+                + "if(parts[0]!=='c')return 'group';var avatar=parts[1]+'.png';var file=parts.slice(2).join('/');"
+                + "var index=ctx.characters.findIndex(function(c){return c.avatar===avatar;});if(index<0)return 'nochar';"
+                + "if(String(ctx.characterId)!==String(index))await ctx.selectCharacterById(String(index));"
+                + "if(ctx.getCurrentChatId&&ctx.getCurrentChatId()!==file)await ctx.openCharacterChat(file);return 'ok';"
+                + "}catch(e){return 'error';}})(" + JSONObject.quote(chatId) + ")";
+        tavern.evaluateJavascript(js, null);
+    }
+
+    /** Collects what helps to find a problem and offers to send it (logs come from Termux). */
+    void reportProblem() {
+        if (Termux.installed(this) && Termux.permitted(this)) {
+            reportPending = true;
+            runQuiet("logs");
+            handler.postDelayed(() -> {
+                if (reportPending) shareReport("(журнал из Termux не пришёл)");
+            }, 8000);
+        } else {
+            shareReport("(Termux не настроен: журнала нет)");
+        }
+    }
+
+    private void shareReport(String logs) {
+        reportPending = false;
+        new Thread(() -> {
+            String plugin = "?";
+            Net.Reply status = stUp ? Net.get(prefs.stUrl() + "/api/plugins/korrektor/status", 6000, true) : null;
+            if (status != null && status.ok()) {
+                try {
+                    plugin = new JSONObject(status.body).optString("version", "?");
+                } catch (Exception ignored) {
+                    // keep "?"
+                }
+            }
+            String text = "Корректор: отчёт о проблеме\n"
+                    + "Приложение: " + Updater.appVersionName(this) + " (" + Updater.appVersionCode(this) + ")\n"
+                    + "Android: " + android.os.Build.VERSION.RELEASE + " (API " + android.os.Build.VERSION.SDK_INT + "), " + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL + "\n"
+                    + "SillyTavern: " + (stUp ? "работает" : "не отвечает") + ", " + prefs.stUrl() + "\n"
+                    + "Корректор в таверне: " + plugin + "\n"
+                    + "Termux: " + (Termux.installed(this) ? "установлен" : "нет") + ", разрешение: " + (Termux.permitted(this) ? "да" : "нет")
+                    + ", приём команд: " + (termuxReady == null ? "не проверен" : termuxReady ? "да" : "нет: " + termuxError) + "\n"
+                    + "Команда запуска: " + (prefs.text(Prefs.START_CMD).isEmpty() ? "автоматически" : prefs.text(Prefs.START_CMD)) + "\n"
+                    + "Папка таверны: " + (stDir.isEmpty() ? "не найдена" : stDir) + "\n"
+                    + "Сообщение на экране: " + (message.isEmpty() ? "—" : message) + "\n\n"
+                    + "Журнал:\n" + logs;
+            runOnUiThread(() -> {
+                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Отчёт Корректора", text));
+                Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+                startActivity(Intent.createChooser(send, "Отчёт скопирован. Отправить в…"));
+            });
+        }).start();
     }
 
     void sendToHome(String type, JSONObject data) {
@@ -783,6 +963,24 @@ public class MainActivity extends Activity {
     }
 
     private void handleIntent(Intent intent) {
+        if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
+            // A link shared to the app: import the card or lorebook through Korrektor.
+            String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("https?://\\S+").matcher(text == null ? "" : text);
+            if (m.find()) {
+                pendingImport = m.group();
+                homeChosen = false;
+                if (stUp) deliverImport();
+                else {
+                    message = "Ссылка получена: импорт начнётся, когда SillyTavern запустится";
+                    pendingTab = KORREKTOR;
+                    showTab(HOME);
+                }
+            } else {
+                toast("В том, чем поделились, нет ссылки");
+            }
+            return;
+        }
         String tab = intent == null ? null : intent.getStringExtra("tab");
         if (tab == null) return;
         homeChosen = HOME.equals(tab);
@@ -831,6 +1029,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (running == this) running = null;
         handler.removeCallbacksAndMessages(null);
+        KorrektorWidget.refresh(this);
         for (WebView view : new WebView[]{tavern, korrektor, home, sites == null ? null : sites.webView()}) {
             if (view != null) view.destroy();
         }
