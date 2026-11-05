@@ -2,6 +2,61 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "preset-cyberwitch-ultraviolence-3",
+            "type": "preset",
+            "name": "CyberWitch Ultraviolence 3",
+            "author": "CyberWitch",
+            "description": "• Три типа Custom рассуждений - привычный think, think для много думающих моделей, и plan для Gemini/Claude\n\n• два вида Prefill, чтобы переключаться между моделями спокойно, и минимизировать риск появления ошибки 400 на Gemini и Claude\n\n• два вида антицензурных промпта в Core Axioms (пробуем, какой пробьет), soft хорошо заходит на Claude и Gemini\n\n• Slow Pace - промпт на замедление моделей, чтобы",
+            "tags": [],
+            "page": "https://t.me/cyberwitchs_forge",
+            "models": [
+                "Claude",
+                "Gemini",
+                "DeepSeek"
+            ],
+            "uncensored": true,
+            "regex": 9,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/presets/preset-cyberwitch-ultraviolence-3.json",
+            "added": "2026-11-05",
+            "hash": "d277adf7e51992c47ef0e5ca6e8664123d8fe70e3480715d2d0701ee1bc1f06f",
+            "size": 125160,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/preset-cyberwitch-ultraviolence-3-1793906777771-1.webp"
+            ]
+        },
+        {
+            "id": "preset-patrin-tavern-q1f-v-0-3",
+            "type": "preset",
+            "name": "Patrin Tavern Q1F v.0.3",
+            "author": "@CMDR_Patrin",
+            "description": "Сижу через Vertex AI. Там я так понимаю и без того цензуры почти нет, но тем не менее использую свой пресет - почищенный и чуть дополненный Q1F, который ранее где-то в сети гулял. \n\nЧерез прокси цензуру не пробивает последние модели - джейлбрейк слишком агрессивный.",
+            "tags": [],
+            "models": [
+                "Gemini"
+            ],
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/presets/preset-patrin-tavern-q1f-v-0-3.json",
+            "added": "2026-11-05",
+            "hash": "bb70b85e080ef2010adaf21adebba068df3d6ae8db2d86d6e93003591bd3255f",
+            "size": 31878
+        },
+        {
+            "id": "preset-nemo-engine-v11-3",
+            "type": "preset",
+            "name": "Nemo Engine v11.3",
+            "author": "поделился @hahahahajjja",
+            "description": "",
+            "tags": [],
+            "models": [
+                "универсально"
+            ],
+            "regex": 120,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/presets/preset-nemo-engine-v11-3.json",
+            "added": "2026-11-05",
+            "hash": "43c47a44289fa6f7d6428a8bc27c4152f63070f75ccc8ccea4bff1407f011655",
+            "size": 1507017,
+            "uncensored": true
+        },
+        {
             "id": "lorebook-dnd",
             "type": "lorebook",
             "name": "ДНД",
@@ -11,8 +66,12 @@
                 "фэнтези"
             ],
             "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/lorebooks/lorebook-dnd.json",
-            "added": "2026-11-05"
+            "added": "2026-11-05",
+            "models": [
+                "универсально"
+            ]
         }
     ],
-    "submit": "https://t.me/correct0r?direct"
+    "submit": "https://t.me/correct0r?direct",
+    "updated": "2026-11-05T19:35:52.433Z"
 }
