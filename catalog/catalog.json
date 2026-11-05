@@ -53,7 +53,8 @@
             "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/presets/preset-nemo-engine-v11-3.json",
             "added": "2026-11-05",
             "hash": "43c47a44289fa6f7d6428a8bc27c4152f63070f75ccc8ccea4bff1407f011655",
-            "size": 1507017
+            "size": 1507017,
+            "uncensored": true
         },
         {
             "id": "lorebook-dnd",
@@ -72,5 +73,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-05T19:26:19.600Z"
+    "updated": "2026-11-05T19:35:52.433Z"
 }
