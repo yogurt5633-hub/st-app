@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -342,13 +342,14 @@ async function renderRoute() {
     sheet.hidden = true;
     put(sheet, );
     document.body.style.overflow = '';
-    const toolTitles = { spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', muted: 'Скрытые замечания' };
+    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', muted: 'Скрытые замечания' };
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || 'Ещё' };
     $('#page-title').textContent = titles[route.name];
     if (route.name === 'tools') return tools.renderTools();
     if (route.name === 'card') return tools.renderCardHealth(route.id);
     if (route.name === 'tool') {
         if (route.id === 'spend') return tools.renderSpend();
+        if (route.id === 'sync') return tools.renderSync();
         if (route.id === 'cards') return tools.renderCardsHealth();
         if (route.id === 'backup') return tools.renderBackup();
         if (route.id === 'import') return tools.renderImport(state.importUrl || '');

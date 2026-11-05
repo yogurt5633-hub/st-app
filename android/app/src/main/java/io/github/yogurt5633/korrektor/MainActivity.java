@@ -564,7 +564,9 @@ public class MainActivity extends Activity {
             }
         } else {
             loaded = false;
-            if (mayAutoStart && prefs.flag(Prefs.AUTO_START, true) && Termux.installed(this) && Termux.permitted(this)) {
+            if (prefs.onPc()) {
+                message = "Таверна на ПК не отвечает: проверьте, что компьютер включён, таверна запущена и адрес верный";
+            } else if (mayAutoStart && prefs.flag(Prefs.AUTO_START, true) && Termux.installed(this) && Termux.permitted(this)) {
                 // Start once Termux has answered the check and SillyTavern is known to be there.
                 boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
                 if (termuxReady == Boolean.TRUE && !termuxChecking) {
@@ -585,6 +587,12 @@ public class MainActivity extends Activity {
     void runAction(String action) {
         if ("logs".equals(action) || "status".equals(action)) {
             runQuiet(action);
+            return;
+        }
+        if (prefs.onPc() && !"install-tavern".equals(action)) {
+            message = "Сейчас открыта таверна на ПК: её запускают и обновляют на самом компьютере. Переключитесь на «Телефон», чтобы управлять таверной в Termux";
+            toast("Таверна на ПК управляется с компьютера");
+            notifyHome();
             return;
         }
         if (!Termux.installed(this)) {
@@ -783,8 +791,31 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /** Switches between the tavern on this phone and the one on the PC. */
+    void switchTarget(String target) {
+        prefs.setTarget(target);
+        waitToken++;
+        starting = false;
+        stUp = false;
+        loaded = false;
+        korrektorLoaded = false;
+        progress = "";
+        message = prefs.onPc() ? "Подключаюсь к таверне на ПК…" : "";
+        tavern.loadUrl("about:blank");
+        korrektor.loadUrl("about:blank");
+        modelBar.refresh();
+        homeChosen = true;
+        showTab(HOME);
+        checkServer(!prefs.onPc());
+    }
+
     void openKorrektor(String hash) {
         homeChosen = false;
+        if (stUp && !korrektorLoaded) {
+            // Not opened yet: load it straight on the wanted screen.
+            korrektorLoaded = true;
+            korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/" + hash);
+        }
         showTab(KORREKTOR);
         if (KORREKTOR.equals(current)) korrektor.evaluateJavascript("location.hash=" + JSONObject.quote(hash), null);
     }
@@ -956,7 +987,12 @@ public class MainActivity extends Activity {
             JSONObject out = new JSONObject();
             try {
                 Net.Reply status = Net.get(base + "/status", 8000, true);
-                if (status.ok()) out.put("status", new JSONObject(status.body));
+                if (status.ok()) {
+                    JSONObject st = new JSONObject(status.body);
+                    out.put("status", st);
+                    prefs.setText("korrektorInstalled", st.optString("version"));
+                }
+                out.put("korrektorLatest", prefs.text("korrektorLatest"));
                 Net.Reply chats = Net.get(base + "/chats?limit=1", 8000, true);
                 if (chats.ok()) {
                     org.json.JSONArray items = new JSONObject(chats.body).optJSONArray("items");

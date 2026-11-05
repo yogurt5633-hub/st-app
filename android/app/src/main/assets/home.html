@@ -199,7 +199,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
     function tavernSection() {
         var s = state;
         var dot = s.stUp ? 'on' : s.starting ? 'wait' : '';
-        var title = s.stUp ? 'SillyTavern работает' : s.starting ? 'SillyTavern запускается' : 'SillyTavern не запущен';
+        var title = s.onPc ? (s.stUp ? 'Таверна на ПК подключена' : 'Таверна на ПК не отвечает') : s.stUp ? 'SillyTavern работает' : s.starting ? 'SillyTavern запускается' : 'SillyTavern не запущен';
         var actions = [];
         if (s.stUp) {
             actions.push(h('button', { class: 'btn primary', type: 'button', onclick: function () { app.showTab('tavern'); }, text: 'Открыть таверну' }));
@@ -210,7 +210,18 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             actions.push(h('button', { class: 'btn primary', type: 'button', disabled: s.starting, onclick: startTavern, text: s.starting ? 'Запускаю' : 'Запустить' }));
             if (s.starting) actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: function () { app.action('stop'); }, text: 'Остановить' }));
         }
-        actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: showLogs, text: 'Журнал' }));
+        if (s.onPc) {
+            actions.length = 0;
+            if (s.stUp) {
+                actions.push(h('button', { class: 'btn primary', type: 'button', onclick: function () { app.showTab('tavern'); }, text: 'Открыть таверну' }));
+                actions.push(h('button', { class: 'btn secondary', type: 'button', onclick: function () { app.reloadTavern(); }, text: 'Обновить страницу' }));
+            } else {
+                actions.push(h('button', { class: 'btn primary', type: 'button', onclick: function () { app.setTarget('pc'); }, text: 'Подключиться ещё раз' }));
+            }
+            actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: function () { app.setTarget('phone'); }, text: 'Таверна на телефоне' }));
+        } else {
+            actions.push(h('button', { class: 'btn quiet', type: 'button', onclick: showLogs, text: 'Журнал' }));
+        }
 
         var logRow = logs === null ? null : h('div', { class: 'row' },
             h('div', { class: 'line' },
@@ -229,11 +240,25 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                     s.starting && s.progress ? h('p', { class: 'hint mono', style: 'margin-top:6px;overflow-wrap:anywhere', text: s.progress }) : null,
                     h('div', { class: 'actions' }, actions)),
                 logRow,
-                h('div', { class: 'row' },
+                s.onPc ? null : h('div', { class: 'row' },
                     field('cmd', 'Команда запуска в Termux', s.startCmd, 'автоматически', function (v) { app.setStartCommand(v); },
-                        found + 'Пусто — Корректор сам найдёт папку SillyTavern и запустит start.sh. Если вы запускаете таверну своей командой (например st), впишите её сюда'),
-                    field('url', 'Адрес SillyTavern', s.stUrl, 'http://127.0.0.1:8000', function (v) { app.setUrl(v); },
+                        found + 'Пусто — Корректор сам найдёт папку SillyTavern и запустит её. Если вы запускаете таверну своей командой (например st), впишите её сюда'),
+                    field('url', 'Адрес таверны на телефоне', s.stUrl, 'http://127.0.0.1:8000', function (v) { app.setUrl(v); },
                         'Обычно http://127.0.0.1:8000. Если в config.yaml SillyTavern другой порт, укажите его'))),
+        ];
+    }
+
+    function pcSection() {
+        var s = state;
+        return [
+            h('h2', { id: 'pc', text: 'Таверна на ПК' }),
+            h('div', { class: 'box' },
+                h('div', { class: 'row' },
+                    field('pc', 'Адрес таверны на компьютере', s.pcUrl, 'http://192.168.1.10:8000', function (v) { app.setPcUrl(v); },
+                        'Чтобы открыть на телефоне таверну с ПК: в её config.yaml listen: true, адрес телефона в whitelist (или whitelistMode: false и basicAuth), компьютер в той же Wi‑Fi или в Tailscale. Если на ПК тоже стоит таверна с Корректором, их чаты можно синхронизировать: Корректор → Ещё → Связь с ПК'),
+                    s.pcUrl ? h('div', { class: 'actions' },
+                        h('button', { class: 'btn ' + (s.onPc ? 'secondary' : 'primary') + ' small', type: 'button', onclick: function () { app.setTarget(s.onPc ? 'phone' : 'pc'); }, text: s.onPc ? 'Вернуться к таверне на телефоне' : 'Открыть таверну с ПК' }),
+                        h('button', { class: 'btn quiet small', type: 'button', onclick: function () { app.openKorrektor('#tools/sync'); }, text: 'Синхронизация' })) : null)),
         ];
     }
 
@@ -396,6 +421,18 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         return Math.round(Number(n) || 0).toLocaleString('ru-RU');
     }
 
+    // The oldest Korrektor plugin this app's screens work with.
+    var MIN_KORREKTOR = '0.4.2';
+
+    function versionLess(a, b) {
+        var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+        for (var i = 0; i < Math.max(x.length, y.length); i++) {
+            var p = x[i] || 0, q = y[i] || 0;
+            if (p !== q) return p < q;
+        }
+        return false;
+    }
+
     function dashboardSection() {
         var s = state;
         var d = dashboard || {};
@@ -425,9 +462,19 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                 h('span', { class: 'v' + (check && check.ok === true ? ' pos' : check && check.ok === false ? ' neg' : ''), text: !check ? 'не проверялось' : check.ok === true ? 'ключ работает' : check.ok === false ? 'есть проблема' : 'не ясно' }),
                 h('span', { class: 's', text: check ? (check.model || check.message) : 'Нажмите, чтобы проверить ключ' })));
         }
+        // Korrektor inside the tavern is updated when the app starts the tavern. If it was
+        // started another way, it can stay old: then the new screens are missing.
+        var installed = status.version || '';
+        var outdated = s.stUp && installed && versionLess(installed, MIN_KORREKTOR);
         return [
+            outdated ? h('div', { class: 'box', style: 'margin-bottom:12px' }, h('div', { class: 'row' },
+                h('div', { text: 'Корректор в таверне устарел: ' + installed }),
+                h('p', { class: 'hint', text: 'Без обновления часть экранов не откроется (расходы, проверка ключа, фоны и аватарки). Таверна перезапустится, это около минуты' }),
+                s.onPc ? h('p', { class: 'hint', text: 'На ПК: в папке с кодом Корректора выполните git pull и node scripts/install.mjs, затем перезапустите таверну' })
+                    : h('div', { class: 'actions' }, h('button', { class: 'btn primary small', type: 'button', onclick: function () { app.action('update-korrektor'); }, text: 'Обновить Корректор' })))) : null,
             h('div', { class: 'hello' }, mascot(s.stUp ? 'wave' : s.starting ? 'write' : 'sleep', 56),
-                h('div', {}, h('h1', { text: 'Главная' }), h('div', { class: 'small muted', text: s.stUp ? 'Таверна работает' : s.starting ? 'Таверна запускается' : 'Таверна выключена' }))),
+                h('div', {}, h('h1', { text: 'Главная' }), h('div', { class: 'small muted', text: (s.onPc ? 'Таверна на ПК: ' : '') + (s.stUp ? 'работает' : s.starting ? 'запускается' : s.onPc ? 'не отвечает' : 'выключена') }))),
+            s.pcUrl ? h('div', { style: 'margin:-4px 0 12px' }, seg([['phone', 'Таверна на телефоне'], ['pc', 'Таверна на ПК']], s.onPc ? 'pc' : 'phone', function (v) { app.setTarget(v); })) : null,
             tiles.length ? h('div', { class: 'tiles' }, tiles) : null,
         ];
     }
@@ -558,7 +605,8 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         root.replaceChildren.apply(root, [].concat(
             dashboardSection(),
             tavernSection(),
-            setupSection() || [],
+            state.onPc ? [] : (setupSection() || []),
+            pcSection(),
             updatesSection(),
             sitesSection(),
             appearanceSection(),

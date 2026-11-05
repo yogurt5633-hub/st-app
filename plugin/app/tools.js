@@ -53,6 +53,7 @@ export function renderTools() {
         h('span', { class: 'chev', 'aria-hidden': 'true', text: '›' }));
     put($('#view'),
         h('div', { class: 'rows' },
+            row('#tools/sync', 'Связь с ПК', 'Чаты, карточки и лорбуки одинаковые на телефоне и компьютере'),
             row('#tools/spend', 'Расходы', 'Сколько токенов и денег ушло: ролёвка и проверки'),
             row('#tools/cards', 'Здоровье карточек', 'Оценка каждой карточки и что поправить'),
             row('#tools/backup', 'Резервная копия', 'Чаты, карточки, лорбуки и настройки в одном файле'),
@@ -401,6 +402,86 @@ export async function renderCatalog() {
             : h('div', { class: 'empty' }, mascot('books', 150),
                 h('h2', { text: data.items.length ? 'В этом разделе пусто' : 'Каталог пока пуст' }),
                 h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять. Предложить свои можно в Telegram-канале Корректора' })));
+}
+
+// ---------- sync with the other device ----------
+
+export async function renderSync() {
+    const { h, put, $, plural } = ui;
+    const view = $('#view');
+    let info;
+    try {
+        info = await ui.api('/sync');
+    } catch (error) {
+        put(view, back('#tools', 'Ещё'), h('div', { class: 'empty' }, h('h2', { text: 'Не удалось открыть' }), h('p', { text: error.message })));
+        return;
+    }
+    const peer = h('input', { class: 'input', style: 'width:100%', type: 'url', value: info.peer || '', placeholder: 'http://192.168.1.10:8000', 'aria-label': 'Адрес другой таверны', autocapitalize: 'off', spellcheck: 'false' });
+    const login = h('input', { class: 'input', style: 'width:100%', type: 'text', value: info.login || '', placeholder: 'логин, если нужен', 'aria-label': 'Логин', autocapitalize: 'off', autocomplete: 'off' });
+    const password = h('input', { class: 'input', style: 'width:100%', type: 'password', placeholder: info.hasPassword ? 'сохранён, впишите новый для замены' : 'пароль, если нужен', 'aria-label': 'Пароль', autocomplete: 'new-password' });
+    const status = h('p', { class: 'small secondary', style: 'margin:8px 0 0' });
+    const saveSettings = async (extra = {}) => {
+        const body = { peer: peer.value.trim(), login: login.value.trim(), ...extra };
+        if (password.value) body.password = password.value;
+        await ui.api('/sync/settings', { method: 'POST', body });
+        password.value = '';
+    };
+    const test = async () => {
+        status.textContent = 'Проверяю связь…';
+        try {
+            await saveSettings();
+            const r = await ui.api('/sync/test', { method: 'POST', timeout: 60000 });
+            status.textContent = `Связь есть: «${r.device}», Корректор ${r.version}, файлов для синхронизации: ${r.files}`;
+        } catch (error) {
+            status.textContent = '';
+            ui.toast(error.message, true);
+        }
+    };
+    const run = async () => {
+        try {
+            await saveSettings();
+            status.textContent = 'Синхронизирую…';
+            const job = await ui.api('/sync/run', { method: 'POST' });
+            const done = await waitJob(job, (j) => { status.textContent = j.log?.at(-1) || 'Синхронизирую…'; });
+            if (done.status === 'error') throw new Error(done.error);
+            const r = done.result;
+            status.textContent = '';
+            ui.toast(`Готово: отправлено ${r.uploaded.length}, получено ${r.downloaded.length}${r.conflicts.length ? `, конфликтов ${r.conflicts.length}` : ''}`);
+            renderSync();
+        } catch (error) {
+            status.textContent = '';
+            ui.toast(error.message, true);
+        }
+    };
+    const last = info.last;
+    put(view,
+        back('#tools', 'Ещё'),
+        h('div', { class: 'section' },
+            mascotRow('done', 'Две таверны — одни чаты', 'Чаты, карточки, лорбуки, пресеты, фоны и галереи аватарок переносятся между этим устройством и другой таверной в обе стороны. Настройки и ключи у каждой свои и не переносятся. Ничего не удаляется: заменённые файлы уходят в резервные копии')),
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: 'Другая таверна' }),
+            h('div', { class: 'field-row' }, peer),
+            h('div', { class: 'field-row', style: 'margin-top:8px' }, login),
+            h('div', { class: 'field-row', style: 'margin-top:8px' }, password),
+            h('label', { class: 'check-row', style: 'margin-top:12px' },
+                (() => { const box = h('input', { type: 'checkbox' }); box.checked = info.auto; box.addEventListener('change', () => saveSettings({ auto: box.checked }).then(() => ui.toast(box.checked ? 'Буду синхронизировать сам каждые 15 минут' : 'Только по кнопке'))); return box; })(),
+                h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: 'Синхронизировать самому' }), h('span', { class: 'row-sub', text: 'Каждые 15 минут, пока обе таверны работают' }))),
+            h('div', { class: 'card-actions' },
+                h('button', { class: 'btn primary', type: 'button', onclick: run, text: 'Синхронизировать сейчас' }),
+                h('button', { class: 'btn secondary', type: 'button', onclick: test, text: 'Проверить связь' })),
+            status),
+        last ? h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: `Последний раз: ${ui.when(last.at)}` }),
+            h('p', { class: 'small secondary', style: 'margin:0', text: `Отправлено ${last.uploaded}, получено ${last.downloaded}${last.conflicts?.length ? `, конфликтов ${last.conflicts.length}` : ''}${last.errors?.length ? `, ошибок ${last.errors.length}` : ''}` }),
+            last.conflicts?.length ? h('ul', { class: 'tips', style: 'margin-top:8px' }, last.conflicts.map(c => h('li', { class: 'medium', text: c.copy ? `${c.name.split('/').pop()}: чат менялся на обоих устройствах. Оставлена версия с «${c.kept}», вторая сохранена отдельным чатом` : `${c.name}: менялся на обоих устройствах, оставлена версия с «${c.kept}», другая — в резервных копиях` }))) : null,
+            last.errors?.length ? h('ul', { class: 'tips', style: 'margin-top:8px' }, last.errors.map(e => h('li', { class: 'high', text: e }))) : null) : null,
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: 'Как подготовить ПК' }),
+            h('ol', { class: 'steps' },
+                h('li', { text: 'Поставьте Корректор и в таверну на ПК: в папке с кодом Корректора выполните node scripts/install.mjs "путь к SillyTavern"' }),
+                h('li', { text: 'В config.yaml таверны на ПК: listen: true. И одно из двух: добавьте адрес телефона в whitelist или выключите whitelistMode и включите basicAuth с логином и паролем' }),
+                h('li', { text: 'Перезапустите таверну на ПК и впишите сюда её адрес: в той же Wi‑Fi это http://IP-компьютера:8000, через Tailscale — адрес компьютера в Tailscale' })),
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: `Это устройство называется «${info.device}». Если писать в один чат на обоих устройствах между синхронизациями, обе версии сохранятся: более новая останется чатом, вторая появится рядом отдельным чатом` })));
 }
 
 // ---------- muted kinds ----------

@@ -14,9 +14,32 @@ final class Prefs {
         Net.auth = auth();
     }
 
+    /** Address of the tavern in use: the one on this phone, or the one on the PC. */
     String stUrl() {
+        return onPc() ? pcUrl() : phoneUrl();
+    }
+
+    String phoneUrl() {
         String url = sp.getString("stUrl", DEFAULT_URL);
         return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
+
+    String pcUrl() {
+        String url = sp.getString("pcUrl", "");
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
+
+    void setPcUrl(String url) {
+        sp.edit().putString("pcUrl", url).apply();
+    }
+
+    /** The PC tavern is in use (it runs on the PC, so Termux does not start or stop it). */
+    boolean onPc() {
+        return "pc".equals(sp.getString("target", "phone")) && !sp.getString("pcUrl", "").isEmpty();
+    }
+
+    void setTarget(String target) {
+        sp.edit().putString("target", "pc".equals(target) ? "pc" : "phone").apply();
     }
 
     void setStUrl(String url) {

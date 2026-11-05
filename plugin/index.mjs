@@ -30,6 +30,8 @@ import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
 import { loadCatalog, installItem } from './lib/catalog.mjs';
 import { markTouched } from './lib/touched.mjs';
+import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
+import { readJson, writeJson } from './lib/util.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(HERE, 'app');
@@ -141,6 +143,48 @@ async function characterName(ctx, avatar) {
     return nameCache.get(key);
 }
 
+// ---------- sync with the other device (phone <-> PC) ----------
+const syncFile = (user) => path.join(user.store.dir, 'sync.json');
+const syncStateFile = (user) => path.join(user.store.dir, 'sync-state.json');
+
+async function syncSettings(user) {
+    return readJson(syncFile(user), { peer: '', login: '', password: '', auto: false });
+}
+
+/** After a file came from the other device: the open SillyTavern tab reloads what changed. */
+function touchSynced(handle, name) {
+    const parts = name.split('/');
+    if (parts[0] === 'chats' && parts.length === 3) markTouched(handle, 'chat', `c/${parts[1]}/${parts[2].replace(/\.jsonl$/i, '')}`);
+    else if (parts[0] === 'group chats' && parts.length === 2) markTouched(handle, 'chat', `g/${parts[1].replace(/\.jsonl$/i, '')}`);
+    else if (parts[0] === 'characters') markTouched(handle, 'card', parts.slice(1).join('/'));
+    else if (parts[0] === 'worlds') markTouched(handle, 'world', parts[1].replace(/\.json$/i, ''));
+}
+
+function syncJob(user, { background = false } = {}) {
+    const existing = runningJob(user.ctx.handle, 'sync');
+    if (existing) return existing;
+    return startJob(user.ctx.handle, 'sync', async (log) => {
+        const cfg = await syncSettings(user);
+        if (!cfg.peer) throw httpError(400, 'Не указан адрес другой таверны');
+        const peer = new PeerClient({ url: cfg.peer, login: cfg.login, password: cfg.password });
+        const result = await runSync({
+            root: user.ctx.dirs.root,
+            backupsDir: user.store.backupsDir,
+            statePath: syncStateFile(user),
+            peer,
+            peerKey: cfg.peer,
+            log,
+        });
+        for (const name of result.downloaded) touchSynced(user.ctx.handle, name);
+        for (const c of result.conflicts) {
+            touchSynced(user.ctx.handle, c.name);
+            if (c.copy) touchSynced(user.ctx.handle, c.copy);
+        }
+        user.lastSync = Date.now();
+        return result;
+    }, { background });
+}
+
 function scanJob(user, { chatIds = null, useModel = true, background = false } = {}) {
     const existing = runningJob(user.ctx.handle, 'scan');
     if (existing) return existing;
@@ -172,6 +216,16 @@ function prepareJob(user, id) {
 
 async function tick() {
     for (const user of users.values()) {
+        // Automatic sync with the other device every 15 minutes, when turned on.
+        try {
+            const cfg = await syncSettings(user);
+            if (cfg.auto && cfg.peer && Date.now() - (user.lastSync || 0) > 15 * 60000) {
+                user.lastSync = Date.now();
+                syncJob(user, { background: true });
+            }
+        } catch (error) {
+            console.warn('[korrektor] background sync failed:', error.message);
+        }
         try {
             const settings = await user.store.getSettings();
             if (!settings.scan.auto) continue;
@@ -459,6 +513,51 @@ export async function init(router) {
         if (!item) throw httpError(404, 'Такой записи в каталоге нет');
         return installItem(user.ctx, item);
     }));
+
+    // ---------- sync: the side that answers ----------
+    router.get('/sync/manifest', route(async (req, user) => ({ device: deviceName(), version: VERSION, files: await localManifest(user.ctx.dirs.root) })));
+    router.get('/sync/file', route(async (req, user, res) => {
+        const file = fullPath(user.ctx.dirs.root, req.query.name);
+        if (!fs.existsSync(file)) throw httpError(404, 'Файла нет');
+        res.setHeader('Content-Type', 'application/octet-stream');
+        await new Promise((resolve, reject) => fs.createReadStream(file).on('error', reject).on('end', resolve).pipe(res));
+    }));
+    router.post('/sync/file', route(async (req, user) => {
+        const name = cleanName(req.query.name);
+        if (!name) throw httpError(400, 'Недопустимое имя файла');
+        const data = await readBody(req);
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        await writeSynced(user.ctx.dirs.root, user.store.backupsDir, name, data, Number(req.query.mtime), stamp);
+        touchSynced(user.ctx.handle, name);
+        return { ok: true };
+    }));
+    // ---------- sync: the side that asks ----------
+    router.get('/sync', route(async (req, user) => {
+        const cfg = await syncSettings(user);
+        const state = await readJson(syncStateFile(user), { peers: {} });
+        return { peer: cfg.peer, login: cfg.login, hasPassword: Boolean(cfg.password), auto: Boolean(cfg.auto), device: deviceName(), last: cfg.peer ? state.peers?.[cfg.peer]?.last ?? null : null, running: publicJob(runningJob(user.ctx.handle, 'sync')) };
+    }));
+    router.post('/sync/settings', route(async (req, user) => {
+        const cfg = await syncSettings(user);
+        const peer = String(req.body?.peer ?? cfg.peer).trim().replace(/\/+$/, '');
+        if (peer && !/^https?:\/\/[^/\s]+$/i.test(peer)) throw httpError(400, 'Адрес должен выглядеть так: http://192.168.1.10:8000');
+        const next = {
+            peer,
+            login: String(req.body?.login ?? cfg.login).trim(),
+            // An empty password field keeps the saved one; "clear" removes it.
+            password: req.body?.password === null ? '' : req.body?.password ? String(req.body.password) : cfg.password,
+            auto: req.body?.auto === undefined ? cfg.auto : Boolean(req.body.auto),
+        };
+        await writeJson(syncFile(user), next);
+        return { peer: next.peer, login: next.login, hasPassword: Boolean(next.password), auto: next.auto };
+    }));
+    router.post('/sync/test', route(async (req, user) => {
+        const cfg = await syncSettings(user);
+        if (!cfg.peer) throw httpError(400, 'Сначала впишите адрес другой таверны');
+        const info = await new PeerClient({ url: cfg.peer, login: cfg.login, password: cfg.password }).manifest();
+        return { device: info.device, version: info.version, files: Object.keys(info.files || {}).length };
+    }));
+    router.post('/sync/run', route(async (req, user) => publicJob(syncJob(user))));
 
     // After the app imported something through SillyTavern itself: let the open tab refresh.
     router.post('/refresh', route(async (req, user) => {

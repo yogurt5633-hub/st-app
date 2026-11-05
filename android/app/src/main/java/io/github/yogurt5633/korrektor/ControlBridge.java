@@ -30,7 +30,9 @@ final class ControlBridge {
         try {
             s.put("appVersion", Updater.appVersionName(activity));
             s.put("appCode", Updater.appVersionCode(activity));
-            s.put("stUrl", prefs.stUrl());
+            s.put("stUrl", prefs.phoneUrl());
+            s.put("pcUrl", prefs.pcUrl());
+            s.put("onPc", prefs.onPc());
             s.put("stUp", activity.stUp);
             s.put("starting", activity.starting);
             s.put("termuxInstalled", Termux.installed(activity));
@@ -156,7 +158,27 @@ final class ControlBridge {
             return;
         }
         activity.prefs.setStUrl(value);
-        activity.runOnUiThread(activity::checkServer);
+        activity.runOnUiThread(() -> activity.switchTarget(activity.prefs.onPc() ? "pc" : "phone"));
+    }
+
+    /** Address of the tavern on a computer (same Wi-Fi or Tailscale); empty removes it. */
+    @JavascriptInterface
+    public void setPcUrl(String url) {
+        String value = url == null ? "" : url.trim();
+        if (!value.isEmpty() && !value.matches("^https?://[A-Za-z0-9.\\-\\[\\]:]+(:\\d+)?/?$")) {
+            activity.toast("Адрес должен выглядеть так: http://192.168.1.10:8000");
+            return;
+        }
+        activity.prefs.setPcUrl(value);
+        if (value.isEmpty()) activity.prefs.setTarget("phone");
+        activity.toast(value.isEmpty() ? "Адрес ПК убран" : "Адрес ПК сохранён");
+        activity.runOnUiThread(() -> activity.switchTarget(activity.prefs.onPc() ? "pc" : "phone"));
+    }
+
+    /** "phone" or "pc": which tavern the app shows. */
+    @JavascriptInterface
+    public void setTarget(String target) {
+        activity.runOnUiThread(() -> activity.switchTarget(target));
     }
 
     @JavascriptInterface
