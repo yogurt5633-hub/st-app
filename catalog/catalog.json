@@ -27,9 +27,12 @@
                 "фэнтези"
             ],
             "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/lorebooks/lorebook-dnd.json",
-            "added": "2026-11-05"
+            "added": "2026-11-05",
+            "models": [
+                "универсально"
+            ]
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-05T18:51:50.092Z"
+    "updated": "2026-11-05T18:52:25.961Z"
 }
