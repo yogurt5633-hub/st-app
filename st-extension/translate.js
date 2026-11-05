@@ -198,6 +198,39 @@ async function withRetries(fn, tries = 3) {
  * Translates a piece with one provider. A part that comes back untranslated is split
  * in half and tried again (twice at most); if it still is, the provider has failed.
  */
+/** Some translators answer with &quot; &lt; &#39; …: back to plain characters (unless the original had them). */
+function decodeEntities(source, out) {
+    if (/&(?:#\d+|#x[0-9a-f]+|[a-z]+);/i.test(source)) return out;
+    return String(out)
+        .replace(/&quot;/g, '"').replace(/&#0?39;|&#x27;|&apos;/gi, "'")
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, '\u00a0').replace(/&amp;/g, '&');
+}
+
+// ---------- what to send at all ----------
+
+const SCRIPTS = {
+    cyrillic: { langs: new Set(['ru', 'uk', 'be', 'kk']), test: /\p{Script=Cyrillic}/u },
+    cjk: { langs: new Set(['ja', 'ko', 'zh-CN', 'zh-TW']), test: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u },
+};
+
+/** The line is already written in the target language's script: it is left exactly as it is. */
+export function alreadyTarget(line, lang) {
+    const script = Object.values(SCRIPTS).find(sc => sc.langs.has(lang));
+    if (!script) return false;
+    const letters = String(line).match(/\p{L}/gu) || [];
+    if (!letters.length) return false;
+    return letters.filter(c => script.test.test(c)).length / letters.length >= 0.5;
+}
+
+/** Only lines with letters in another language go to a translator: borders, numbers, emoji and lines already translated stay. */
+export function needsTranslation(line, lang) {
+    if (alreadyTarget(line, lang)) return false;
+    // At least one real word: abbreviations like HP, MP, STR, XP and single letters stay.
+    return (String(line).match(/\p{L}+/gu) || []).some(w => w.length >= 2 && /\p{Ll}/u.test(w));
+}
+
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+
 async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0) {
     const call = provider === 'model' ? (part) => viaModel(part, lang) : (part) => free(provider, part, lang);
     let out = '';
@@ -207,7 +240,7 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
             continue;
         }
         const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
-        let result = fixMarkup(core, await withRetries(() => call(core), 2));
+        let result = fixMarkup(core, decodeEntities(core, await withRetries(() => call(core), 2)));
         if (looksUntranslated(core, result, lang)) {
             if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1);
             else throw Object.assign(new Error(`${provider}: вернул текст без перевода`), { untranslated: true });
@@ -226,7 +259,7 @@ export function translator(engine, lang) {
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
     const strikes = new Map();
-    const translatePiece = async (piece) => {
+    const translateRun = async (piece) => {
         if (!piece.trim()) return piece;
         const alive = order.filter((p) => (strikes.get(p) || 0) < 2);
         if (!alive.length) {
@@ -248,6 +281,39 @@ export function translator(engine, lang) {
             }
         }
         throw last;
+    };
+    // Line by line: lines in the target language, lines without letters (borders, numbers) and
+    // table borders stay exactly as they are, so status blocks and tables keep their shape.
+    // Neighbouring lines that need translating go together, for context.
+    const translatePiece = async (piece) => {
+        if (!piece.trim()) return piece;
+        const out = [];
+        let group = [];
+        const flush = async () => {
+            if (!group.length) return;
+            out.push(await translateRun(group.join('\n')));
+            group = [];
+        };
+        for (const line of piece.split('\n')) {
+            if (!needsTranslation(line, lang)) {
+                await flush();
+                out.push(line);
+            } else if (TABLE_ROW.test(line)) {
+                // A table row: only the text of the cells, the | stay where they are.
+                await flush();
+                const cells = line.split('|');
+                for (let i = 0; i < cells.length; i++) {
+                    if (!needsTranslation(cells[i], lang)) continue;
+                    const [, lead, core, tail] = cells[i].match(/^(\s*)([\s\S]*?)(\s*)$/);
+                    cells[i] = lead + (await translateRun(core)).replace(/\|/g, '/').replace(/\n/g, ' ') + tail;
+                }
+                out.push(cells.join('|'));
+            } else {
+                group.push(line);
+            }
+        }
+        await flush();
+        return out.join('\n');
     };
     return async (text) => {
         let out = '';
@@ -320,9 +386,12 @@ export async function translateChat(options, onProgress = () => { }) {
             const message = chat[id];
             if (!message || (busy() && id === chat.length - 1)) continue;
             try {
-                const text = await translate(prepare(message));
+                const source = prepare(message);
+                const text = await translate(source);
                 if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
-                message.extra.display_text = text;
+                // Already in this language: no translation over the original (an old bad one goes away).
+                if (text === source) delete message.extra.display_text;
+                else message.extra.display_text = text;
                 ctx().updateMessageBlock(id, message);
                 state.done++;
                 streak = 0;
@@ -377,9 +446,11 @@ async function translateNew(messageId) {
     autoQueue.add(id);
     const chatId = c.getCurrentChatId?.();
     try {
-        const text = await translator(s.engine, s.lang)(prepare(message));
+        const source = prepare(message);
+        const text = await translator(s.engine, s.lang)(source);
         // The reply may have been edited, swiped or the chat changed meanwhile.
         if (ctx().getCurrentChatId?.() !== chatId || ctx().chat?.[id] !== message) return;
+        if (text === source) return;
         if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
         message.extra.display_text = text;
         ctx().updateMessageBlock(id, message);

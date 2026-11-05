@@ -79,3 +79,41 @@ test('translate: dashes and spaced asterisks from translators do not turn lines 
     assert.equal(fixMarkup('*a* text *b*', '*а* текст *б*'), '*а* текст *б*');
     assert.equal(fixMarkup('- one\n- two', '- один\n- два'), '- один\n- два', 'a real list stays a list');
 });
+
+test('translate: status blocks, tables and lines already in Russian keep their shape; only foreign lines are sent', async () => {
+    const { translator, alreadyTarget } = await import('../st-extension/translate.js');
+    const sent = [];
+    globalThis.SillyTavern = { getContext: () => ({ getRequestHeaders: () => ({}), extensionSettings: {} }) };
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        sent.push(text);
+        // Like a free translator: words translated, newlines and pipes not respected, quotes as entities.
+        const out = text.replace(/[A-Za-z]+/g, 'слово').replace(/\|/g, ' ').replace(/"/g, '&quot;');
+        return { ok: true, status: 200, text: async () => out };
+    };
+    const post = [
+        'The knight walks into the tavern.',
+        'He orders "ale".',
+        '```',
+        '━━━━━━━━━━',
+        '📍 Локация: Таверна «Сломанный рог»',
+        '❤️ HP: 100/100',
+        '| Name | Mood |',
+        '|------|------|',
+        '| Lira | happy |',
+        '```',
+        '<div class="status">Настроение: спокойное</div>',
+    ].join('\n');
+    const out = await translator('google', 'ru')(post);
+    const lines = out.split('\n');
+    assert.equal(lines[0], 'слово слово слово слово слово слово.');
+    assert.equal(lines[1], 'слово слово "слово".', 'entities come back as characters');
+    for (const kept of ['```', '━━━━━━━━━━', '📍 Локация: Таверна «Сломанный рог»', '❤️ HP: 100/100', '|------|------|', '<div class="status">Настроение: спокойное</div>']) {
+        assert.ok(lines.includes(kept), `kept as is: ${kept}`);
+    }
+    assert.ok(lines.includes('| слово | слово |') && lines.includes('| слово | слово |'), out);
+    assert.ok(!sent.some(t => /[А-Яа-яЁё]/.test(t)), `nothing Russian was sent: ${JSON.stringify(sent)}`);
+    assert.ok(!sent.some(t => t.includes('|')), 'table pipes are not sent');
+    assert.equal(alreadyTarget('Лира усмехнулась, глядя на Nika', 'ru'), true);
+    assert.equal(alreadyTarget('Lira smiled at Ника', 'ru'), false);
+});
