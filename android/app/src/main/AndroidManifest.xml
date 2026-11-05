@@ -43,7 +43,23 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- "Поделиться" a preset, lorebook, card or regex file (from Telegram): install or publish it -->
+            <intent-filter android:label="Корректор">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="image/png" />
+                <data android:mimeType="text/json" />
+            </intent-filter>
         </activity>
+
+        <!-- Lets Telegram read the one file the app is sharing («Предложить своё») -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <receiver
             android:name=".KorrektorWidget"

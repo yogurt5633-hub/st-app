@@ -49,7 +49,9 @@ export async function listLocal(ctx, type) {
         if (!stat) continue;
         const row = { file: entry.name, name: entry.name.slice(0, -k.ext.length), size: stat.size, mtime: stat.mtimeMs };
         if (type === 'preset' && stat.size < 5 * 1024 * 1024) {
-            row.regex = regexCount(await fs.promises.readFile(path.join(k.dir(ctx), entry.name)).catch(() => Buffer.alloc(0)));
+            const data = await fs.promises.readFile(path.join(k.dir(ctx), entry.name)).catch(() => Buffer.alloc(0));
+            row.regexNames = regexNames(data);
+            row.regex = row.regexNames.length;
         }
         out.push(row);
     }
@@ -140,7 +142,13 @@ export async function saveCatalogUpload(korrektorDir, type, data, fileName) {
         if (stat && Date.now() - stat.mtimeMs > 24 * 3600 * 1000) await fs.promises.rm(path.join(dir, old), { force: true });
     }
     await fs.promises.writeFile(path.join(dir, `${id}${k.ext}`), checked.data);
-    return { upload: id, title: checked.title, removed: checked.removed, size: checked.data.length };
+    return { upload: id, title: checked.title, removed: checked.removed, size: checked.data.length, regexNames: type === 'preset' ? regexNames(checked.data) : [] };
+}
+
+/** A checked file sent from the phone, for installing it into SillyTavern. */
+export async function readCatalogUpload(korrektorDir, type, id) {
+    const up = await readUpload(korrektorDir, type, id);
+    return up.data;
 }
 
 async function readUpload(korrektorDir, type, id) {
@@ -368,6 +376,32 @@ export function addRegexToPreset(presetBuffer, scripts) {
     return Buffer.from(JSON.stringify(preset, null, 4));
 }
 
+/** Names of the regex scripts inside a preset, in order. */
+export function regexNames(presetBuffer) {
+    try {
+        const list = JSON.parse(presetBuffer.toString('utf8'))?.extensions?.regex_scripts;
+        return Array.isArray(list) ? list.map(s => String(s?.scriptName || 'Без названия')) : [];
+    } catch {
+        return [];
+    }
+}
+
+/** Drops regex scripts from a preset by their positions. */
+export function dropRegexFromPreset(presetBuffer, positions) {
+    const drop = new Set((positions || []).map(Number).filter(Number.isInteger));
+    if (!drop.size) return presetBuffer;
+    const preset = JSON.parse(presetBuffer.toString('utf8'));
+    const list = preset?.extensions?.regex_scripts;
+    if (!Array.isArray(list)) return presetBuffer;
+    preset.extensions = { ...preset.extensions, regex_scripts: list.filter((_, i) => !drop.has(i)) };
+    return Buffer.from(JSON.stringify(preset, null, 4));
+}
+
+/** Enabled global regexes of SillyTavern — the ones a person means by «my regexes». */
+export function enabledGlobalRegex(stSettings) {
+    return globalRegex(stSettings).filter(s => !s.disabled);
+}
+
 export function regexCount(presetBuffer) {
     try {
         const list = JSON.parse(presetBuffer.toString('utf8'))?.extensions?.regex_scripts;
@@ -424,6 +458,7 @@ export async function publishItem({ ctx, korrektorDir, token, type, source, meta
     const info = cleanMeta(meta, file.title);
     if (type === 'preset') {
         // Regexes that go with the preset: chosen global ones and files sent from the phone.
+        file.data = dropRegexFromPreset(file.data, regex.drop);
         const names = new Set((regex.global || []).map(String));
         const scripts = globalRegex(stSettings).filter(s => names.has(String(s.id)) || names.has(String(s.scriptName)));
         for (const upload of (regex.uploads || []).slice(0, 50)) {

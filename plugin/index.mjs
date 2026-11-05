@@ -29,8 +29,8 @@ import { makeRecap } from './lib/recap.mjs';
 import { translateText } from './lib/translate.mjs';
 import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
-import { loadCatalog, installItem } from './lib/catalog.mjs';
-import { listLocal, readLocal, saveCatalogUpload, readAdmin, saveAdmin, checkToken, publishItem, removeItem, editItem, setSubmitLink, readCatalogFresh, saveImageUpload, saveRegexUpload, globalRegex, CATALOG_REPO } from './lib/catalog-publish.mjs';
+import { loadCatalog, installItem, installData } from './lib/catalog.mjs';
+import { listLocal, readLocal, saveCatalogUpload, readAdmin, saveAdmin, checkToken, publishItem, removeItem, editItem, setSubmitLink, readCatalogFresh, saveImageUpload, saveRegexUpload, globalRegex, enabledGlobalRegex, addRegexToPreset, readCatalogUpload, CATALOG_REPO } from './lib/catalog-publish.mjs';
 import { catalogStatus, uninstallItem } from './lib/catalog-status.mjs';
 import { markTouched } from './lib/touched.mjs';
 import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
@@ -549,6 +549,12 @@ export async function init(router) {
     router.get('/catalog/export', route(async (req, user, res) => {
         const type = String(req.query.type || '');
         const file = await readLocal(user.ctx, type, String(req.query.file || ''));
+        // A preset can carry the person's global regexes along: ?regex=id1,id2
+        if (type === 'preset' && req.query.regex) {
+            const ids = new Set(String(req.query.regex).split(',').filter(Boolean));
+            const scripts = globalRegex(await readStSettings(user.ctx)).filter(s => ids.has(String(s.id || s.scriptName)));
+            file.data = addRegexToPreset(file.data, scripts);
+        }
         res.setHeader('Content-Type', type === 'card' ? 'image/png' : 'application/json; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
         res.setHeader('Cache-Control', 'no-store');
@@ -592,6 +598,12 @@ export async function init(router) {
     router.get('/catalog/regex', route(async (req, user) => ({
         global: globalRegex(await readStSettings(user.ctx)).map(s => ({ id: String(s.id || s.scriptName), name: String(s.scriptName || 'Без названия'), disabled: Boolean(s.disabled) })),
     })));
+    // A file shared to the app (from Telegram): install it into SillyTavern.
+    router.post('/catalog/install-upload', route(async (req, user) => {
+        const type = String(req.body?.type || '');
+        const data = await readCatalogUpload(user.store.dir, type, String(req.body?.upload || ''));
+        return installData(user.ctx, type, data, String(req.body?.name || ''));
+    }));
     router.post('/catalog/edit', route(async (req, user) => editItem({
         token: await adminToken(user),
         korrektorDir: user.store.dir,
@@ -608,7 +620,7 @@ export async function init(router) {
             type: String(body.type || ''),
             source: body.upload ? { upload: String(body.upload) } : { file: String(body.file || '') },
             meta: body.meta || {},
-            regex: { global: Array.isArray(body.regex?.global) ? body.regex.global : [], uploads: Array.isArray(body.regex?.uploads) ? body.regex.uploads : [] },
+            regex: { global: Array.isArray(body.regex?.global) ? body.regex.global : [], uploads: Array.isArray(body.regex?.uploads) ? body.regex.uploads : [], drop: Array.isArray(body.regex?.drop) ? body.regex.drop : [] },
             images: Array.isArray(body.images) ? body.images.map(String) : [],
             stSettings: await readStSettings(user.ctx),
         });

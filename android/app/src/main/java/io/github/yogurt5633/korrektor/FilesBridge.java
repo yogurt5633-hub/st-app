@@ -59,6 +59,36 @@ final class FilesBridge {
         }
     }
 
+    /**
+     * Opens Android's «Share» with a file and a text (Telegram puts the text under the file).
+     * Used by «Предложить своё»: the preset goes to the catalog's author in a couple of taps.
+     */
+    @JavascriptInterface
+    public void share(String name, String mime, String base64, String text) {
+        try {
+            byte[] data = Base64.decode(base64, Base64.DEFAULT);
+            File dir = ShareProvider.folder(activity);
+            File[] old = dir.listFiles();
+            if (old != null) for (File f : old) f.delete();
+            File file = new File(dir, sanitize(name));
+            try (FileOutputStream out = new FileOutputStream(file)) {
+                out.write(data);
+            }
+            android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
+            send.setType(mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
+            Uri uri = ShareProvider.uriFor(activity, file);
+            send.putExtra(android.content.Intent.EXTRA_STREAM, uri);
+            if (text != null && !text.isEmpty()) send.putExtra(android.content.Intent.EXTRA_TEXT, text);
+            send.setClipData(android.content.ClipData.newRawUri(file.getName(), uri));
+            send.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            android.content.Intent chooser = android.content.Intent.createChooser(send, "Отправить автору каталога");
+            chooser.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            activity.runOnUiThread(() -> activity.startActivity(chooser));
+        } catch (Exception e) {
+            toast("Не удалось поделиться файлом: " + e.getMessage());
+        }
+    }
+
     @JavascriptInterface
     public void failed(String message) {
         toast("Не удалось сохранить файл: " + message);

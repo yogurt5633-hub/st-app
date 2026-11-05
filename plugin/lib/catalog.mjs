@@ -97,8 +97,13 @@ async function download(url, fetchImpl) {
 
 /** Installs one catalog item. Returns where it went. */
 export async function installItem(ctx, item, { fetchImpl = globalThis.fetch } = {}) {
-    const data = await download(item.url, fetchImpl);
-    const base = safeFileName(item.name);
+    return installData(ctx, item.type, await download(item.url, fetchImpl), item.name);
+}
+
+/** Writes a preset, lorebook or card into SillyTavern under a free name. */
+export async function installData(ctx, type, data, title) {
+    const item = { type };
+    const base = safeFileName(title);
     if (item.type === 'lorebook') {
         let json;
         try {

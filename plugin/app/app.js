@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.8';
+const APP_VERSION = '0.4.9';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -350,7 +350,7 @@ async function renderRoute() {
     const freshView = oldView.cloneNode(false);
     oldView.replaceWith(freshView);
     document.body.style.overflow = '';
-    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', muted: 'Скрытые замечания' };
+    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
     $('#page-title').textContent = titles[route.name];
     if (route.name === 'tools') return tools.renderTools();
@@ -364,6 +364,7 @@ async function renderRoute() {
         if (route.id === 'catalog') return tools.renderCatalog();
         if (route.id === 'catalog-suggest') return tools.renderCatalogSuggest();
         if (route.id === 'catalog-author') return tools.renderCatalogAuthor();
+        if (route.id === 'incoming') return tools.renderIncoming();
         if (route.id.startsWith('catalog-edit/')) return tools.renderCatalogEdit(decodeURIComponent(route.id.slice('catalog-edit/'.length)));
         if (route.id === 'muted') return tools.renderMuted();
         return tools.renderTools();
@@ -1359,6 +1360,8 @@ async function boot() {
         storageSet('korrektor.accent', accent || '');
         tools.applyTheme(theme, accent);
     };
+    // The Android app hands over a file shared to it (from Telegram).
+    window.korrektorIncomingFile = (name, base64) => { tools.receiveFile(String(name || 'file'), String(base64 || '')); };
     window.korrektorImport = (url) => {
         state.importUrl = String(url || '');
         if (location.hash === '#tools/import') renderRoute();

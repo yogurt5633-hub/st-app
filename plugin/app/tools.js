@@ -655,54 +655,181 @@ export async function renderCatalogSuggest() {
     if (location.hash !== '#tools/catalog-suggest') return;
     let type = 'preset';
     let file = '';
-    const save = h('a', { class: 'btn primary', download: '', text: 'Сохранить файл' });
-    save.hidden = true;
-    const note = h('p', { class: 'small muted', style: 'margin:8px 0 0' });
+    let fileName = '';
+    // Global regexes that go into the preset: the enabled ones, unless removed here.
+    let regexes = [];
     const pickerBox = h('div', { style: 'margin-top:12px' });
-    const template = h('textarea', { class: 'input', rows: 7, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
+    const regexBox = h('div');
+    const template = h('textarea', { class: 'input', rows: 6, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
     const fillTemplate = (name = '') => {
         template.value = `Хочу предложить в каталог Корректора\nТип: ${CATALOG_NAMES[type].toLowerCase()}\nНазвание: ${name}\nАвтор: \nЧто это (пара предложений): \nАвтор разрешил распространять: да`;
     };
+    const drawRegex = (inside = []) => {
+        if (type !== 'preset' || !file) return put(regexBox);
+        put(regexBox, h('div', { class: 'regex-box' },
+            h('h3', { class: 'section-title', style: 'margin-top:12px', text: 'Регексы с пресетом' }),
+            inside.length ? h('p', { class: 'small muted', style: 'margin:0 0 6px', text: `Уже внутри пресета: ${inside.join(', ')}` }) : null,
+            regexes.length ? h('div', { class: 'badges' }, regexes.map((r, i) => h('button', { class: 'badge removable', type: 'button', title: 'Не прикладывать', onclick: () => { regexes.splice(i, 1); drawRegex(inside); }, text: `${r.name} ✕` }))) : null,
+            h('p', { class: 'small muted', style: 'margin:6px 0 0', text: regexes.length ? 'Включённые регексы вашей таверны вложатся в файл пресета. Лишний — нажмите на него' : inside.length ? '' : 'Включённых регексов в таверне нет' })));
+    };
     const drawPicker = () => {
         file = '';
-        save.hidden = true;
-        note.textContent = type === 'preset' ? 'Пароли, адреса прокси и всё похожее на ключи из пресета при сохранении убираются' : '';
-        put(pickerBox, localPicker(type, (value, name) => {
+        fileName = '';
+        regexes = [];
+        drawRegex();
+        put(pickerBox, localPicker(type, async (value, name, row) => {
             file = value;
-            save.hidden = !value;
-            if (value) save.href = `${ui.BASE}/catalog/export?type=${type}&file=${encodeURIComponent(value)}`;
+            fileName = name;
             fillTemplate(value ? name : '');
+            if (type === 'preset' && value) {
+                try {
+                    regexes = (await ui.api('/catalog/regex')).global.filter(g => !g.disabled);
+                } catch {
+                    regexes = [];
+                }
+            }
+            drawRegex(row?.regexNames || []);
         }));
         fillTemplate();
     };
-    save.addEventListener('click', () => ui.toast(inApp() ? 'Сохраняю в Загрузки/Korrektor' : 'Скачивание началось'));
+    const exportUrl = () => `${ui.BASE}/catalog/export?type=${type}&file=${encodeURIComponent(file)}${type === 'preset' && regexes.length ? `&regex=${encodeURIComponent(regexes.map(r => r.id).join(','))}` : ''}`;
     const link = data.submit;
-    // A Telegram chat with a person or a bot can open with the text already typed.
-    const telegram = async () => {
-        let url = link;
-        if (/^https:\/\/t\.me\/[A-Za-z0-9_]{4,}\/?$/.test(link)) url = `${link.replace(/\/$/, '')}?text=${encodeURIComponent(template.value)}`;
-        // Not every Telegram link can carry the text: it is copied too, to paste if the field is empty.
-        if (await copyText(template.value)) ui.toast('Текст скопирован: если поле в Telegram пустое, вставьте его');
-        window.open(url, '_blank', 'noopener');
+    const send = async (e) => {
+        if (!file) return ui.toast('Сначала выберите файл', true);
+        const button = e.currentTarget;
+        button.disabled = true;
+        try {
+            const res = await fetch(exportUrl(), { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+            const blob = await res.blob();
+            const name = file;
+            const mime = type === 'card' ? 'image/png' : 'application/json';
+            const text = `${template.value}${link ? `\n\n${link}` : ''}`;
+            if (window.KorrektorFiles?.share) {
+                // In the app: Android's «Share» with the file attached; pick Telegram and the author's chat.
+                const base64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result).split(',')[1]);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+                window.KorrektorFiles.share(name, mime, base64, template.value);
+            } else if (navigator.canShare?.({ files: [new File([blob], name, { type: mime })] })) {
+                await navigator.share({ files: [new File([blob], name, { type: mime })], text: template.value });
+            } else {
+                // A computer: the file is saved, the chat opens; attach the file there.
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = name;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+                await copyText(text);
+                if (link) window.open(link, '_blank', 'noopener');
+                ui.toast('Файл сохранён, текст скопирован: прикрепите файл в чате автора');
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') ui.toast(error.message, true);
+        } finally {
+            button.disabled = false;
+        }
     };
     drawPicker();
     put(view,
         back('#tools/catalog', 'Каталог'),
         h('div', { class: 'section' },
-            mascotRow('books', 'Поделиться своим', 'Пресеты, лорбуки и карточки в каталог добавляет его автор. Пришлите ему файл с названием, автором и парой слов о том, что это. Чужое — только с разрешения автора')),
+            mascotRow('books', 'Поделиться своим', 'Выберите файл из своей таверны и нажмите «Отправить»: откроется «Поделиться» с уже прикреплённым файлом — выберите Telegram и чат автора каталога. Чужое — только с разрешения автора')),
         h('div', { class: 'section' },
-            h('h3', { class: 'section-title', text: '1. Файл из вашей таверны' }),
+            h('h3', { class: 'section-title', text: 'Что отправить' }),
             pick(CATALOG_TYPES, type, (v) => { type = v; drawPicker(); }),
             pickerBox,
-            h('div', { class: 'card-actions' }, save),
-            note),
+            regexBox,
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Из пресета перед отправкой убираются пароли, адреса прокси и всё похожее на ключи' })),
         h('div', { class: 'section' },
-            h('h3', { class: 'section-title', text: '2. Сообщение автору каталога' }),
+            h('h3', { class: 'section-title', text: 'Сообщение к файлу' }),
             template,
-            h('div', { class: 'card-actions' },
-                link ? h('button', { class: 'btn primary', type: 'button', text: 'Открыть Telegram', onclick: telegram }) : null,
-                h('button', { class: 'btn secondary', type: 'button', text: 'Скопировать текст', onclick: async () => ui.toast(await copyText(template.value) ? 'Текст скопирован' : 'Не удалось скопировать: выделите текст вручную', false) })),
-            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: link ? 'В Telegram прикрепите сохранённый файл (скрепка → Файл → Загрузки/Korrektor) и отправьте вместе с текстом' : 'Автор каталога пока не указал, куда присылать: напишите в Telegram-канал Корректора и прикрепите файл' })));
+            h('div', { class: 'card-actions centered' },
+                h('button', { class: 'btn primary', type: 'button', text: 'Отправить', onclick: send }),
+                link ? h('a', { class: 'btn secondary', href: link, target: '_blank', rel: 'noopener', text: 'Чат автора' }) : null),
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: link ? `Чат автора каталога: ${link.replace(/^https:\/\//, '')}. Если его нет в списке «Поделиться», откройте его кнопкой «Чат автора» и напишите что-нибудь — потом он появится` : 'Отправьте файл в Telegram-канал Корректора' })));
+}
+
+// ---------- a file shared to the app (from Telegram) ----------
+
+let incoming = null;
+
+/** A file shared to the app: recognised, checked by the plugin, then shown on its own screen. */
+export async function receiveFile(name, base64) {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const blob = new Blob([bytes]);
+    let type = '';
+    if (bytes[0] === 0x89 && bytes[1] === 0x50) type = 'card';
+    else {
+        try {
+            const json = JSON.parse(new TextDecoder().decode(bytes).replace(/^﻿/, ''));
+            const first = Array.isArray(json) ? json[0] : json;
+            type = typeof first?.findRegex === 'string' ? 'regex' : json && typeof json.entries === 'object' && !json.prompts ? 'lorebook' : 'preset';
+        } catch {
+            type = '';
+        }
+    }
+    try {
+        if (!type) throw new Error('Это не пресет, не лорбук, не карточка и не регекс SillyTavern');
+        if (type === 'regex') {
+            const r = await uploadRaw('/catalog/upload-regex', blob);
+            incoming = { type, name, upload: r.upload, regexNames: r.names };
+        } else {
+            const r = await uploadRaw(`/catalog/upload?type=${type}&name=${encodeURIComponent(name)}`, blob);
+            incoming = { type, name, upload: r.upload, title: r.title, removed: r.removed || [], regexNames: r.regexNames || [] };
+        }
+        if (location.hash === '#tools/incoming') renderIncoming();
+        else location.hash = '#tools/incoming';
+    } catch (error) {
+        ui.toast(`${name}: ${error.message}`, true);
+    }
+}
+
+export async function renderIncoming() {
+    const { h, put, $ } = ui;
+    const view = $('#view');
+    if (!incoming) {
+        put(view, back('#tools', 'Ещё'), h('div', { class: 'empty' }, mascot('confused', 150), h('h2', { text: 'Файла нет' }), h('p', { text: 'Поделитесь файлом пресета, лорбука или карточки с Корректором — например из Telegram' })));
+        return;
+    }
+    const file = incoming;
+    let admin = { hasToken: false };
+    try {
+        admin = await ui.api('/catalog/admin');
+    } catch {
+        // without the author's page the file can still be installed
+    }
+    const install = async (e) => {
+        const button = e.currentTarget;
+        button.disabled = true;
+        try {
+            const r = await ui.api('/catalog/install-upload', { method: 'POST', body: { type: file.type, upload: file.upload, name: file.title || file.name.replace(/\.[^.]+$/, '') } });
+            ui.toast(`Установлено: ${r.where} → ${r.name}`);
+            button.textContent = '✓ Установлено';
+        } catch (error) {
+            ui.toast(error.message, true);
+            button.disabled = false;
+        }
+    };
+    const what = file.type === 'regex' ? 'Регекс' : CATALOG_NAMES[file.type];
+    put(view,
+        back('#tools', 'Ещё'),
+        h('div', { class: 'section' },
+            mascotRow(file.type === 'regex' ? 'key' : 'books', `${what}: ${file.title || file.name}`, `Файл «${file.name}» получен.${file.regexNames?.length ? ` Регексы${file.type === 'preset' ? ' внутри' : ''}: ${file.regexNames.join(', ')}.` : ''}${file.removed?.length ? ` Из пресета убрано: ${file.removed.join(', ')}.` : ''}`)),
+        h('div', { class: 'card-actions centered' },
+            file.type !== 'regex' ? h('button', { class: 'btn primary', type: 'button', text: 'Установить в таверну', onclick: install }) : null,
+            admin.hasToken ? h('a', { class: 'btn secondary', href: '#tools/catalog-author', text: file.type === 'regex' ? 'Приложить к пресету в каталоге' : 'Опубликовать в каталог' }) : null),
+        file.type === 'regex' && !admin.hasToken ? h('p', { class: 'small muted', style: 'text-align:center', text: 'Регекс ставится в самой таверне: Расширения → Regex → Импорт' }) : null);
+}
+
+/** For the author's page: the shared file, once. */
+export function takeIncoming() {
+    const file = incoming;
+    incoming = null;
+    return file;
 }
 
 // For the catalog's author: publishing to GitHub.
@@ -762,7 +889,10 @@ export async function renderCatalogAuthor() {
     const fileInput = h('input', { type: 'file', hidden: true });
     let regexUploads = [];
     let regexGlobal = new Set();
-    let presetRegex = 0;
+    // Regexes already inside the chosen preset, and the ones to drop from it.
+    let inside = [];
+    let drop = new Set();
+    const shared = takeIncoming();
     const drawRegex = async () => {
         if (type !== 'preset') return put(regexBox);
         const regexInput = h('input', { type: 'file', accept: '.json,application/json', hidden: true });
@@ -787,7 +917,14 @@ export async function renderCatalogAuthor() {
         if (type !== 'preset') return;
         put(regexBox,
             h('h3', { class: 'section-title', style: 'margin-top:16px', text: 'Регексы к пресету' }),
-            h('p', { class: 'small muted', style: 'margin:0 0 8px', text: presetRegex ? `В самом пресете уже есть регексы: ${presetRegex}. Они попадут в каталог вместе с ним` : 'Регексы попадут внутрь пресета: таверна сама предложит их включить, когда пресет выберут' }),
+            inside.length ? h('div', {},
+                h('p', { class: 'small muted', style: 'margin:0 0 6px', text: 'Уже внутри пресета (нажмите, чтобы убрать или вернуть):' }),
+                h('div', { class: 'badges' }, inside.map((n, i) => h('button', {
+                    class: `badge removable${drop.has(i) ? ' dropped' : ''}`, type: 'button',
+                    onclick: () => { if (drop.has(i)) drop.delete(i); else drop.add(i); drawRegex(); },
+                    text: drop.has(i) ? `${n} — убран` : `${n} ✕`,
+                })))) : null,
+            h('p', { class: 'small muted', style: 'margin:8px 0 8px', text: 'Регексы лежат внутри пресета: таверна сама предложит их включить, когда пресет выберут. Можно добавить общие регексы таверны или файл' }),
             globals.length ? h('div', { class: 'regex-list' }, globals.map(g => h('label', { class: 'check-row' },
                 (() => { const box = h('input', { type: 'checkbox' }); box.checked = regexGlobal.has(g.id); box.addEventListener('change', () => { if (box.checked) regexGlobal.add(g.id); else regexGlobal.delete(g.id); }); return box; })(),
                 h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: g.name }), g.disabled ? h('span', { class: 'row-sub', text: 'сейчас выключен' }) : null)))) : h('p', { class: 'small muted', style: 'margin:0', text: 'Общих регексов в таверне нет' }),
@@ -803,6 +940,9 @@ export async function renderCatalogAuthor() {
             const r = await uploadRaw(`/catalog/upload?type=${type}&name=${encodeURIComponent(f.name)}`, f);
             upload = r.upload;
             form.suggestName(r.title);
+            inside = r.regexNames || [];
+            drop = new Set();
+            drawRegex();
             status.textContent = `Файл подходит: ${f.name}${r.removed?.length ? `. Из пресета убрано: ${r.removed.join(', ')}` : ''}`;
         } catch (error) {
             status.textContent = '';
@@ -814,13 +954,15 @@ export async function renderCatalogAuthor() {
     const drawSource = () => {
         file = '';
         upload = '';
-        presetRegex = 0;
+        inside = [];
+        drop = new Set();
         fileInput.accept = type === 'card' ? '.png,image/png' : '.json,application/json';
         if (source === 'local') {
             put(sourceBox, localPicker(type, (value, label, row) => {
                 file = value;
                 if (value) form.suggestName(label);
-                presetRegex = row?.regex || 0;
+                inside = row?.regexNames || [];
+                drop = new Set();
                 drawRegex();
             }));
         } else {
@@ -844,7 +986,7 @@ export async function renderCatalogAuthor() {
                     upload: source === 'upload' ? upload : undefined,
                     meta: { ...form.values(), allowed: allowed.checked },
                     images: form.images().filter(i => i.upload).map(i => i.upload),
-                    regex: type === 'preset' ? { global: [...regexGlobal], uploads: regexUploads.map(r => r.upload) } : undefined,
+                    regex: type === 'preset' ? { global: [...regexGlobal], uploads: regexUploads.map(r => r.upload), drop: [...drop] } : undefined,
                 },
             });
             ui.toast(`В каталоге: «${r.item.name}». У всех появится в течение нескольких минут`);
@@ -887,7 +1029,22 @@ export async function renderCatalogAuthor() {
         await ui.api('/catalog/admin', { method: 'POST', body: { token: '' } });
         renderCatalogAuthor();
     };
+    if (shared?.type === 'regex') {
+        // A regex file shared from Telegram: it goes with the preset published next.
+        regexUploads.push({ upload: shared.upload, names: shared.regexNames || [] });
+    } else if (shared) {
+        type = shared.type;
+        source = 'upload';
+    }
     drawSource();
+    if (shared && shared.type !== 'regex') {
+        upload = shared.upload;
+        form.suggestName(shared.title || shared.name.replace(/\.[^.]+$/, ''));
+        inside = shared.regexNames || [];
+        put(sourceBox, h('p', { class: 'small secondary', style: 'margin:0', text: `Файл из Telegram: ${shared.name}` }));
+        drawRegex();
+        status.textContent = shared.removed?.length ? `Из пресета убрано: ${shared.removed.join(', ')}` : '';
+    }
     put(view,
         back('#tools/catalog', 'Каталог'),
         h('div', { class: 'section' },

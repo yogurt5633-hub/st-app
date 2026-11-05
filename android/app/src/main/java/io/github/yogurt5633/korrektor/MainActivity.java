@@ -378,6 +378,7 @@ public class MainActivity extends Activity {
                 if (v == korrektor) {
                     passTheme();
                     if (pendingImport != null && stUp) deliverImport();
+                    if (pendingFile != null && stUp) deliverFile();
                 }
                 // SillyTavern fills its menus a little after the page loads.
                 if (v == tavern) handler.postDelayed(modelBar::refresh, 4000);
@@ -592,6 +593,7 @@ public class MainActivity extends Activity {
             }
             progress = "";
             if (pendingImport != null && loaded) deliverImport();
+            if (pendingFile != null && loaded) deliverFile();
             if (pendingTab != null) {
                 showTab(pendingTab);
                 pendingTab = null;
@@ -1073,6 +1075,56 @@ public class MainActivity extends Activity {
         toast("Обновляю страницу таверны");
     }
 
+    // ---------- files shared to the app ----------
+
+    private String[] pendingFile; // { name, base64 }
+
+    private void receiveFile(Uri uri) {
+        new Thread(() -> {
+            String name = "file";
+            try (android.database.Cursor c = getContentResolver().query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst() && !c.isNull(0)) name = c.getString(0);
+            } catch (Exception ignored) {
+                // a name is only a hint
+            }
+            try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new java.io.IOException("нет доступа к файлу");
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    if (out.size() > 20 * 1024 * 1024) throw new java.io.IOException("файл больше 20 МБ");
+                }
+                String data = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP);
+                String fileName = name;
+                runOnUiThread(() -> {
+                    pendingFile = new String[]{fileName, data};
+                    homeChosen = false;
+                    if (stUp) deliverFile();
+                    else {
+                        message = "Файл получен: он откроется в Корректоре, когда SillyTavern запустится";
+                        pendingTab = KORREKTOR;
+                        showTab(HOME);
+                    }
+                });
+            } catch (Exception e) {
+                toast("Не удалось прочитать файл: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private void deliverFile() {
+        String[] file = pendingFile;
+        if (file == null) return;
+        pendingFile = null;
+        homeChosen = false;
+        showTab(KORREKTOR);
+        korrektor.evaluateJavascript("window.korrektorIncomingFile?window.korrektorIncomingFile(" + JSONObject.quote(file[0]) + "," + JSONObject.quote(file[1]) + "):'missing'", value -> {
+            if ("\"missing\"".equals(value)) pendingFile = file; // the page is still loading
+        });
+    }
+
     private void deliverImport() {
         String url = pendingImport;
         if (url == null) return;
@@ -1269,6 +1321,11 @@ public class MainActivity extends Activity {
     }
 
     private void handleIntent(Intent intent) {
+        if (intent != null && Intent.ACTION_SEND.equals(intent.getAction()) && intent.getParcelableExtra(Intent.EXTRA_STREAM) != null) {
+            // A file shared to the app (a preset, lorebook, card or regex from Telegram).
+            receiveFile((Uri) intent.getParcelableExtra(Intent.EXTRA_STREAM));
+            return;
+        }
         if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
             // A link shared to the app: import the card or lorebook through Korrektor.
             String text = intent.getStringExtra(Intent.EXTRA_TEXT);

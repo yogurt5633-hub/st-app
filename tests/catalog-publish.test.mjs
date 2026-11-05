@@ -243,3 +243,19 @@ test('catalog author: a preset with its regexes and pictures; editing keeps the 
     await removeItem({ token: 'github_pat_test', id: r.item.id, fetchImpl: gh.fetchImpl });
     assert.ok(![...gh.files.keys()].some(k => k.startsWith('catalog/files/')), 'the file and all pictures are gone');
 });
+
+test('catalog share: regexes inside a preset can be dropped; a shared file installs into the tavern', async () => {
+    const { addRegexToPreset, dropRegexFromPreset, regexNames, saveCatalogUpload, readCatalogUpload } = await import('../plugin/lib/catalog-publish.mjs');
+    const { installData } = await import('../plugin/lib/catalog.mjs');
+    const t = tavern();
+    let preset = Buffer.from(JSON.stringify({ temperature: 1, prompts: [] }));
+    preset = addRegexToPreset(preset, [{ scriptName: 'A', findRegex: '/a/' }, { scriptName: 'B', findRegex: '/b/' }, { scriptName: 'A', findRegex: '/a/' }]);
+    assert.deepEqual(regexNames(preset), ['A', 'B'], 'the same script is not doubled');
+    assert.deepEqual(regexNames(dropRegexFromPreset(preset, [0])), ['B']);
+    const up = await saveCatalogUpload(t.korrektorDir, 'preset', preset, 'Пресет из телеги.json');
+    assert.deepEqual(up.regexNames, ['A', 'B']);
+    const r = await installData(t.ctx, 'preset', await readCatalogUpload(t.korrektorDir, 'preset', up.upload), 'Пресет из телеги');
+    assert.equal(r.where, 'Пресеты Chat Completion');
+    const installed = JSON.parse(fs.readFileSync(path.join(t.ctx.dirs.openAI_Settings, r.file), 'utf8'));
+    assert.equal(installed.extensions.regex_scripts.length, 2, 'the regexes come along');
+});
