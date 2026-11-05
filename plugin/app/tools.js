@@ -197,6 +197,7 @@ export async function renderCardsHealth() {
 }
 
 export async function renderCardHealth(avatar, { inSheet = false } = {}) {
+    const view = ui.$('#view');
     const { h, put, $, fmt } = ui;
     let data;
     try {
@@ -217,7 +218,7 @@ export async function renderCardHealth(avatar, { inSheet = false } = {}) {
             h('ul', { class: 'tips' }, data.tips.map(t => h('li', { class: t.level, text: t.text }))))
             : h('p', { class: 'secondary', text: 'Замечаний нет' }),
         related.length ? h('div', { class: 'section' }, h('h3', { class: 'section-title', text: 'Замечания Корректора' }), h('div', { class: 'list' }, related.map(ui.renderCard))) : null);
-    if (!inSheet) put($('#view'), body);
+    if (!inSheet) put(view, body);
     return body;
 }
 
@@ -451,10 +452,30 @@ export async function renderCatalog() {
         data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
         list,
         h('div', { class: 'section' },
-            h('div', { class: 'card-actions', style: 'margin-top:0' },
+            h('div', { class: 'card-actions centered', style: 'margin-top:0' },
                 h('a', { class: 'btn secondary', href: '#tools/catalog-suggest', text: 'Предложить своё' }),
-                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); renderCatalog(); } })),
-            h('p', { class: 'small muted', style: 'margin:12px 0 0' }, 'Каталог ведёт автор Корректора. ', h('a', { href: '#tools/catalog-author', text: 'Для автора каталога' }))));
+                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); renderCatalog(); } }))));
+    authorEntrance();
+}
+
+/** The author's page opens with a long press on the «Каталог» title: other people do not need it. */
+function authorEntrance() {
+    const title = ui.$('#page-title');
+    if (!title || title.dataset.catalogPress) return;
+    title.dataset.catalogPress = '1';
+    let timer = null;
+    const cancel = () => { clearTimeout(timer); timer = null; };
+    title.addEventListener('pointerdown', () => {
+        if (location.hash !== '#tools/catalog') return;
+        cancel();
+        timer = setTimeout(() => {
+            timer = null;
+            navigator.vibrate?.(20);
+            location.hash = '#tools/catalog-author';
+        }, 700);
+    });
+    for (const type of ['pointerup', 'pointerleave', 'pointercancel']) title.addEventListener(type, cancel);
+    title.addEventListener('contextmenu', (e) => { if (location.hash === '#tools/catalog') e.preventDefault(); });
 }
 
 function copyText(text) {
@@ -530,9 +551,11 @@ export async function renderCatalogSuggest() {
     save.addEventListener('click', () => ui.toast(inApp() ? 'Сохраняю в Загрузки/Korrektor' : 'Скачивание началось'));
     const link = data.submit;
     // A Telegram chat with a person or a bot can open with the text already typed.
-    const telegram = () => {
+    const telegram = async () => {
         let url = link;
         if (/^https:\/\/t\.me\/[A-Za-z0-9_]{4,}\/?$/.test(link)) url = `${link.replace(/\/$/, '')}?text=${encodeURIComponent(template.value)}`;
+        // Not every Telegram link can carry the text: it is copied too, to paste if the field is empty.
+        if (await copyText(template.value)) ui.toast('Текст скопирован: если поле в Telegram пустое, вставьте его');
         window.open(url, '_blank', 'noopener');
     };
     drawPicker();
@@ -669,12 +692,13 @@ export async function renderCatalogAuthor() {
             button.disabled = false;
         }
     };
-    const submit = h('input', { class: 'input', style: 'width:100%', type: 'url', value: data.submit || '', placeholder: 'https://t.me/ваш_ник', autocapitalize: 'off' });
+    const submit = h('input', { class: 'input', style: 'width:100%', type: 'text', inputmode: 'url', value: data.submit || '', placeholder: 't.me/ваш_ник или @ник', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false' });
     const saveSubmit = async () => {
         try {
-            await ui.api('/catalog/submit-link', { method: 'POST', body: { link: submit.value.trim() } });
+            const r = await ui.api('/catalog/submit-link', { method: 'POST', body: { link: submit.value.trim() } });
+            submit.value = r.submit || '';
             catalogData = null;
-            ui.toast(submit.value.trim() ? 'Ссылка сохранена: кнопка «Предложить своё» ведёт туда' : 'Ссылка убрана');
+            ui.toast(r.submit ? `Сохранено: ${r.submit}` : 'Ссылка убрана');
         } catch (error) {
             ui.toast(error.message, true);
         }
@@ -722,7 +746,7 @@ export async function renderCatalogAuthor() {
             h('h3', { class: 'section-title', text: 'Куда присылать предложения' }),
             h('div', { class: 'field-row' }, submit),
             h('div', { class: 'card-actions' }, h('button', { class: 'btn secondary', type: 'button', text: 'Сохранить ссылку', onclick: saveSubmit })),
-            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Ссылка на ваш Telegram (https://t.me/ник) или чат канала. По ней пользователи пришлют файлы с кнопки «Предложить своё»' })),
+            h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Ваш Telegram: t.me/ник, @ник или ссылка на сообщения канала (t.me/канал?direct). По ней пользователи пришлют файлы с кнопки «Предложить своё»' })),
         h('div', { class: 'section' },
             h('h3', { class: 'section-title', text: `В каталоге сейчас: ${data.items.length}` }),
             data.items.length ? h('div', { class: 'list catalog-list' }, data.items.map(item => {

@@ -48,3 +48,25 @@ test('installer: copies the plugin and companion, turns on server plugins, can r
     assert.deepEqual(fs.readdirSync(path.join(st, 'plugins')), ['korrektor']);
     assert.ok(!fs.readdirSync(st).some(n => n.startsWith('.korrektor-install')));
 });
+
+test('translate: a piece that comes back half in English is split and translated again; code blocks are translated, fences kept', async () => {
+    const { translator, looksUntranslated } = await import('../st-extension/translate.js');
+    const calls = [];
+    globalThis.SillyTavern = { getContext: () => ({ getRequestHeaders: () => ({}), extensionSettings: {} }) };
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        calls.push([url, text.length]);
+        // Like the free Google endpoint with long text: only the first part comes back translated.
+        const out = text.length > 600 ? `ПЕРЕВОД ${text.slice(0, 100)}${text.slice(100)}` : text.replace(/[A-Za-z]+/g, 'слово');
+        return { ok: true, status: 200, text: async () => out };
+    };
+    const long = Array.from({ length: 12 }, (_, i) => `Line ${i}: the knight walks into the tavern and orders some ale.`).join('\n');
+    const source = `${long}\n\`\`\`\nHP: full, Mood: calm and happy today\n\`\`\``;
+    const out = await translator('google', 'ru')(source);
+    assert.ok(!/knight|tavern|calm/.test(out), out);
+    assert.match(out, /```\n[^`]*слово[^`]*\n```$/);
+    assert.ok(calls.some(([, n]) => n <= 600), 'smaller pieces were asked for');
+    assert.equal(looksUntranslated('The knight walks into the tavern.', 'Рыцарь входит в таверну.', 'ru'), false);
+    assert.equal(looksUntranslated('The knight walks into the tavern.', 'The knight walks into the tavern.', 'ru'), true);
+    assert.equal(looksUntranslated('Привет, как дела у тебя сегодня?', 'Привет, как дела у тебя сегодня?', 'ru'), false);
+});

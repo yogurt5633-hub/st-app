@@ -25,6 +25,7 @@ export async function translateText(llm, text, lang) {
     const system = [
         `Ты переводчик ролевых чатов. Переведи текст пользователя на ${target} язык.`,
         'Сохрани стиль, тон, мат и интимные сцены как есть, без смягчения и без пояснений.',
+        'Переведи весь текст целиком, до последней строки: ничего не пропускай, не сокращай и не пересказывай, включая статусы, таблицы, списки и текст внутри блоков кода.',
         'Сохрани разметку: *действия*, "реплики", markdown, переносы строк, HTML-теги, {{макросы}} и ссылки — без изменений.',
         'Имена не переводи, а передавай буквами нужного языка, если это принято.',
         'Если текст уже на нужном языке, верни его без изменений.',
@@ -34,7 +35,8 @@ export async function translateText(llm, text, lang) {
         task: 'translate',
         system,
         user: source,
-        maxTokens: Math.min(8000, 400 + Math.ceil(source.length / 1.5)),
+        // Room for the whole translation, and for the thinking of reasoning models.
+        maxTokens: Math.min(16000, 1500 + source.length * 2),
     });
     return String(reply.text ?? '').replace(/^\s*```[a-z]*\n?|\n?```\s*$/g, '').trim();
 }

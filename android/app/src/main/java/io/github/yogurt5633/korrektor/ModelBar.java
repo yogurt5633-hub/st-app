@@ -38,6 +38,8 @@ final class ModelBar {
             + "if(tr&&tl&&document.getElementById('translate_chat')){out.translate={mode:tr.value,lang:tl.value,"
             + "langName:tl.selectedOptions[0]?tl.selectedOptions[0].textContent:'',provider:$('#translation_provider').val(),"
             + "languages:[].map.call(tl.options,function(o){return [o.value,o.textContent];})};}"
+            + "if(window.korrektorTranslate&&window.korrektorTranslate.settings){var ks=window.korrektorTranslate.settings();"
+            + "out.ours={auto:!!ks.auto,engine:ks.engine,lang:ks.lang,engines:window.korrektorTranslate.engines||[]};}"
             + "if(out.api==='openai'){var source=$('#chat_completion_source').val();"
             + "var map={makersuite:'model_google_select',vertexai:'model_vertexai_select',custom:'model_custom_select'};"
             + "var id=map[source]||('model_'+source+'_select');var sel=document.getElementById(id);"
@@ -100,8 +102,9 @@ final class ModelBar {
         if (state == null || !state.optBoolean("ok")) return;
 
         JSONObject tr = state.optJSONObject("translate");
+        JSONObject ours = state.optJSONObject("ours");
         String mode = tr == null ? "none" : tr.optString("mode", "none");
-        boolean on = "responses".equals(mode) || "both".equals(mode);
+        boolean on = (ours != null && ours.optBoolean("auto")) || "responses".equals(mode) || "both".equals(mode);
         chips.addView(chip(on ? "Перевод: " + tr.optString("langName") : "Перевод", false, v -> translateDialog()));
 
         if (state.optBoolean("gallery")) {
@@ -138,17 +141,19 @@ final class ModelBar {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(8), dp(20), dp(4));
 
+        JSONObject oursState = state.optJSONObject("ours");
         Switch replies = new Switch(activity);
         replies.setText("Переводить новые ответы");
-        replies.setChecked("responses".equals(mode) || "both".equals(mode));
+        replies.setChecked(oursState != null ? oursState.optBoolean("auto") || "responses".equals(mode) || "both".equals(mode)
+                : "responses".equals(mode) || "both".equals(mode));
         Switch mine = new Switch(activity);
         mine.setText("Мои сообщения — на английский перед отправкой");
         mine.setChecked("inputs".equals(mode) || "both".equals(mode));
         box.addView(replies, row());
         box.addView(mine, row());
 
-        final String[] lang = {tr.optString("lang")};
-        final String[] langName = {tr.optString("langName")};
+        final String[] lang = {oursState != null && !oursState.optString("lang").isEmpty() ? oursState.optString("lang") : tr.optString("lang")};
+        final String[] langName = {oursState != null ? nameOf(tr, lang[0], lang[0]) : tr.optString("langName")};
         // Most people here read Russian: offer it instead of SillyTavern's default English.
         if ("en".equals(lang[0]) && !replies.isChecked()) {
             lang[0] = "ru";
@@ -174,7 +179,31 @@ final class ModelBar {
             });
         });
         box.addView(language, row());
-        TextView note = text("Новые ответы переводит " + providerName(tr.optString("provider")) + " через саму таверну: перевод показывается вместо текста, а модель по-прежнему видит оригинал."
+        // Which translator: Korrektor's own translation (Google, Bing, Yandex, DeepL, Lingva or its model).
+        final String[] engine = {oursState == null ? "" : oursState.optString("engine", "auto")};
+        if (oursState != null) {
+            JSONArray engines = oursState.optJSONArray("engines");
+            List<String> keys = new ArrayList<>();
+            List<String> labels = new ArrayList<>();
+            for (int i = 0; engines != null && i < engines.length(); i++) {
+                JSONArray pair = engines.optJSONArray(i);
+                if (pair == null) continue;
+                keys.add(pair.optString(0));
+                labels.add(pair.optString(1));
+            }
+            int at = keys.indexOf(engine[0]);
+            TextView engineView = text("Переводчик: " + (at >= 0 ? labels.get(at) : engine[0]), true);
+            engineView.setOnClickListener(v -> pick("Переводчик", labels, keys.indexOf(engine[0]) >= 0 ? labels.get(keys.indexOf(engine[0])) : "", picked -> {
+                int i = labels.indexOf(picked);
+                if (i < 0) return;
+                engine[0] = keys.get(i);
+                engineView.setText("Переводчик: " + picked);
+            }));
+            box.addView(engineView, row());
+        }
+        TextView note = text(oursState != null
+                ? "Перевод показывается вместо текста, а модель по-прежнему видит оригинал. Длинные ответы переводятся по частям, и если кусок вернулся на английском, Корректор переведёт его заново. Уже написанные сообщения — «Старые сообщения»"
+                : "Новые ответы переводит " + providerName(tr.optString("provider")) + " через саму таверну: перевод показывается вместо текста, а модель по-прежнему видит оригинал."
                 + (ours ? " Уже написанные сообщения — кнопка «Старые сообщения»: по одному, с повтором при ошибке, можно моделью Корректора" : ""), false);
         note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         box.addView(note, row());
@@ -183,6 +212,15 @@ final class ModelBar {
                 .setTitle("Перевод чата")
                 .setView(box)
                 .setPositiveButton("Готово", (d, w) -> {
+                    if (oursState != null) {
+                        // New replies: Korrektor's translation (small pieces, checked, another translator if needed).
+                        // SillyTavern's own keeps only «my messages to English».
+                        String stMode = mine.isChecked() ? "inputs" : "none";
+                        run("(function(on,l,e,m){var $=window.jQuery;window.korrektorTranslate.setAuto(on,{lang:l,engine:e});"
+                                + "$('#translation_target_language').val(l).trigger('change');$('#translation_auto_mode').val(m).trigger('change');})("
+                                + replies.isChecked() + "," + JSONObject.quote(lang[0]) + "," + JSONObject.quote(engine[0]) + "," + JSONObject.quote(stMode) + ")");
+                        return;
+                    }
                     String next = replies.isChecked() && mine.isChecked() ? "both" : replies.isChecked() ? "responses" : mine.isChecked() ? "inputs" : "none";
                     run("(function(m,l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');"
                             + "$('#translation_auto_mode').val(m).trigger('change');})(" + JSONObject.quote(next) + "," + JSONObject.quote(lang[0]) + ")");

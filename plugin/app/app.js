@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.4';
+const APP_VERSION = '0.4.5';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -338,11 +338,17 @@ async function renderRoute() {
         if (tab.dataset.tab === tabName) tab.setAttribute('aria-current', 'page');
         else tab.removeAttribute('aria-current');
     }
+    openSheet.hash = location.hash;
     if (route.name === 'proposal') return renderProposalSheet(route.id);
     if (route.name === 'chat') return renderChatSheet(route.id);
     if (route.name === 'compress') return tools.renderCompress(route.id);
     sheet.hidden = true;
     put(sheet, );
+    // Each page gets a fresh container. A page still loading after an earlier tap then
+    // finishes into the old, detached one, instead of piling up on top of this page.
+    const oldView = $('#view');
+    const freshView = oldView.cloneNode(false);
+    oldView.replaceWith(freshView);
     document.body.style.overflow = '';
     const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', muted: 'Скрытые замечания' };
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || 'Ещё' };
@@ -614,6 +620,8 @@ async function followup(p, index) {
 // ---------- proposal detail ----------
 
 function openSheet(metaText, body, foot) {
+    // Loaded after the person already went back: do not pop up over the page they are on now.
+    if (openSheet.hash !== undefined && location.hash !== openSheet.hash) return;
     const sheet = $('#sheet');
     const back = h('button', { class: 'icon-button', type: 'button', 'aria-label': 'Назад', onclick: () => history.length > 1 ? history.back() : (location.hash = '#feed') }, icon('back'));
     put(sheet, 
@@ -1359,10 +1367,13 @@ async function boot() {
     $('#scan-button').addEventListener('click', () => startScan());
     window.addEventListener('hashchange', () => renderRoute());
     // Back to the app or to this tab: fresh data, but not on every quick tab switch.
+    // Back to the app: fresh numbers. Only lists are redrawn — a page with a form keeps
+    // what was typed (for example a link copied from another app).
     let fullAt = Date.now();
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
-        const full = Date.now() - fullAt > 20000;
+        const list = ['feed', 'chats', 'history'].includes(currentRoute().name);
+        const full = list && Date.now() - fullAt > 20000;
         if (full) fullAt = Date.now();
         refresh(full);
     });

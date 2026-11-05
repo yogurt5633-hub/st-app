@@ -117,7 +117,7 @@ test('catalog author: a card from the phone, removal with its file, the link for
 
     await setSubmitLink({ token: 'github_pat_test', link: 'https://t.me/korrektor_owner', fetchImpl: gh.fetchImpl });
     assert.equal(gh.catalog().submit, 'https://t.me/korrektor_owner');
-    await assert.rejects(setSubmitLink({ token: 'github_pat_test', link: 'javascript:alert(1)', fetchImpl: gh.fetchImpl }), /https/);
+    await assert.rejects(setSubmitLink({ token: 'github_pat_test', link: 'javascript:alert(1)', fetchImpl: gh.fetchImpl }), /Не похоже на ссылку/);
 
     await removeItem({ token: 'github_pat_test', id: 'card-nika', fetchImpl: gh.fetchImpl });
     assert.equal(gh.catalog().items.length, 0);

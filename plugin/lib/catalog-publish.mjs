@@ -328,9 +328,19 @@ export async function removeItem({ token, id, fetchImpl }) {
 }
 
 /** Where people send their presets and lorebooks (a Telegram link): kept in catalog.json. */
+/** A Telegram address written any usual way: @nick, nick, t.me/nick, t.me/channel?direct, a full link. */
+export function submitLink(value) {
+    let text = String(value || '').trim();
+    if (!text) return '';
+    if (/^@?[A-Za-z][A-Za-z0-9_]{3,31}$/.test(text)) text = `https://t.me/${text.replace(/^@/, '')}`;
+    else if (/^(t\.me|telegram\.me|www\.)/i.test(text)) text = `https://${text}`;
+    else if (/^http:\/\//i.test(text)) text = text.replace(/^http:/i, 'https:');
+    return cleanLink(text);
+}
+
 export async function setSubmitLink({ token, link, fetchImpl }) {
-    const clean = cleanLink(link);
-    if (link && !clean) throw httpError(400, 'Нужна ссылка, начинающаяся с https://, например https://t.me/имя');
+    const clean = submitLink(link);
+    if (link && !clean) throw httpError(400, 'Не похоже на ссылку: впишите t.me/ник, @ник или полную ссылку');
     await updateCatalog(token, 'Каталог: куда присылать предложения', (json) => {
         if (clean) json.submit = clean;
         else delete json.submit;

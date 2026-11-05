@@ -1,11 +1,14 @@
-// Корректор: translation of messages that are already in the chat.
+// Корректор: translation of messages in the chat.
 //
 // SillyTavern's own "Translate whole chat" stops at the first error and only says
-// "Failed to translate chat". Here every message is translated on its own:
-//  - free translators tried in turn (Google → Bing → Yandex), each with retries and a pause;
-//  - or Korrektor's cheap model (better with roleplay, costs a little);
-//  - a range (last 20 / 50 / all), progress, a Stop button, and messages that failed
-//    are listed and can be tried again.
+// "Failed to translate chat", and long replies sometimes come back half in English.
+// Here every message is translated on its own:
+//  - a chosen translator (Google, Bing, Yandex, DeepL, Lingva) or «Авто», which tries
+//    them in turn; or Korrektor's cheap model (better with roleplay, costs a little);
+//  - long text goes in small pieces, and a piece that comes back untranslated is
+//    split further or given to the next translator;
+//  - a range (last 20 / 50 / all), progress, a Stop button, failed messages can be retried;
+//  - optionally every new reply is translated as it arrives.
 // The translation goes to message.extra.display_text — the same place SillyTavern's
 // translator uses: the original text stays, and "Show original" brings it back.
 
@@ -21,26 +24,42 @@ export const LANGUAGES = [
     ['es', 'Español'], ['it', 'Italiano'], ['pt-BR', 'Português'], ['pl', 'Polski'], ['tr', 'Türkçe'],
 ];
 
-const FREE = ['google', 'bing', 'yandex'];
-const LIMITS = { google: 4500, bing: 1000, yandex: 4000 };
+export const ENGINES = [
+    ['auto', 'Авто: Google, потом Bing, Яндекс, Lingva'],
+    ['google', 'Google'],
+    ['bing', 'Bing'],
+    ['yandex', 'Яндекс'],
+    ['deepl', 'DeepL (нужен ключ в таверне)'],
+    ['lingva', 'Lingva'],
+    ['model', 'Модель Корректора (лучше для ролёвки, платно)'],
+];
+const AUTO = ['google', 'bing', 'yandex', 'lingva'];
+// Characters per request. Free translators drop the end of long text, so pieces stay small.
+const LIMITS = { google: 1800, bing: 1000, yandex: 1500, lingva: 900, deepl: 4000, model: 3000 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function settings() {
+export function settings() {
     const saved = storage(SETTINGS_KEY, {});
     const stLang = ctx().extensionSettings?.translate?.target_language;
+    const engine = saved.engine === 'free' ? 'auto' : saved.engine;
     return {
         lang: saved.lang || (stLang && stLang !== 'en' ? stLang : 'ru'),
-        engine: saved.engine || 'free',
+        engine: ENGINES.some(([k]) => k === engine) ? engine : 'auto',
         range: saved.range || 'last20',
         mine: saved.mine ?? true,
+        auto: Boolean(saved.auto),
         again: false,
     };
 }
 
+function saveSettings(s) {
+    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto });
+}
+
 // ---------- splitting ----------
 
-/** Pieces that must not go to a translator: pictures, code, HTML tags, {{macros}}. */
-const KEEP = /(!\[[^\]]*\]\([^)]*\)|```[\s\S]*?```|<[^>]+>|\{\{[^}]*\}\})/;
+/** Pieces that must not go to a translator: pictures, code fences, HTML tags, {{macros}}. The text inside code blocks is translated. */
+const KEEP = /(!\[[^\]]*\]\([^)]*\)|```[^\n`]*\n?|\n?```|<[^>]+>|\{\{[^}]*\}\})/;
 const KEEP_ALL = new RegExp(`^${KEEP.source}$`);
 
 /** Cuts a long text at paragraph, then sentence, then word boundaries. */
@@ -61,13 +80,42 @@ export function chunkText(text, size) {
     return out;
 }
 
+const CYRILLIC_TARGETS = new Set(['ru', 'uk', 'be', 'kk']);
+
+/** Share of Latin letters among all letters. */
+function latinShare(text) {
+    const letters = String(text).match(/\p{L}/gu) || [];
+    if (!letters.length) return 0;
+    return letters.filter((c) => /[A-Za-z]/.test(c)).length / letters.length;
+}
+
+/**
+ * Came back (partly) untranslated: the same text, or still mostly English when the
+ * target uses Cyrillic. Names and terms in Latin are fine, whole sentences are not.
+ */
+export function looksUntranslated(source, out, lang) {
+    if (lang === 'en' || latinShare(source) < 0.6) return false;
+    const src = String(source).replace(/\s+/g, ' ').trim();
+    const res = String(out).replace(/\s+/g, ' ').trim();
+    if ((src.match(/[A-Za-z]/g) || []).length < 12) return false;
+    if (src === res) return true;
+    return CYRILLIC_TARGETS.has(lang) && latinShare(res) > 0.35;
+}
+
 // ---------- providers ----------
 
 async function free(provider, text, lang) {
     const headers = ctx().getRequestHeaders();
-    const body = provider === 'yandex' ? { chunks: [text], lang } : { text, lang };
+    const body = provider === 'yandex' ? { chunks: [text], lang }
+        : provider === 'deepl' ? { text, lang, endpoint: ctx().extensionSettings?.translate?.deepl_endpoint || 'free' }
+            : { text, lang };
     const res = await fetch(`/api/translate/${provider}`, { method: 'POST', headers, body: JSON.stringify(body) });
-    if (!res.ok) throw Object.assign(new Error(`${provider}: ${res.status}`), { status: res.status });
+    if (!res.ok) {
+        if (provider === 'deepl' && res.status === 400) {
+            throw Object.assign(new Error('Для DeepL нужен ключ: Расширения → Chat Translation → DeepL → значок ключа'), { fatal: true });
+        }
+        throw Object.assign(new Error(`${provider}: ${res.status}`), { status: res.status });
+    }
     const out = await res.text();
     if (!out.trim() && text.trim()) throw new Error(`${provider}: пустой ответ`);
     return out;
@@ -98,31 +146,54 @@ async function withRetries(fn, tries = 3) {
 }
 
 /**
- * The translator for one run. Free providers are tried in turn; the one that worked
- * is used first for the rest of the run.
+ * Translates a piece with one provider. A part that comes back untranslated is split
+ * in half and tried again (twice at most); if it still is, the provider has failed.
  */
-function translator(engine, lang) {
-    let order = [...FREE];
+async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0) {
+    const call = provider === 'model' ? (part) => viaModel(part, lang) : (part) => free(provider, part, lang);
+    let out = '';
+    for (const part of chunkText(text, limit)) {
+        if (!part.trim()) {
+            out += part;
+            continue;
+        }
+        const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
+        let result = await withRetries(() => call(core), provider === 'model' ? 2 : 2);
+        if (looksUntranslated(core, result, lang)) {
+            if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1);
+            else throw Object.assign(new Error(`${provider}: вернул текст без перевода`), { untranslated: true });
+        }
+        out += lead + result + tail;
+    }
+    return out;
+}
+
+/**
+ * The translator for one run. With «Авто» free providers are tried in turn and the one
+ * that worked goes first for the rest of the run; a chosen provider is used alone.
+ */
+export function translator(engine, lang) {
+    let order = engine === 'auto' || engine === 'free' ? [...AUTO] : [engine];
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
     const strikes = new Map();
     const translatePiece = async (piece) => {
         if (!piece.trim()) return piece;
-        // Keep the spaces and line breaks around the piece: translators drop them.
-        const [, lead, core, tail] = piece.match(/^(\s*)([\s\S]*?)(\s*)$/);
-        if (engine === 'model') return lead + await withRetries(() => viaModel(core, lang)) + tail;
-        let last;
         const alive = order.filter((p) => (strikes.get(p) || 0) < 2);
-        if (!alive.length) throw Object.assign(new Error('Бесплатные переводчики сейчас не отвечают (часто это временно или блокировка у провайдера). Попробуйте позже или «Модель Корректора»'), { fatal: true });
+        if (!alive.length) {
+            throw Object.assign(new Error(engine === 'auto' || order.length > 1
+                ? 'Бесплатные переводчики сейчас не отвечают (часто это временно или блокировка у провайдера). Выберите другой переводчик или «Модель Корректора»'
+                : `${ENGINES.find(([k]) => k === engine)?.[1] || engine} сейчас не переводит. Выберите другой переводчик`), { fatal: true });
+        }
+        let last;
         for (const provider of alive) {
             try {
-                const parts = chunkText(core, LIMITS[provider]);
-                let out = '';
-                for (const part of parts) out += await withRetries(() => free(provider, part, lang), 2);
+                const out = await byProvider(provider, piece, lang);
                 strikes.set(provider, 0);
                 if (order[0] !== provider) order = [provider, ...order.filter((p) => p !== provider)];
-                return lead + out + tail;
+                return out;
             } catch (error) {
+                if (error.fatal) throw error;
                 last = error;
                 strikes.set(provider, (strikes.get(provider) || 0) + 1);
             }
@@ -212,9 +283,9 @@ export async function translateChat(options, onProgress = () => { }) {
                 streak++;
                 // Three messages in a row failed with every translator: it is not one bad message.
                 if (streak >= 3) {
-                    state.error = options.engine === 'model'
-                        ? `Модель не отвечает: ${error.message}`
-                        : 'Бесплатные переводчики сейчас не отвечают (часто это временно или блокировка у провайдера). Попробуйте позже или «Модель Корректора»';
+                    state.error = options.engine === 'model' ? `Модель не отвечает: ${error.message}`
+                        : error.untranslated ? 'Переводчик возвращает текст без перевода. Выберите другой переводчик или «Модель Корректора»'
+                            : 'Переводчик сейчас не отвечает (часто это временно или блокировка у провайдера). Выберите другой или «Модель Корректора»';
                     break;
                 }
                 if (error.fatal) {
@@ -232,6 +303,50 @@ export async function translateChat(options, onProgress = () => { }) {
     } finally {
         running = null;
     }
+}
+
+// ---------- new replies ----------
+
+/** SillyTavern's own auto-translation would translate the same reply again: leave it only for my messages. */
+function quietStAuto() {
+    const select = document.getElementById('translation_auto_mode');
+    if (!select || !window.jQuery) return;
+    const next = select.value === 'both' ? 'inputs' : select.value === 'responses' ? 'none' : null;
+    if (next) window.jQuery(select).val(next).trigger('change');
+}
+
+const autoQueue = new Set();
+
+/** Translates one new reply, if «Переводить новые ответы» is on. */
+async function translateNew(messageId) {
+    const s = settings();
+    if (!s.auto) return;
+    const id = Number(messageId);
+    const c = ctx();
+    const message = c.chat?.[id];
+    if (!message || message.is_user || message.is_system || !String(message.mes || '').trim() || autoQueue.has(id)) return;
+    autoQueue.add(id);
+    const chatId = c.getCurrentChatId?.();
+    try {
+        const text = await translator(s.engine, s.lang)(prepare(message));
+        // The reply may have been edited, swiped or the chat changed meanwhile.
+        if (ctx().getCurrentChatId?.() !== chatId || ctx().chat?.[id] !== message) return;
+        if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
+        message.extra.display_text = text;
+        ctx().updateMessageBlock(id, message);
+        await ctx().saveChat();
+    } catch (error) {
+        toastr.warning(`Не перевёл ответ: ${error.message}`, 'Корректор', { timeOut: 6000 });
+    } finally {
+        autoQueue.delete(id);
+    }
+}
+
+export function setAuto(on, options = {}) {
+    const s = { ...settings(), ...options, auto: Boolean(on) };
+    saveSettings(s);
+    if (s.auto) quietStAuto();
+    return s;
 }
 
 export function stopTranslation() {
@@ -264,7 +379,7 @@ function seg(options, value, onchange) {
 
 export function openTranslate(preset = {}) {
     const s = { ...settings(), ...preset };
-    const save = () => store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine });
+    const save = () => saveSettings(s);
     const chat = ctx().chat || [];
     const translated = chat.filter((m) => m?.extra?.display_text).length;
 
@@ -316,6 +431,9 @@ export function openTranslate(preset = {}) {
 
     const mine = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.mine, onchange: (e) => { s.mine = e.target.checked; save(); } }), el('span', { text: 'И мои сообщения' }));
+    const autoBox = el('label', { class: 'checkbox_label' },
+        el('input', { type: 'checkbox', checked: s.auto, onchange: (e) => { s.auto = e.target.checked; save(); if (s.auto) quietStAuto(); } }),
+        el('span', { text: 'Переводить новые ответы сразу (этим же переводчиком)' }));
     const again = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.again, onchange: (e) => { s.again = e.target.checked; } }), el('span', { text: 'Заново (уже переведённые тоже)' }));
 
@@ -324,12 +442,13 @@ export function openTranslate(preset = {}) {
         el('div', { class: 'kg-label', text: 'Какие сообщения' }),
         seg([['last20', 'Последние 20'], ['last50', 'Последние 50'], ['all', 'Весь чат']], s.range, (v) => { s.range = v; save(); }),
         el('div', { class: 'kg-label', text: 'Чем переводить' }),
-        seg([['free', 'Бесплатно (Google и др.)'], ['model', 'Модель Корректора']], s.engine, (v) => { s.engine = v; save(); }),
-        el('div', { class: 'kg-checks' }, mine, again),
+        el('select', { class: 'text_pole', onchange: (e) => { s.engine = e.target.value; save(); } },
+            ENGINES.map(([key, label]) => el('option', { value: key, selected: key === s.engine, text: label }))),
+        el('div', { class: 'kg-checks' }, mine, again, autoBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn),
-        el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}«Модель Корректора» — дешёвая модель из настроек Корректора: лучше держит ролевой стиль, но тратит немного денег.` }));
+        el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}«Модель Корректора» — дешёвая модель из настроек Корректора: лучше держит ролевой стиль, но тратит немного денег. Если переводчик возвращает кусок на английском, Корректор переводит его заново по частям или другим переводчиком.` }));
     sheet('Перевод чата', body);
 }
 
@@ -350,6 +469,20 @@ export function initTranslate() {
         stop: stopTranslation,
         original: showOriginal,
         running: () => Boolean(running),
+        settings,
+        setAuto,
+        engines: ENGINES,
     };
     const timer = setInterval(() => { if (addMenuItem()) clearInterval(timer); }, 1000);
+    try {
+        const { eventSource, eventTypes } = ctx();
+        // After a reply (or a new swipe) is shown in full.
+        eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (id) => { translateNew(id).catch(() => { }); });
+        // Swiping to another existing version: SillyTavern drops the old translation, translate this one.
+        eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => {
+            setTimeout(() => { if (!busy()) translateNew(id).catch(() => { }); }, 300);
+        });
+    } catch {
+        // older SillyTavern: only manual translation
+    }
 }

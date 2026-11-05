@@ -408,3 +408,5 @@ button.row, a.row { width: 100%; border-left: 0; border-right: 0; border-bottom:
 .catalog-thumb { width: 64px; height: 86px; object-fit: cover; border-radius: 8px; background: var(--bg-deep); flex: none; }
 .author-fields { display: grid; gap: 12px; margin-top: 16px; }
 .author-field { display: grid; gap: 4px; }
+.card-actions.centered { justify-content: center; }
+#page-title { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
