@@ -40,6 +40,19 @@ export function makeProposal({ kind, severity = 'medium', title, summary, eviden
     };
 }
 
+// What the person asked for themselves — «Попросить Корректора», a rewrite they started, changes sent
+// through the API. These stay when remarks are switched off; findings of the checks do not.
+export const REQUESTED_KINDS = new Set(['request', 'manual', 'rewrite']);
+
+/** Remarks switched off (settings.scan.enabled === false): only what was asked for is shown. */
+export function remarksOn(settings) {
+    return settings?.scan?.enabled !== false;
+}
+
+export function visibleProposals(items, settings) {
+    return remarksOn(settings) ? items : items.filter(p => REQUESTED_KINDS.has(p.kind));
+}
+
 /** Adds new proposals, skipping ones already known (open, applied or rejected). */
 export async function addProposals(store, list) {
     if (!list.length) return [];

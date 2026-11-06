@@ -42,6 +42,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
         translate: 'scan',
     },
     scan: {
+        // Remarks at all: false = Korrektor checks nothing and shows no findings (the rest works).
+        enabled: true,
         auto: true,
         intervalMinutes: 20,
         // 'recent' = the latest changed chats, 'watched' = only chats marked in the app

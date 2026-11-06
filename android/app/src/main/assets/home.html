@@ -467,10 +467,12 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         }
         if (s.stUp) {
             var open = typeof status.open === 'number' ? status.open : null;
+            // Remarks switched off in Korrektor: the tile says so (and leads to where they are switched on).
+            var off = status.remarks === false;
             tiles.push(h('button', { class: 'tile', type: 'button', onclick: function () { app.openKorrektor('#feed'); } },
                 h('span', { class: 'k', text: 'Замечания' }),
-                h('span', { class: 'v', text: open === null ? '…' : open ? String(open) : 'нет' }),
-                h('span', { class: 's', text: open ? 'ждут решения' : 'всё спокойно' })));
+                h('span', { class: 'v', text: off ? 'выкл' : open === null ? '…' : open ? String(open) : 'нет' }),
+                h('span', { class: 's', text: off ? 'включить — в Корректоре' : open ? 'ждут решения' : 'всё спокойно' })));
             var today = d.today ? d.today.roleplay + d.today.korrektor : null;
             tiles.push(h('button', { class: 'tile', type: 'button', onclick: function () { app.openKorrektor('#tools/spend'); } },
                 h('span', { class: 'k', text: 'Сегодня' }),

@@ -22,7 +22,7 @@ const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
 const KEY_API = '/api/plugins/korrektor/translate/key';
 // The companion's version, for the journal (the same as in manifest.json).
-const COMPANION_VERSION = '0.4.21';
+const COMPANION_VERSION = '0.4.22';
 
 // ---------- journal ----------
 // What the translation did: requests, retries, cut answers, errors. Kept in this browser

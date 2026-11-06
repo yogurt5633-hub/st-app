@@ -187,3 +187,14 @@ test('catalog: keeps only valid https items; install never overwrites and checks
     await assert.rejects(installItem(ctx, { type: 'lorebook', name: 'Y', url: 'https://x/none.json' }, { fetchImpl }), /404/);
     cleanup();
 });
+
+test('remarks: one switch hides the findings of the checks, what was asked for stays', async () => {
+    const { visibleProposals, remarksOn } = await import('../plugin/lib/proposals.mjs');
+    const { DEFAULT_SETTINGS } = await import('../plugin/lib/store.mjs');
+    const items = [{ kind: 'slop' }, { kind: 'request' }, { kind: 'repetition' }, { kind: 'manual' }, { kind: 'rewrite' }];
+    assert.equal(DEFAULT_SETTINGS.scan.enabled, true, 'on by default');
+    assert.equal(remarksOn({ scan: {} }), true, 'older settings: on');
+    assert.equal(visibleProposals(items, { scan: { enabled: true } }).length, 5);
+    assert.deepEqual(visibleProposals(items, { scan: { enabled: false } }).map(p => p.kind), ['request', 'manual', 'rewrite']);
+    assert.equal(remarksOn({ scan: { enabled: false } }), false);
+});

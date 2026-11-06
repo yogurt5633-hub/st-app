@@ -59,7 +59,9 @@ public class KorrektorWidget extends AppWidgetProvider {
                 Net.Reply status = Net.get(prefs.stUrl() + "/api/plugins/korrektor/status", 6000, true);
                 if (status.ok()) {
                     try {
-                        open = new JSONObject(status.body).optInt("open", -1);
+                        JSONObject json = new JSONObject(status.body);
+                        // Remarks switched off in Korrektor: no count at all.
+                        open = json.optBoolean("remarks", true) ? json.optInt("open", -1) : -1;
                     } catch (Exception ignored) {
                         // keep unknown
                     }

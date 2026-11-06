@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.21';
+const APP_VERSION = '0.4.22';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -308,8 +308,38 @@ async function followJob(job) {
     return done;
 }
 
+const remarksOff = () => state.status?.remarks === false;
+
+/**
+ * Remarks on or off at all. Off: Korrektor checks nothing and shows no findings; what the person
+ * asked for (Ask Korrektor), translation, the catalog, spending and backups keep working.
+ */
+async function setRemarks(on, { ask = true } = {}) {
+    if (!on && ask) {
+        const ok = await confirmDialog({
+            title: 'Выключить замечания?',
+            text: 'Корректор перестанет проверять чаты, лорбуки и карточки и присылать находки. Перевод, каталог, расходы, резервные копии и «Попросить Корректора» продолжат работать. Включить снова можно в ленте или в Настройках',
+            ok: 'Выключить',
+        });
+        if (!ok) return;
+    }
+    try {
+        await api('/remarks', { method: 'POST', body: { enabled: on } });
+        if (state.settings) state.settings.scan.enabled = on;
+        toast(on ? 'Замечания включены: Корректор снова проверяет чаты' : 'Замечания выключены');
+        await Promise.allSettled([loadStatus(), loadProposals()]);
+        renderRoute();
+    } catch (error) {
+        toast(error.message, true);
+    }
+}
+
 async function startScan(chatIds = null) {
     if (state.job?.kind === 'scan') return;
+    if (remarksOff()) {
+        toast('Замечания выключены: включите их, чтобы проверить чаты', true);
+        return;
+    }
     try {
         const job = await api('/scan', { method: 'POST', body: { chatIds } });
         followJob(job);
@@ -383,8 +413,10 @@ function renderTop() {
     const scanning = state.job?.kind === 'scan';
     $('#scan-button').classList.toggle('busy', scanning);
     $('#scan-button').disabled = scanning;
+    // Remarks off: nothing to check.
+    $('#scan-button').hidden = remarksOff();
     const last = state.status?.lastScan;
-    $('#scan-meta').textContent = scanning ? 'проверка' : last ? when(last.at) : '';
+    $('#scan-meta').textContent = remarksOff() ? '' : scanning ? 'проверка' : last ? when(last.at) : '';
     if ('setAppBadge' in navigator) {
         (open ? navigator.setAppBadge(open) : navigator.clearAppBadge()).catch(() => { });
     }
@@ -495,6 +527,17 @@ function renderFeed() {
                 onclick: () => { state.filter = key; renderFeed(); },
             }, label, h('span', { class: 'mono', text: counts[key] }))));
 
+    if (remarksOff()) {
+        // What was asked for still shows; findings do not.
+        put(view,
+            h('div', { class: 'empty' },
+                tools.mascot('sleep', 150),
+                h('h2', { text: 'Замечания выключены' }),
+                h('p', { text: 'Корректор не проверяет чаты, лорбуки и карточки и не присылает находки. Перевод, каталог, расходы, резервные копии и «Попросить Корректора» работают' }),
+                h('p', {}, h('button', { class: 'btn secondary', type: 'button', style: 'margin-top:16px', onclick: () => setRemarks(true), text: 'Включить замечания' }))),
+            all.length ? h('div', { class: 'list' }, all.map(renderCard)) : null);
+        return;
+    }
     const single = !['all', 'watched'].includes(state.feedChat);
     const children = [
         h('p', { class: 'scanline', id: 'scanline' }),
@@ -513,6 +556,8 @@ function renderFeed() {
     } else {
         children.push(h('div', { class: 'list' }, visible.map(renderCard)));
     }
+    // Not wanted at all: one switch.
+    children.push(h('p', { class: 'feed-off' }, h('button', { class: 'btn quiet small', type: 'button', onclick: () => setRemarks(false), text: 'Выключить замечания' })));
     put(view, ...children);
     renderScanline();
 }
@@ -1373,6 +1418,10 @@ async function renderSettings(reload = true) {
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Проверка' }),
             h('div', { class: 'rows' },
+                toggleField('Замечания', s.scan.enabled === false
+                    ? 'Выключены: Корректор ничего не проверяет и не присылает. Перевод, каталог, расходы, копии и «Попросить Корректора» работают'
+                    : 'Искать проблемы в чатах, лорбуках и карточках и показывать их в ленте', s.scan.enabled !== false, (v) => setRemarks(v, { ask: false })),
+                ...(s.scan.enabled === false ? [] : [
                 toggleField('Проверять сама', 'В фоне, только чаты с новыми изменениями', s.scan.auto, (v) => save({ scan: { auto: v } })),
                 h('div', { class: 'field' },
                     h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Какие чаты' }),
@@ -1383,7 +1432,7 @@ async function renderSettings(reload = true) {
                 h('div', { class: 'field' }, h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Как часто' }), interval)),
                 s.scan.mode !== 'watched' ? numberField('Сколько недавних чатов', null, s.scan.recentChats, (v) => save({ scan: { recentChats: v } }), { min: 1, max: 20 }) : null,
                 toggleField('Использовать модель', 'Для фактов и противоречий. В фоне — только после 4 новых сообщений', s.scan.useModel, (v) => save({ scan: { useModel: v } })),
-                numberField('Сообщений за один запрос', null, s.scan.maxMessagesPerLlmScan, (v) => save({ scan: { maxMessagesPerLlmScan: v } }), { min: 5, max: 200 }))),
+                numberField('Сообщений за один запрос', null, s.scan.maxMessagesPerLlmScan, (v) => save({ scan: { maxMessagesPerLlmScan: v } }), { min: 5, max: 200 })]))),
 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Что искать' }),

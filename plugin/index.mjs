@@ -19,7 +19,7 @@ import { touchedSince } from './lib/touched.mjs';
 import { cleanReport, reportItems } from './lib/actual.mjs';
 import { runAsk } from './lib/ask.mjs';
 import {
-    addProposals, applyProposal, listProposals, makeProposal, prepareProposal,
+    addProposals, applyProposal, listProposals, makeProposal, prepareProposal, remarksOn, visibleProposals,
     rejectProposal, revertProposal, fingerprint, OPEN_STATUSES,
 } from './lib/proposals.mjs';
 import { httpError, isInside, nowIso } from './lib/util.mjs';
@@ -196,7 +196,7 @@ function scanJob(user, { chatIds = null, useModel = true, background = false } =
         const llm = useModel ? await llmFor(user) : null;
         const result = await runScan(user.ctx, user.store, { chatIds, llm, background, log });
         const settings = await user.store.getSettings();
-        if (background && result.added > 0 && settings.notify.termux) {
+        if (background && result.added > 0 && settings.notify.termux && remarksOn(settings)) {
             const port = user.auth?.port;
             notifyTermux({
                 title: 'Корректор',
@@ -232,7 +232,7 @@ async function tick() {
         }
         try {
             const settings = await user.store.getSettings();
-            if (!settings.scan.auto) continue;
+            if (!settings.scan.auto || !remarksOn(settings)) continue;
             const interval = Math.max(5, Number(settings.scan.intervalMinutes) || 20) * 60000;
             if (Date.now() - user.lastAuto < interval) continue;
             user.lastAuto = Date.now();
@@ -268,7 +268,7 @@ export async function init(router) {
         const settings = await user.store.getSettings();
         const stSettings = await readStSettings(user.ctx);
         const state = await user.store.getState();
-        const proposals = await user.store.getProposals();
+        const proposals = visibleProposals(await user.store.getProposals(), settings);
         const llm = new LlmClient({ auth: user.auth, settings, stSettings });
         const translateKey = publicKeyConfig(await readKeyConfig(user.store.dir));
         return {
@@ -280,6 +280,8 @@ export async function init(router) {
             models: { scan: llm.resolveTier('scan'), heavy: llm.resolveTier('heavy'), translate: llm.resolve('translate') },
             translateKey: { active: translateKey.active, label: translateKey.label, model: translateKey.model },
             open: proposals.filter(p => OPEN_STATUSES.includes(p.status)).length,
+            // false: remarks are switched off — no checks, no findings.
+            remarks: remarksOn(settings),
             lastScan: state.lastScan ?? null,
             scanning: publicJob(runningJob(user.ctx.handle, 'scan')),
             connectionCheck: user.connectionCheck ?? null,
@@ -300,7 +302,13 @@ export async function init(router) {
     router.get('/settings', route(async (req, user) => user.store.getSettings()));
     router.post('/settings', route(async (req, user) => user.store.saveSettings(req.body || {})));
 
-    router.get('/proposals', route(async (req, user) => ({ items: await listProposals(user.store, { status: req.query.status }) })));
+    router.get('/proposals', route(async (req, user) => ({ items: visibleProposals(await listProposals(user.store, { status: req.query.status }), await user.store.getSettings()) })));
+    // Remarks on or off at all, with one switch.
+    router.post('/remarks', route(async (req, user) => {
+        const on = req.body?.enabled !== false;
+        const settings = await user.store.saveSettings({ scan: { enabled: on } });
+        return { remarks: remarksOn(settings) };
+    }));
     router.get('/proposals/:id', route(async (req, user) => {
         const item = (await user.store.getProposals()).find(p => p.id === req.params.id);
         if (!item) throw httpError(404, 'Предложение не найдено');
@@ -338,6 +346,7 @@ export async function init(router) {
     }));
 
     router.post('/scan', route(async (req, user) => {
+        if (!remarksOn(await user.store.getSettings())) throw httpError(409, 'Замечания выключены: включите их в Корректоре, чтобы проверять чаты');
         const chatIds = Array.isArray(req.body?.chatIds) ? req.body.chatIds.map(String) : null;
         user.lastAuto = Date.now();
         return publicJob(scanJob(user, { chatIds, useModel: req.body?.useModel !== false }));
@@ -353,8 +362,8 @@ export async function init(router) {
         const limit = Math.min(1000, Number(req.query.limit) || 300);
         const chats = (await listChats(user.ctx)).slice(0, limit);
         const state = await user.store.getState();
-        const proposals = await user.store.getProposals();
         const settings = await user.store.getSettings();
+        const proposals = visibleProposals(await user.store.getProposals(), settings);
         const watched = new Set(settings.scan.watched || []);
         const items = [];
         for (const chat of chats) {
@@ -420,11 +429,12 @@ export async function init(router) {
         const avatar = String(req.query.avatar || '');
         const { card } = await readCard(user.ctx, avatar);
         const conn = connectionInfo(await readStSettings(user.ctx));
-        return { name: cardName(card, avatar.replace(/\.png$/i, '')), ...cardHealth(card, avatar, { proposals: await user.store.getProposals(), contextSize: conn.contextSize }) };
+        const proposals = visibleProposals(await user.store.getProposals(), await user.store.getSettings());
+        return { name: cardName(card, avatar.replace(/\.png$/i, '')), ...cardHealth(card, avatar, { proposals, contextSize: conn.contextSize }) };
     }));
     router.get('/cards-health', route(async (req, user) => {
         const conn = connectionInfo(await readStSettings(user.ctx));
-        const proposals = await user.store.getProposals();
+        const proposals = visibleProposals(await user.store.getProposals(), await user.store.getSettings());
         const items = [];
         for (const entry of (await listCards(user.ctx)).slice(0, 300)) {
             try {
