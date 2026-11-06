@@ -191,7 +191,7 @@ async function limitedFetch(url, init, outer, ms, who) {
         return res;
     } catch (error) {
         if (outer?.aborted) throw Object.assign(new Error('Остановлено'), { fatal: true, stopped: true });
-        if (error?.name === 'AbortError') throw new Error(`${who}: не ответил за ${Math.round(ms / 1000)} с`);
+        if (error?.name === 'AbortError') throw Object.assign(new Error(`${who}: не ответил за ${Math.round(ms / 1000)} с`), { timeout: true });
         throw error;
     } finally {
         done();
@@ -218,7 +218,9 @@ async function free(provider, text, lang, signal) {
 async function viaModel(text, lang, signal) {
     // X-Korrektor: the plugin may use this tab's session to reach the model.
     const headers = { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' };
-    const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) }, signal, 180000, 'модель');
+    // A paragraph gets about a minute, a whole long reply up to four.
+    const limit = Math.min(240000, 45000 + text.length * 40);
+    const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) }, signal, limit, 'модель для перевода');
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(data.error || `модель: ${res.status}`), { fatal: res.status === 404 || res.status === 409 || res.status === 400 });
     const out = String(data.text ?? '');
@@ -234,7 +236,8 @@ async function withRetries(fn, tries = 3) {
             return await fn();
         } catch (error) {
             last = error;
-            if (error.fatal || error.stopped || error.status === 400 || error.status === 403) break;
+            // A request that ran out of time is not repeated: it would only double the wait.
+            if (error.fatal || error.stopped || error.timeout || error.status === 400 || error.status === 403) break;
             if (i < tries - 1) await sleep(800 * (i + 1) * (i + 1));
         }
     }
@@ -348,7 +351,7 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
  * The translator for one run. With «Авто» free providers are tried in turn and the one
  * that worked goes first for the rest of the run; a chosen provider is used alone.
  */
-export function translator(engine, lang, signal = null, tracker = null) {
+export function translator(engine, lang, signal = null, tracker = null, { plan = true } = {}) {
     let order = engine === 'auto' || engine === 'free' ? [...AUTO] : [engine];
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
@@ -431,7 +434,7 @@ export function translator(engine, lang, signal = null, tracker = null) {
     };
     return async (text) => {
         // What will be sent, for the progress bar: the lines that need translating.
-        tracker?.plan(text.split('\n').filter(line => needsTranslation(line, lang)).reduce((n, line) => n + line.length + 1, 0));
+        if (plan) tracker?.plan(text.split('\n').filter(line => needsTranslation(line, lang)).reduce((n, line) => n + line.length + 1, 0));
         if (engine === 'model') {
             // The model gets the whole message at once — markup, blocks and all — and keeps it.
             if (!text.split('\n').some(line => needsTranslation(line, lang))) return text;
@@ -817,12 +820,23 @@ async function onStream(text) {
  * The finished reply translated with what was done while it was written: paragraphs already
  * translated are taken as they are, the rest are translated now.
  */
+/** Waits for a promise, but gives up at once on «Стоп». */
+function untilStopped(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(Object.assign(new Error('Остановлено'), { fatal: true, stopped: true }));
+    return new Promise((resolve, reject) => {
+        const onStop = () => reject(Object.assign(new Error('Остановлено'), { fatal: true, stopped: true }));
+        signal.addEventListener('abort', onStop, { once: true });
+        promise.then((v) => { signal.removeEventListener('abort', onStop); resolve(v); },
+            (e) => { signal.removeEventListener('abort', onStop); reject(e); });
+    });
+}
+
 async function assemble(source, id, s, signal, tracker) {
     const parts = source.split(/(\n{2,})/);
     const cache = live && live.id === id && live.engine === s.engine && live.lang === s.lang ? live.cache : null;
-    const todo = parts.filter((p, i) => i % 2 === 0 && p.trim() && !cache?.has(p.trim()));
-    tracker?.plan(todo.reduce((n, p) => n + p.length, 0) || 1);
-    const translate = translator(s.engine, s.lang, signal, tracker);
+    tracker?.plan(parts.filter((p, i) => i % 2 === 0).reduce((n, p) => n + p.trim().length, 0) || 1);
+    const translate = translator(s.engine, s.lang, signal, tracker, { plan: false });
     const out = [];
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
@@ -833,11 +847,17 @@ async function assemble(source, id, s, signal, tracker) {
         let text = null;
         const core = part.trim();
         if (cache?.has(core)) {
+            // Translated (or being translated) while the reply was written: wait for it, stoppable,
+            // and the bar keeps moving meanwhile.
+            tracker?.start(core.length);
             try {
                 const [, lead, , tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
-                text = lead + await cache.get(core) + tail;
-            } catch {
+                text = lead + await untilStopped(cache.get(core), signal) + tail;
+            } catch (error) {
+                if (error.stopped) throw error;
                 text = null;
+            } finally {
+                tracker?.end(text === null ? 0 : core.length);
             }
         }
         out.push(text ?? await translate(part));
@@ -871,7 +891,11 @@ async function translateNew(messageId) {
     let tracker = new Tracker(s.engine);
     // The first message of a chat is the greeting: translated as soon as a new chat opens.
     const what = c.chat.findIndex(m => !m.is_system) === id ? 'приветствие' : 'ответ';
-    const onScreen = showTask({ label: () => `Перевожу ${what}`, fraction: () => tracker.fraction(), stop: () => controller.abort() });
+    const stopAll = () => {
+        controller.abort();
+        if (live?.id === id) live.controller.abort();
+    };
+    const onScreen = showTask({ label: () => `Перевожу ${what}`, fraction: () => tracker.fraction(), stop: stopAll });
     let outcome = '';
     try {
         // SillyTavern cuts the thinking out of a new reply a moment after it appears: wait for that.
@@ -882,10 +906,19 @@ async function translateNew(messageId) {
             const before = message.mes;
             source = await prepare(message, id);
             tracker = new Tracker(s.engine);
-            // Written with streaming: paragraphs translated meanwhile are used; otherwise all at once.
-            text = live && live.id === id && live.cache.size
-                ? await assemble(source, id, s, controller.signal, tracker)
-                : await translator(s.engine, s.lang, controller.signal, tracker)(source);
+            try {
+                // Written with streaming: paragraphs translated meanwhile are used; otherwise all at once.
+                text = live && live.id === id && live.cache.size
+                    ? await assemble(source, id, s, controller.signal, tracker)
+                    : await translator(s.engine, s.lang, controller.signal, tracker)(source);
+            } catch (error) {
+                if (error.stopped || s.engine !== 'model') throw error;
+                // The translation model did not answer or failed: the reply still gets translated, by a free translator.
+                toastr.warning(`Модель для перевода не сработала (${error.message}). Перевожу бесплатным переводчиком — выберите другую модель в «Перевод»`, 'Корректор', { timeOut: 9000 });
+                if (live?.id === id) live.controller.abort();
+                tracker = new Tracker('auto');
+                text = await translator('auto', s.lang, controller.signal, tracker)(source);
+            }
             // The text changed while it was being translated (thinking cut out, edited): once more.
             if (message.mes === before) break;
             text = null;
