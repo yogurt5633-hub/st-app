@@ -4,11 +4,14 @@
 // "Failed to translate chat", and long replies sometimes come back half in English.
 // Here every message is translated on its own:
 //  - a chosen translator (Google, Bing, Yandex, DeepL, Lingva) or «Авто», which tries
-//    them in turn; or Korrektor's cheap model (better with roleplay, costs a little);
-//  - long text goes in small pieces, and a piece that comes back untranslated is
-//    split further or given to the next translator;
-//  - a range (last 20 / 50 / all), progress, a Stop button, failed messages can be retried;
-//  - optionally every new reply is translated once it is fully written.
+//    them in turn; or Korrektor's model (better with roleplay, costs a little), through the
+//    tavern's connection or with a key of its own just for translation;
+//  - long text goes in pieces, several at once; a piece that comes back untranslated or
+//    shorter than it should be (the end cut off) is split further or given to the next translator;
+//  - a range (last 20 / 50 / all), progress, a Stop button, failed messages can be retried,
+//    translations that came out cut off are done again;
+//  - one message from its menu (the language button), and optionally every new reply once it is written;
+//  - a journal of what happened, to copy and send when something goes wrong.
 // The translation goes to message.extra.display_text — the same place SillyTavern's
 // translator uses: the original text stays, and "Show original" brings it back.
 
@@ -17,6 +20,58 @@ import { el, sheet, storage, store } from './gallery.js';
 const ctx = () => SillyTavern.getContext();
 const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
+const KEY_API = '/api/plugins/korrektor/translate/key';
+// The companion's version, for the journal (the same as in manifest.json).
+const COMPANION_VERSION = '0.4.20';
+
+// ---------- journal ----------
+// What the translation did: requests, retries, cut answers, errors. Kept in this browser
+// (the last 200 lines survive a reload), shown in «Перевод» → «Журнал» with «Копировать».
+
+const LOG_KEY = 'korrektor.translate.log';
+const LOG_MAX = 300;
+let journal = null;
+let journalTimer = null;
+const journalWatchers = new Set();
+
+function journalList() {
+    if (!journal) {
+        journal = storage(LOG_KEY, []);
+        if (!Array.isArray(journal)) journal = [];
+    }
+    return journal;
+}
+
+/** One line in the journal. level: info | warn | error. */
+export function tlog(level, text) {
+    const list = journalList();
+    list.push({ t: Date.now(), level, text: String(text).slice(0, 700) });
+    if (list.length > LOG_MAX) list.splice(0, list.length - LOG_MAX);
+    try {
+        (level === 'info' ? console.info : console.warn)('[korrektor] перевод:', text);
+    } catch {
+        // no console
+    }
+    clearTimeout(journalTimer);
+    journalTimer = setTimeout(() => store(LOG_KEY, list.slice(-200)), 400);
+    for (const watch of journalWatchers) {
+        try {
+            watch();
+        } catch {
+            // a closed sheet
+        }
+    }
+}
+
+export function journalText() {
+    const pad = (n) => String(n).padStart(2, '0');
+    return journalList().map(({ t, level, text }) => {
+        const d = new Date(t);
+        return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${level === 'error' ? '✖' : level === 'warn' ? '⚠' : '·'} ${text}`;
+    }).join('\n');
+}
+
+const seconds = (ms) => `${(ms / 1000).toFixed(1)} с`;
 
 export const LANGUAGES = [
     ['ru', 'Русский'], ['en', 'English'], ['uk', 'Українська'], ['be', 'Беларуская'], ['kk', 'Қазақша'],
@@ -36,7 +91,33 @@ export const ENGINES = [
 const AUTO = ['google', 'bing', 'yandex', 'lingva'];
 // Characters per request. Free translators drop the end of long text, so pieces stay small.
 const LIMITS = { google: 1800, bing: 1000, yandex: 1500, lingva: 900, deepl: 4000, model: 11000 };
+// Requests at once, per translator: pieces of one message go in parallel, so a long reply
+// takes about as long as its longest piece.
+const CONCURRENCY = { google: 4, bing: 3, yandex: 3, lingva: 2, deepl: 3, model: 3 };
+// A long message goes to the model in parts of about this size, translated at the same time.
+// Shorter messages go whole: one request keeps names and genders consistent.
+const MODEL_WHOLE = 4000;
+const MODEL_PART = 3000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Runs at most `n` of the given jobs at once. */
+function limiter(n) {
+    let active = 0;
+    const queue = [];
+    const next = () => {
+        if (active >= n || !queue.length) return;
+        active++;
+        const { fn, resolve, reject } = queue.shift();
+        Promise.resolve().then(fn).then(resolve, reject).finally(() => {
+            active--;
+            next();
+        });
+    };
+    return (fn) => new Promise((resolve, reject) => {
+        queue.push({ fn, resolve, reject });
+        next();
+    });
+}
 
 export function settings() {
     const saved = storage(SETTINGS_KEY, {});
@@ -107,6 +188,81 @@ export function looksUntranslated(source, out, lang) {
     const kept = words.filter(w => left.has(w)).length;
     // Half or more of the ordinary words came back as they were: (part of) the text is not translated.
     return kept / words.length > 0.4;
+}
+
+// ---------- a translation that lost its end ----------
+
+/** Letters of a text, HTML tags not counted. */
+export function letterCount(text) {
+    return (String(text ?? '').replace(/<[^>]*>/g, ' ').match(/\p{L}/gu) || []).length;
+}
+
+const SHORT_SCRIPTS = new Set(['ja', 'ko', 'zh-CN', 'zh-TW']);
+
+/**
+ * The translation is much shorter than its source: the translator (or the model's length
+ * limit) dropped the end. A translation has about as many letters as the original
+ * (Russian from English: 0.8–1.1), Chinese, Japanese and Korean far fewer.
+ */
+export function looksCut(source, out, lang, min = null) {
+    const src = letterCount(source);
+    if (src < 300) return false;
+    const floor = min ?? (SHORT_SCRIPTS.has(lang) ? 0.18 : 0.55);
+    if (letterCount(out) < src * floor) return true;
+    // Paragraphs and lines are kept by the translators and the model: many fewer lines, and fewer
+    // letters too, = a lost end (lines alone may be merged by a model that keeps all the text).
+    const lines = (t) => String(t).split('\n').filter(l => l.trim()).length;
+    const srcLines = lines(source);
+    return srcLines >= 8 && lines(out) < srcLines * 0.6 && letterCount(out) < src * 0.8;
+}
+
+const VOID_TAGS = new Set(['br', 'hr', 'img', 'input', 'meta', 'link', 'wbr', 'source', 'col', 'area', 'base', 'embed', 'param', 'track']);
+
+/**
+ * Cuts a message into parts of about `size` characters at blank lines that are outside
+ * HTML blocks and code blocks, so every part is whole markup. Nothing is lost: joined, the parts are the text.
+ */
+export function splitParts(text, size) {
+    if (text.length <= size) return [text];
+    const blocks = String(text).split(/(\n[ \t]*\n)/);
+    const units = [];
+    let unit = '';
+    let depth = 0;
+    let fence = false;
+    for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i];
+        unit += block;
+        if (i % 2 === 1) continue;
+        for (const m of block.matchAll(/```|<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)) {
+            if (m[0] === '```') fence = !fence;
+            else if (!fence && !VOID_TAGS.has(m[2].toLowerCase()) && !m[3]) depth = Math.max(0, depth + (m[1] ? -1 : 1));
+        }
+        // A part may end here only outside a block.
+        if (!fence && depth === 0) {
+            units.push(unit);
+            unit = '';
+        }
+    }
+    if (unit) units.push(unit);
+    const parts = [];
+    let part = '';
+    for (const u of units) {
+        if (part && part.length + u.length > size) {
+            parts.push(part);
+            part = '';
+        }
+        part += u;
+    }
+    if (part) parts.push(part);
+    // Blank lines at the start of a part go to the end of the one before: each part starts with text.
+    for (let i = 1; i < parts.length; i++) {
+        const lead = parts[i].match(/^\s*/)[0];
+        if (lead) {
+            parts[i - 1] += lead;
+            parts[i] = parts[i].slice(lead.length);
+        }
+    }
+    return parts.filter(p => p !== '');
 }
 
 // ---------- markup the translators break ----------
@@ -213,15 +369,22 @@ async function free(provider, text, lang, signal) {
     return out;
 }
 
-async function viaModel(text, lang, signal) {
+async function viaModel(text, lang, signal, label = '') {
     // X-Korrektor: the plugin may use this tab's session to reach the model.
     const headers = { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' };
     // A paragraph gets about a minute, a whole long reply up to four.
     const limit = Math.min(240000, 45000 + text.length * 40);
+    const started = Date.now();
     const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) }, signal, limit, 'модель для перевода');
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.error || `модель: ${res.status}`), { fatal: res.status === 404 || res.status === 409 || res.status === 400 });
+    if (!res.ok) {
+        tlog('error', `${label}модель: ${data.error || res.status} (${seconds(Date.now() - started)})`);
+        throw Object.assign(new Error(data.error || `модель: ${res.status}`), { fatal: res.status === 404 || res.status === 409 || res.status === 400 || res.status === 401 });
+    }
     const out = String(data.text ?? '');
+    const via = data.via === 'key' ? 'свой ключ' : 'таверна';
+    tlog(data.cut ? 'warn' : 'info', `${label}модель ${data.model || ''} (${via}): ${text.length} → ${out.length} зн. за ${seconds(Date.now() - started)}${data.cut ? ' · ответ оборвался на лимите длины' : ''}`);
+    if (data.cut) throw Object.assign(new Error('модель: ответ оборвался на лимите длины'), { cut: true });
     if (!out.trim() && text.trim()) throw new Error('модель: пустой ответ');
     return out;
 }
@@ -235,17 +398,14 @@ async function withRetries(fn, tries = 3) {
         } catch (error) {
             last = error;
             // A request that ran out of time is not repeated: it would only double the wait.
-            if (error.fatal || error.stopped || error.timeout || error.status === 400 || error.status === 403) break;
+            // An answer cut at the length limit is not repeated either: it is split instead.
+            if (error.fatal || error.stopped || error.timeout || error.cut || error.status === 400 || error.status === 403) break;
             if (i < tries - 1) await sleep(800 * (i + 1) * (i + 1));
         }
     }
     throw last;
 }
 
-/**
- * Translates a piece with one provider. A part that comes back untranslated is split
- * in half and tried again (twice at most); if it still is, the provider has failed.
- */
 /** Some translators answer with &quot; &lt; &#39; …: back to plain characters (unless the original had them). */
 function decodeEntities(source, out) {
     if (/&(?:#\d+|#x[0-9a-f]+|[a-z]+);/i.test(source)) return out;
@@ -280,16 +440,15 @@ export function needsTranslation(line, lang) {
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
 /**
- * How far one message's translation has got, 0…1. Parts already sent count fully; the part
- * being translated now creeps forward with time, so the bar moves while a request waits.
+ * How far one message's translation has got, 0…1. Parts already sent count fully; parts being
+ * translated now creep forward with time, so the bar moves while requests wait.
  */
 export class Tracker {
     constructor(engine) {
         this.engine = engine;
         this.total = 0;
         this.done = 0;
-        this.current = 0;
-        this.since = 0;
+        this.running = new Set();
         this.finished = false;
     }
 
@@ -297,64 +456,102 @@ export class Tracker {
         this.total = Math.max(1, chars);
     }
 
+    /** A request started; returns its handle for end(). */
     start(chars) {
-        this.current = chars;
-        this.since = Date.now();
+        const job = { chars, since: Date.now() };
+        this.running.add(job);
+        return job;
     }
 
-    end(chars) {
-        this.done += chars;
-        this.current = 0;
+    end(job, count = true) {
+        if (!job) return;
+        this.running.delete(job);
+        if (count) this.done += job.chars;
     }
 
     fraction() {
         if (this.finished) return 1;
         if (!this.total) return 0;
         let partial = 0;
-        if (this.current) {
+        const now = Date.now();
+        for (const job of this.running) {
             // About how long a request takes: a free translator a second or two, a model longer for longer text.
-            const expected = this.engine === 'model' ? Math.max(4000, this.current * 15) : 1500;
-            partial = this.current * 0.9 * (1 - Math.exp(-(Date.now() - this.since) / expected));
+            const expected = this.engine === 'model' ? Math.max(4000, job.chars * 12) : 1500;
+            partial += job.chars * 0.9 * (1 - Math.exp(-(now - job.since) / expected));
         }
         return Math.min(0.99, (this.done + partial) / this.total);
     }
 }
 
-async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0, signal = null, tracker = null) {
-    const call = provider === 'model' ? (part) => viaModel(part, lang, signal) : (part) => free(provider, part, lang, signal);
-    let out = '';
-    for (const part of chunkText(text, limit)) {
-        if (!part.trim()) {
-            out += part;
-            continue;
-        }
+const PROBLEMS = { untranslated: 'вернул текст без перевода', short: 'вернул перевод короче оригинала (конец пропал)', cut: 'ответ оборвался на лимите длины' };
+
+/**
+ * Translates a piece with one provider, its parts at the same time. A part that comes back
+ * untranslated or cut short is split in half and tried again (twice at most); if it still is,
+ * the provider has failed (the model keeps such a small part in the original instead).
+ */
+async function byProvider(provider, text, lang, run, limit = LIMITS[provider], depth = 0) {
+    const { signal, tracker, pool, label } = run;
+    const call = provider === 'model' ? (part) => viaModel(part, lang, signal, label) : (part) => free(provider, part, lang, signal);
+    let pieces = provider === 'model' ? splitParts(text, limit) : chunkText(text, limit);
+    // One big block without blank lines: cut at lines and sentences instead.
+    if (pieces.length === 1 && text.length > limit) pieces = chunkText(text, limit);
+    const outs = await Promise.all(pieces.map(async (part) => {
+        if (!part.trim()) return part;
         const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
-        tracker?.start(core.length);
-        let result;
+        const job = tracker?.start(core.length);
+        let result = null;
+        let problem = '';
+        const started = Date.now();
         try {
-            result = fixMarkup(core, decodeEntities(core, await withRetries(() => call(core), 2)));
+            const raw = await pool(provider, () => withRetries(() => call(core), 2));
+            result = fixMarkup(core, decodeEntities(core, raw));
+            if (provider !== 'model') tlog('info', `${label}${provider}: ${core.length} → ${result.length} зн. за ${seconds(Date.now() - started)}`);
+        } catch (error) {
+            if (!error.cut) {
+                if (!error.stopped && provider !== 'model') tlog('warn', `${label}${provider}: ${error.message}`);
+                throw error;
+            }
+            problem = 'cut';
         } finally {
-            tracker?.end(depth ? 0 : core.length);
+            tracker?.end(job, depth === 0);
         }
-        if (looksUntranslated(core, result, lang)) {
-            if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1, signal, tracker);
-            else throw Object.assign(new Error(`${provider}: вернул текст без перевода`), { untranslated: true });
+        if (!problem && looksUntranslated(core, result, lang)) problem = 'untranslated';
+        if (!problem && looksCut(core, result, lang)) problem = 'short';
+        if (problem) {
+            const canSplit = depth < 2 && core.length > (provider === 'model' ? 400 : 200);
+            tlog('warn', `${label}${ENGINE_NAMES[provider] || provider}: ${PROBLEMS[problem]} (${core.length} зн.)${canSplit ? ' — перевожу по частям' : ''}`);
+            if (canSplit) {
+                result = await byProvider(provider, core, lang, run, Math.ceil(core.length / 2), depth + 1);
+            } else if (provider === 'model' && depth > 0) {
+                // A small part of a long reply: it stays in the original, the rest is translated.
+                run.partial++;
+                result = core;
+            } else {
+                throw Object.assign(new Error(`${ENGINE_NAMES[provider] || provider}: ${PROBLEMS[problem]}`), { untranslated: true });
+            }
         }
-        out += lead + result + tail;
-    }
-    return out;
+        return lead + result + tail;
+    }));
+    return outs.join('');
 }
 
 /**
  * The translator for one run. With «Авто» free providers are tried in turn and the one
  * that worked goes first for the rest of the run; a chosen provider is used alone.
+ * `label` starts every journal line of this run (for example «#12 »).
  */
-export function translator(engine, lang, signal = null, tracker = null, { plan = true } = {}) {
+export function translator(engine, lang, signal = null, tracker = null, { plan = true, label = '' } = {}) {
     let order = engine === 'auto' || engine === 'free' ? [...AUTO] : [engine];
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
     const strikes = new Map();
-    const translateRun = async (piece) => {
+    const pools = new Map();
+    const pool = (provider, fn) => {
+        if (!pools.has(provider)) pools.set(provider, limiter(CONCURRENCY[provider] || 3));
+        return pools.get(provider)(fn);
+    };
+    const translateRun = async (run, piece, limit) => {
         if (!piece.trim()) return piece;
         const alive = order.filter((p) => (strikes.get(p) || 0) < 2);
         if (!alive.length) {
@@ -365,12 +562,12 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
         let last;
         for (const provider of alive) {
             try {
-                const out = await byProvider(provider, piece, lang, undefined, 0, signal, tracker);
+                const out = await byProvider(provider, piece, lang, run, limit);
                 strikes.set(provider, 0);
                 if (order[0] !== provider) order = [provider, ...order.filter((p) => p !== provider)];
                 return out;
             } catch (error) {
-                if (error.fatal) throw error;
+                if (error.fatal || error.stopped) throw error;
                 last = error;
                 strikes.set(provider, (strikes.get(provider) || 0) + 1);
             }
@@ -379,13 +576,12 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
     };
     // Line by line: lines in the target language, lines without letters (borders, numbers) and
     // table borders stay exactly as they are, so status blocks and tables keep their shape.
-    // Neighbouring lines that need translating go together, for context.
-    let partial = 0;
-    const translatePiece = async (piece) => {
+    // Neighbouring lines that need translating go together, for context. All groups are sent at once.
+    const translatePiece = (run, piece) => {
         if (!piece.trim()) return piece;
         const out = [];
         let group = [];
-        const flush = async () => {
+        const flush = () => {
             if (!group.length) return;
             // Blank lines at the end of a group stay outside it.
             let tail = 0;
@@ -395,14 +591,13 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
             group = [];
             if (body.length) {
                 const source = body.join('\n');
-                try {
-                    out.push(await translateRun(source));
-                } catch (error) {
+                out.push(translateRun(run, source).catch((error) => {
                     // One stubborn piece does not cost the whole reply: it stays in the original.
                     if (!error.untranslated) throw error;
-                    out.push(source);
-                    partial++;
-                }
+                    run.partial++;
+                    tlog('warn', `${run.label}кусок в ${source.length} зн. оставлен в оригинале: ${error.message}`);
+                    return source;
+                }));
             }
             out.push(...blanks);
         };
@@ -411,46 +606,64 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
                 // Paragraphs of one reply go together: fewer requests, more context.
                 group.push(line);
             } else if (!needsTranslation(line, lang)) {
-                await flush();
+                flush();
                 out.push(line);
             } else if (TABLE_ROW.test(line)) {
                 // A table row: only the text of the cells, the | stay where they are.
-                await flush();
+                flush();
                 const cells = line.split('|');
-                for (let i = 0; i < cells.length; i++) {
-                    if (!needsTranslation(cells[i], lang)) continue;
-                    const [, lead, core, tail] = cells[i].match(/^(\s*)([\s\S]*?)(\s*)$/);
-                    cells[i] = lead + (await translateRun(core)).replace(/\|/g, '/').replace(/\n/g, ' ') + tail;
-                }
-                out.push(cells.join('|'));
+                out.push(Promise.all(cells.map(async (cell) => {
+                    if (!needsTranslation(cell, lang)) return cell;
+                    const [, lead, core, tail] = cell.match(/^(\s*)([\s\S]*?)(\s*)$/);
+                    return lead + (await translateRun(run, core)).replace(/\|/g, '/').replace(/\n/g, ' ') + tail;
+                })).then(done => done.join('|')));
             } else {
                 group.push(line);
             }
         }
-        await flush();
-        return out.join('\n');
+        flush();
+        return Promise.all(out).then(done => done.join('\n'));
     };
-    return async (text) => {
+    const translate = async (text) => {
         // What will be sent, for the progress bar: the lines that need translating.
         if (plan) tracker?.plan(text.split('\n').filter(line => needsTranslation(line, lang)).reduce((n, line) => n + line.length + 1, 0));
-        if (engine === 'model') {
-            // The model gets the whole message at once — markup, blocks and all — and keeps it.
-            if (!text.split('\n').some(line => needsTranslation(line, lang))) return text;
-            try {
-                return await translateRun(text);
-            } catch (error) {
-                if (error.untranslated) return text;
-                throw error;
+        // Stops this run's other requests once one has failed for good.
+        const inner = new AbortController();
+        const onOuter = () => inner.abort();
+        if (signal?.aborted) inner.abort();
+        else signal?.addEventListener('abort', onOuter, { once: true });
+        const run = { signal: inner.signal, outer: signal, tracker, pool, label, partial: 0 };
+        try {
+            if (engine === 'model') {
+                // The model gets the whole message — markup, blocks and all — and keeps it;
+                // a long one in parts at once.
+                if (!text.split('\n').some(line => needsTranslation(line, lang))) return text;
+                try {
+                    return await translateRun(run, text, text.length > MODEL_WHOLE ? MODEL_PART : undefined);
+                } catch (error) {
+                    if (error.untranslated) {
+                        tlog('warn', `${label}модель вернула текст без перевода — оставлен оригинал`);
+                        translate.partial = 1;
+                        return text;
+                    }
+                    throw error;
+                }
             }
+            // split() with a group keeps the kept pieces in the list.
+            const pieces = text.split(KEEP).filter(piece => piece !== undefined)
+                .map(piece => (KEEP_ALL.test(piece) ? piece : translatePiece(run, piece)));
+            return (await Promise.all(pieces)).join('');
+        } catch (error) {
+            inner.abort();
+            // «Стоп» pressed: the error says so, whatever request noticed it first.
+            if (signal?.aborted && !error.stopped) throw Object.assign(new Error('Остановлено'), { fatal: true, stopped: true });
+            throw error;
+        } finally {
+            signal?.removeEventListener('abort', onOuter);
+            translate.partial = (translate.partial || 0) + run.partial;
         }
-        let out = '';
-        // split() with a group keeps the kept pieces in the list.
-        for (const piece of text.split(KEEP)) {
-            if (piece === undefined) continue;
-            out += KEEP_ALL.test(piece) ? piece : await translatePiece(piece);
-        }
-        return out;
     };
+    return translate;
 }
 
 // ---------- progress on screen ----------
@@ -522,13 +735,57 @@ function notify(state) {
     }
 }
 
+const ENGINE_NAMES = { auto: 'Авто', google: 'Google', bing: 'Bing', yandex: 'Яндекс', deepl: 'DeepL', lingva: 'Lingva', model: 'модель' };
+
+/**
+ * A saved translation that lost its end: shorter than its source by far. Translations made
+ * by this version remember how many letters their source had; older ones (and SillyTavern's
+ * own) are compared with the message itself, with more leeway.
+ */
+export function translationCut(message) {
+    const shown = message?.extra?.display_text;
+    if (!shown) return false;
+    const info = message.extra.korrektor_translation;
+    const lang = info?.lang || settings().lang;
+    const short = SHORT_SCRIPTS.has(lang);
+    if (info?.letters) return info.letters >= 300 && letterCount(shown) < info.letters * (short ? 0.15 : 0.5);
+    const raw = String(message.mes || '').replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, '');
+    const src = letterCount(raw);
+    return src >= 300 && letterCount(shown) < src * (short ? 0.15 : 0.45);
+}
+
+/** Saves a translation, with what is needed to tell later whether it is whole. */
+function markTranslated(message, source, text, engine, lang) {
+    if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
+    message.extra.display_text = text;
+    message.extra.korrektor_translation = { letters: letterCount(source), lang, engine, at: Date.now() };
+    // SillyTavern keeps each version (swipe) of a reply with its own extra: the translation stays with this one.
+    const swipe = Array.isArray(message.swipe_info) ? message.swipe_info[message.swipe_id] : null;
+    if (swipe && typeof swipe === 'object' && swipe.extra && typeof swipe.extra === 'object') {
+        swipe.extra.display_text = text;
+        swipe.extra.korrektor_translation = message.extra.korrektor_translation;
+    }
+}
+
+function unmarkTranslated(message) {
+    if (!message?.extra) return;
+    delete message.extra.display_text;
+    delete message.extra.korrektor_translation;
+    const swipe = Array.isArray(message.swipe_info) ? message.swipe_info[message.swipe_id] : null;
+    if (swipe?.extra) {
+        delete swipe.extra.display_text;
+        delete swipe.extra.korrektor_translation;
+    }
+}
+
 function pickMessages(chat, { range, mine, again }) {
     const ids = [];
     for (let i = 0; i < chat.length; i++) {
         const m = chat[i];
         if (!m || !String(m.mes || '').trim()) continue;
         if (m.is_user && !mine) continue;
-        if (!again && m.extra?.display_text) continue;
+        // Translated already — unless the translation lost its end: that one is done again.
+        if (!again && m.extra?.display_text && !translationCut(m)) continue;
         ids.push(i);
     }
     const last = { last20: 20, last50: 50 }[range];
@@ -605,7 +862,51 @@ function showMessage(id, message) {
         ctx().updateMessageBlock(id, message);
     } catch (error) {
         console.debug('[korrektor] could not redraw message', id, error);
+        return;
     }
+    if (message?.extra?.display_text) checkShown(id, message);
+}
+
+/**
+ * After a translation is drawn: is all of it on screen? SillyTavern runs the display regexes
+ * and its HTML cleaning over the translation too; if they hide most of it, the journal says so.
+ */
+function shownShare(id, message) {
+    const node = document.querySelector(`#chat .mes[mesid="${id}"] .mes_text`);
+    const text = message?.extra?.display_text;
+    if (!node || !text) return null;
+    const want = letterCount(text);
+    if (want < 300) return null;
+    return { want, shown: letterCount(node.textContent) };
+}
+
+function checkShown(id, message) {
+    setTimeout(() => {
+        const share = shownShare(id, message);
+        if (share && share.shown < share.want * 0.6) {
+            tlog('warn', `#${id} на экране видно ${share.shown} из ${share.want} букв перевода: часть прячет оформление сообщения (регекс или HTML)`);
+        }
+    }, 60);
+}
+
+/** «Проверить переводы»: which translations of this chat lost their end or are partly hidden on screen. */
+export function checkChat() {
+    const chat = ctx().chat || [];
+    const cut = [];
+    const hidden = [];
+    let total = 0;
+    chat.forEach((message, id) => {
+        if (!message?.extra?.display_text) return;
+        total++;
+        if (translationCut(message)) cut.push(id);
+        const share = shownShare(id, message);
+        if (share && share.shown < share.want * 0.6) hidden.push(id);
+    });
+    const list = (ids) => ids.slice(0, 15).map(i => `#${i}`).join(', ') + (ids.length > 15 ? '…' : '');
+    const text = !total ? 'В этом чате нет переведённых сообщений'
+        : `Переводов в чате: ${total}. Обрезанных: ${cut.length}${cut.length ? ` (${list(cut)}) — «Перевести» переведёт их заново` : ''}. Видно не полностью: ${hidden.length}${hidden.length ? ` (${list(hidden)})` : ''}`;
+    tlog(cut.length || hidden.length ? 'warn' : 'info', `проверка чата: ${text}`);
+    return { total, cut, hidden, text };
 }
 
 function busy() {
@@ -628,6 +929,7 @@ export async function translateChat(options, onProgress = () => { }) {
     const chat = c.chat;
     if (!chatId || !chat?.length) throw new Error('Откройте чат');
     const ids = options.ids || pickMessages(chat, options);
+    if (ids.length) tlog('info', `перевод чата: ${ids.length} сообщ. · ${ENGINE_NAMES[options.engine] || options.engine} → ${options.lang}`);
     const controller = new AbortController();
     let tracker = new Tracker(options.engine);
     const state = { done: 0, total: ids.length, failed: [], stopped: false, error: '', current: 0, lastTick: Date.now(), controller, finished: false };
@@ -659,21 +961,36 @@ export async function translateChat(options, onProgress = () => { }) {
             state.current = state.done + state.failed.length + 1;
             tracker = new Tracker(options.engine);
             tick();
+            const label = `#${id} `;
+            const started = Date.now();
+            const wasCut = translationCut(message);
             try {
                 const source = await prepare(message, id);
-                const text = await translator(options.engine, options.lang, controller.signal, tracker)(source);
-                if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
-                // Already in this language: no translation over the original (an old bad one goes away).
-                if (text === source) delete message.extra.display_text;
-                else message.extra.display_text = text;
+                tlog('info', `${label}${wasCut ? 'перевод был обрезан, перевожу заново' : 'начинаю'} · ${ENGINE_NAMES[options.engine] || options.engine} → ${options.lang} · ${source.length} зн.`);
+                const run = translator(options.engine, options.lang, controller.signal, tracker, { label });
+                const text = await run(source);
+                if (text === source && run.partial) throw Object.assign(new Error('переводчик вернул текст без перевода'), { untranslated: true });
+                if (text === source) {
+                    // Already in this language: no translation over the original (an old bad one goes away).
+                    unmarkTranslated(message);
+                    tlog('info', `${label}уже на нужном языке`);
+                } else if (looksCut(source, text, options.lang) && message.extra?.display_text && !wasCut) {
+                    // A worse translation does not replace a whole one made before.
+                    tlog('warn', `${label}новый перевод короче оригинала — оставлен прежний`);
+                } else {
+                    markTranslated(message, source, text, options.engine, options.lang);
+                    tlog(run.partial ? 'warn' : 'info', `${label}готово за ${seconds(Date.now() - started)}: ${source.length} → ${text.length} зн.${run.partial ? ` · кусков в оригинале: ${run.partial}` : ''}`);
+                }
                 showMessage(id, message);
                 state.done++;
                 streak = 0;
             } catch (error) {
                 if (error.stopped) {
                     state.stopped = true;
+                    tlog('info', `${label}остановлено`);
                     break;
                 }
+                tlog('error', `${label}не переведено: ${error.message}`);
                 state.failed.push(id);
                 lastError = error;
                 streak++;
@@ -709,12 +1026,19 @@ export async function translateChat(options, onProgress = () => { }) {
 
 const SETTINGS_API = '/api/plugins/korrektor/settings';
 let modelChoice = { source: '', model: '' };
+// The translator's own key, as the plugin shows it (never the key itself).
+let keyState = null;
+
+async function pluginJson(url, init = {}) {
+    const res = await fetch(url, { ...init, headers: { ...ctx().getRequestHeaders(), 'X-Korrektor': '1', ...(init.headers || {}) } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Корректор ответил ${res.status}`);
+    return data;
+}
 
 async function loadModelChoice() {
     try {
-        const res = await fetch(SETTINGS_API, { headers: { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' } });
-        if (!res.ok) return modelChoice;
-        const m = (await res.json()).models || {};
+        const m = (await pluginJson(SETTINGS_API)).models || {};
         modelChoice = { source: m.translateSource || '', model: m.translate || '' };
     } catch {
         // plugin not reachable: the choice stays as it was
@@ -722,12 +1046,21 @@ async function loadModelChoice() {
     return modelChoice;
 }
 
+async function loadKey() {
+    try {
+        keyState = await pluginJson(KEY_API);
+    } catch {
+        // an older plugin without its own key
+    }
+    return keyState;
+}
+
 /** Sets the model that translates; empty = as in Korrektor's settings (its cheap model). */
 export async function setModel(source, model) {
     const body = { models: { translateSource: model ? String(source || '') : '', translate: String(model || '') } };
-    const res = await fetch(SETTINGS_API, { method: 'POST', headers: { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`Не сохранилось: ${res.status}`);
+    await pluginJson(SETTINGS_API, { method: 'POST', body: JSON.stringify(body) });
     modelChoice = { source: body.models.translateSource, model: body.models.translate };
+    tlog('info', model ? `модель для перевода: ${model}` : 'модель для перевода: дешёвая Корректора');
     return modelChoice;
 }
 
@@ -744,7 +1077,7 @@ function tavernModels() {
     return { source, models: models.slice(0, 1500) };
 }
 
-// ---------- new replies ----------
+// ---------- one message ----------
 
 /** SillyTavern's own auto-translation would translate the same reply again: leave it only for my messages. */
 function quietStAuto() {
@@ -754,70 +1087,141 @@ function quietStAuto() {
     if (next) window.jQuery(select).val(next).trigger('change');
 }
 
-const autoQueue = new Set();
+const messageQueue = new Set();
 
-/** Translates one new reply, if «Переводить новые ответы» is on. */
-async function translateNew(messageId) {
+/**
+ * Translates one message with the chosen translator, shows the progress panel, saves the chat.
+ * why: 'auto' (a new reply), 'button' (from the message's menu). Returns true when translated.
+ */
+async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) {
     const s = settings();
-    if (!s.auto) return;
-    const id = Number(messageId);
     const c = ctx();
     const message = c.chat?.[id];
-    if (!message || message.is_user || message.is_system || !String(message.mes || '').trim() || autoQueue.has(id)) return;
-    autoQueue.add(id);
+    if (!message || message.is_system || !String(message.mes || '').trim()) return false;
+    if (messageQueue.has(id)) {
+        if (why === 'button') toastr.info('Это сообщение уже переводится', 'Корректор');
+        return false;
+    }
+    messageQueue.add(id);
     const chatId = c.getCurrentChatId?.();
     const controller = new AbortController();
+    const label = `#${id} `;
     let tracker = new Tracker(s.engine);
-    // The first message of a chat is the greeting: translated as soon as a new chat opens.
-    const what = c.chat.findIndex(m => !m.is_system) === id ? 'приветствие' : 'ответ';
     const onScreen = showTask({ label: () => `Перевожу ${what}`, fraction: () => tracker.fraction(), stop: () => controller.abort() });
     let outcome = '';
+    const started = Date.now();
     try {
         // SillyTavern cuts the thinking out of a new reply a moment after it appears: wait for that.
-        await sleep(600);
+        if (why === 'auto') await sleep(600);
         let text = null;
         let source = '';
+        let engine = s.engine;
+        let partial = 0;
         for (let attempt = 0; attempt < 2; attempt++) {
             const before = message.mes;
             source = await prepare(message, id);
+            tlog('info', `${label}${what}${why === 'button' ? ' (по кнопке)' : ''}: начинаю · ${ENGINE_NAMES[s.engine] || s.engine} → ${s.lang} · ${source.length} зн.`);
             tracker = new Tracker(s.engine);
+            engine = s.engine;
             try {
-                text = await translator(s.engine, s.lang, controller.signal, tracker)(source);
+                const run = translator(s.engine, s.lang, controller.signal, tracker, { label });
+                text = await run(source);
+                partial = run.partial || 0;
             } catch (error) {
                 if (error.stopped || s.engine !== 'model') throw error;
-                // The translation model did not answer or failed: the reply still gets translated, by a free translator.
-                toastr.warning(`Модель для перевода не сработала (${error.message}). Перевожу бесплатным переводчиком — выберите другую модель в «Перевод»`, 'Корректор', { timeOut: 9000 });
+                // The translation model did not answer or failed: the message still gets translated, by a free translator.
+                tlog('warn', `${label}модель не сработала (${error.message}) — перевожу бесплатным переводчиком`);
+                toastr.warning(`Модель для перевода не сработала (${error.message}). Перевожу бесплатным переводчиком — выберите другую модель или свой ключ в «Перевод»`, 'Корректор', { timeOut: 9000 });
                 tracker = new Tracker('auto');
-                text = await translator('auto', s.lang, controller.signal, tracker)(source);
+                engine = 'auto';
+                const run = translator('auto', s.lang, controller.signal, tracker, { label });
+                text = await run(source);
+                partial = run.partial || 0;
             }
             // The text changed while it was being translated (thinking cut out, edited): once more.
             if (message.mes === before) break;
+            tlog('info', `${label}текст сообщения изменился во время перевода — перевожу ещё раз`);
             text = null;
         }
-        // The reply may have been edited, swiped or the chat changed meanwhile.
-        if (text === null || ctx().getCurrentChatId?.() !== chatId || ctx().chat?.[id] !== message) return;
-        if (text === source) return;
-        if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
-        message.extra.display_text = text;
+        // The message may have been edited, swiped or the chat changed meanwhile.
+        if (text === null || ctx().getCurrentChatId?.() !== chatId || ctx().chat?.[id] !== message) {
+            tlog('info', `${label}сообщение сменилось — перевод не сохранён`);
+            return false;
+        }
+        if (text === source && partial) throw new Error('переводчик вернул текст без перевода. Выберите другой переводчик');
+        if (text === source) {
+            tlog('info', `${label}уже на нужном языке`);
+            if (why === 'button') toastr.info('Сообщение уже на нужном языке', 'Корректор');
+            return false;
+        }
+        if (looksCut(source, text, s.lang)) tlog('warn', `${label}перевод вышел заметно короче оригинала (${letterCount(text)} из ${letterCount(source)} букв)`);
+        markTranslated(message, source, text, engine, s.lang);
         showMessage(id, message);
         await ctx().saveChat();
+        tlog(partial ? 'warn' : 'info', `${label}готово за ${seconds(Date.now() - started)}: ${source.length} → ${text.length} зн.${partial ? ` · кусков в оригинале: ${partial}` : ''}`);
+        return true;
     } catch (error) {
         if (error.stopped) {
             outcome = 'остановлено';
+            tlog('info', `${label}остановлено`);
         } else {
             outcome = 'не вышло';
+            tlog('error', `${label}не переведено: ${error.message}`);
             toastr.warning(`Не перевёл ${what}: ${error.message}`, 'Корректор', { timeOut: 6000 });
         }
+        return false;
     } finally {
-        autoQueue.delete(id);
+        messageQueue.delete(id);
         onScreen.finish(outcome);
     }
+}
+
+/** A new reply (or the greeting of a new chat), if «Переводить новые ответы» is on. */
+async function translateNew(messageId, how = 'rendered') {
+    if (!settings().auto) return;
+    const id = Number(messageId);
+    const chat = ctx().chat || [];
+    const message = chat[id];
+    if (!message || message.is_user || message.is_system) return;
+    // Swiping back to a version translated earlier: its translation is still there.
+    if (how === 'swiped' && message.extra?.display_text && !translationCut(message)) return;
+    // The first message of a chat is the greeting: translated as soon as a new chat opens.
+    const what = chat.findIndex(m => !m.is_system) === id ? 'приветствие' : 'ответ';
+    await translateMessage(id, { what, why: 'auto' });
+}
+
+/** The language button in a message's menu: translate it, or — when it is translated — again or back to the original. */
+async function onMessageButton(id) {
+    const message = ctx().chat?.[id];
+    if (!message) return;
+    if (!message.extra?.display_text) {
+        await translateMessage(id, { what: `сообщение #${id}`, why: 'button' });
+        return;
+    }
+    const cut = translationCut(message);
+    let box = null;
+    const body = el('div', { class: 'kg-translate' },
+        el('p', { class: 'kg-hint', text: cut ? 'Перевод этого сообщения обрезан: конец пропал. Переведите заново.' : `Сообщение переведено (${ENGINE_NAMES[settings().engine] || settings().engine} → ${settings().lang}).` }),
+        el('div', { class: 'kg-actions' },
+            el('button', { type: 'button', class: 'menu_button kg-main', text: 'Перевести заново', onclick: () => { box?.close(); translateMessage(id, { what: `сообщение #${id}`, why: 'button' }); } }),
+            el('button', {
+                type: 'button', class: 'menu_button', text: 'Показать оригинал', onclick: async () => {
+                    box?.close();
+                    unmarkTranslated(message);
+                    showMessage(id, message);
+                    tlog('info', `#${id} показан оригинал`);
+                    await ctx().saveChat();
+                },
+            })),
+        el('p', { class: 'kg-hint', text: 'Переводчик и язык — в «Перевод» (меню расширений или строка над таверной).' }));
+    box = sheet(`Сообщение #${id}`, body);
 }
 
 export function setAuto(on, options = {}) {
     const s = { ...settings(), ...options, auto: Boolean(on) };
     saveSettings(s);
     if (s.auto) quietStAuto();
+    tlog('info', `новые ответы: ${s.auto ? `переводить (${ENGINE_NAMES[s.engine] || s.engine} → ${s.lang})` : 'не переводить'}`);
     return s;
 }
 
@@ -833,16 +1237,17 @@ export async function showOriginal() {
     let changed = 0;
     c.chat?.forEach((message, id) => {
         if (message?.extra?.display_text) {
-            delete message.extra.display_text;
+            unmarkTranslated(message);
             showMessage(id, message);
             changed++;
         }
     });
     if (changed) await c.saveChat();
+    if (changed) tlog('info', `оригинал возвращён в ${changed} сообщ.`);
     return changed;
 }
 
-// ---------- the sheet ----------
+// ---------- the sheets ----------
 
 function seg(options, value, onchange) {
     const box = el('div', { class: 'kg-seg' });
@@ -852,15 +1257,150 @@ function seg(options, value, onchange) {
     return box;
 }
 
+function keyLine(key) {
+    if (!key?.hasKey) return 'Свой ключ не задан: переводит подключение таверны';
+    const state = key.checked ? (key.checked.ok ? ' · ✓ работает' : key.checked.ok === false ? ' · ✖ проверка не прошла' : '') : '';
+    return `Свой ключ: ${key.label || key.provider} ${key.keyHint} · ${key.model || 'модель не выбрана'}${key.on ? '' : ' · выключен'}${state}`;
+}
+
+/** The translator's own key: whose, which model, «Проверить и сохранить». */
+export async function openKeySheet() {
+    const cfg = (await loadKey()) || { providers: [] };
+    if (!cfg.providers?.length) {
+        toastr.warning('Обновите Корректор: эта версия плагина не умеет свой ключ для перевода', 'Корректор');
+        return;
+    }
+    const provider = el('select', { class: 'text_pole' },
+        cfg.providers.map(p => el('option', { value: p.id, selected: p.id === (cfg.provider || 'openrouter'), text: p.label })));
+    const url = el('input', { class: 'text_pole', type: 'url', placeholder: 'https://адрес-сервера/v1', value: cfg.provider === 'custom' ? cfg.url || '' : '', autocapitalize: 'off', spellcheck: 'false' });
+    const kind = el('select', { class: 'text_pole' },
+        [['openai', 'Формат OpenAI (chat/completions)'], ['anthropic', 'Формат Anthropic (messages)']].map(([v, t]) => el('option', { value: v, selected: v === cfg.kind, text: t })));
+    const customRow = el('div', {}, el('div', { class: 'kg-label', text: 'Адрес сервера и формат' }), url, kind);
+    const showCustom = () => { customRow.hidden = provider.value !== 'custom'; };
+    provider.addEventListener('change', showCustom);
+    showCustom();
+    const key = el('input', {
+        class: 'text_pole', type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
+        placeholder: cfg.hasKey ? `сохранён ${cfg.keyHint} — вставьте новый, чтобы заменить` : 'вставьте ключ',
+    });
+    const listId = 'korrektor-key-models';
+    const datalist = el('datalist', { id: listId });
+    const model = el('input', { class: 'text_pole', list: listId, value: cfg.model || '', placeholder: 'например google/gemini-2.5-flash или claude-haiku-5-5', autocapitalize: 'off', spellcheck: 'false' });
+    const fillModels = (list) => datalist.replaceChildren(...(list || []).slice(0, 1500).map(m => el('option', { value: m })));
+    const onBox = el('input', { type: 'checkbox', checked: cfg.on !== false });
+    const status = el('div', { class: 'kg-progress', text: cfg.checked?.message || '' });
+    const save = async (check) => {
+        const body = { provider: provider.value, model: model.value.trim(), on: onBox.checked, check };
+        if (provider.value === 'custom') {
+            body.url = url.value.trim();
+            body.kind = kind.value;
+        }
+        if (key.value.trim()) body.key = key.value.trim();
+        return pluginJson(KEY_API, { method: 'POST', body: JSON.stringify(body) });
+    };
+    const checkBtn = el('button', { type: 'button', class: 'menu_button kg-main', text: 'Проверить и сохранить' });
+    checkBtn.addEventListener('click', async () => {
+        if (!cfg.hasKey && !key.value.trim()) {
+            status.textContent = 'Сначала вставьте ключ';
+            return;
+        }
+        checkBtn.disabled = true;
+        status.textContent = 'Проверяю: прошу модель перевести одну строку…';
+        try {
+            const out = await save(true);
+            Object.assign(cfg, out);
+            keyState = out;
+            key.value = '';
+            key.placeholder = `сохранён ${out.keyHint} — вставьте новый, чтобы заменить`;
+            fillModels(out.check?.models);
+            status.textContent = out.check?.message || 'Сохранено';
+            tlog(out.check?.ok ? 'info' : 'warn', `свой ключ (${out.label}, ${out.model || 'без модели'}): ${out.check?.message || 'сохранён'}`);
+        } catch (error) {
+            status.textContent = error.message;
+            tlog('error', `свой ключ: ${error.message}`);
+        } finally {
+            checkBtn.disabled = false;
+        }
+    });
+    const removeBtn = el('button', {
+        type: 'button', class: 'menu_button', text: 'Убрать ключ', onclick: async () => {
+            try {
+                keyState = await pluginJson(KEY_API, { method: 'POST', body: JSON.stringify({ clear: true }) });
+                status.textContent = 'Ключ удалён: переводит подключение таверны';
+                key.placeholder = 'вставьте ключ';
+                cfg.hasKey = false;
+                tlog('info', 'свой ключ удалён');
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        },
+    });
+    const backBtn = el('button', { type: 'button', class: 'menu_button', text: 'Назад', onclick: () => openTranslate() });
+    if (cfg.hasKey) {
+        // Fill the model list in the background: the key is there already.
+        pluginJson(`${KEY_API}/models`).then(r => fillModels(r.models)).catch(() => { });
+    }
+    const body = el('div', { class: 'kg-translate' },
+        el('div', { class: 'kg-label', text: 'Чей ключ' }), provider,
+        customRow,
+        el('div', { class: 'kg-label', text: 'Ключ' }), key,
+        el('div', { class: 'kg-label', text: 'Модель для перевода' }), model, datalist,
+        el('div', { class: 'kg-checks' }, el('label', { class: 'checkbox_label' }, onBox, el('span', { text: 'Переводить этим ключом (выключите — будет переводить подключение таверны)' }))),
+        el('div', { class: 'kg-actions' }, checkBtn, removeBtn, backBtn),
+        status,
+        el('p', { class: 'kg-hint', text: 'Ключ нужен, чтобы перевод не тратил ключ, которым пишет таверна, или чтобы переводила другая, быстрая модель. Он хранится только в этой таверне (папка Корректора), не попадает в резервные копии и синхронизацию и обратно не показывается — видны только последние 4 знака. Запросы перевода идут с ним напрямую к выбранному сервису. Для перевода подходят быстрые модели: Gemini Flash, Claude Haiku, GPT mini, DeepSeek.' }));
+    sheet('Свой ключ для перевода', body);
+}
+
+/** The journal: what the translation did, to read or copy and send. */
+export function openJournal() {
+    const pre = el('pre', { class: 'kt-journal' });
+    const draw = () => {
+        const text = journalText();
+        pre.textContent = text || 'Пока пусто: здесь появится, как идёт перевод — запросы, повторы, обрезанные ответы, ошибки.';
+        pre.scrollTop = pre.scrollHeight;
+    };
+    draw();
+    journalWatchers.add(draw);
+    const status = el('div', { class: 'kg-progress' });
+    const body = el('div', { class: 'kg-translate' }, pre,
+        el('div', { class: 'kg-actions' },
+            el('button', {
+                type: 'button', class: 'menu_button kg-main', text: 'Копировать', onclick: async () => {
+                    const text = `Корректор ${COMPANION_VERSION} · ${navigator.userAgent}\n${journalText()}`;
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        status.textContent = 'Скопировано: можно вставить в сообщение';
+                    } catch {
+                        // Clipboard closed (old WebView): select the text to copy by hand.
+                        const range = document.createRange();
+                        range.selectNodeContents(pre);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                        status.textContent = 'Текст выделен: нажмите «Копировать» в меню выделения';
+                    }
+                },
+            }),
+            el('button', { type: 'button', class: 'menu_button', text: 'Проверить переводы чата', onclick: () => { status.textContent = checkChat().text; } }),
+            el('button', { type: 'button', class: 'menu_button', text: 'Очистить', onclick: () => { journalList().length = 0; store(LOG_KEY, []); draw(); status.textContent = ''; } }),
+            el('button', { type: 'button', class: 'menu_button', text: 'Назад', onclick: () => openTranslate() })),
+        status);
+    sheet('Журнал перевода', body, () => journalWatchers.delete(draw));
+    // The newest lines are at the bottom: show them.
+    requestAnimationFrame(() => { pre.scrollTop = pre.scrollHeight; });
+}
+
 export function openTranslate(preset = {}) {
     const s = { ...settings(), ...preset };
     const save = () => saveSettings(s);
     const chat = ctx().chat || [];
     const translated = chat.filter((m) => m?.extra?.display_text).length;
+    const cut = chat.filter((m) => translationCut(m)).length;
 
     const lang = el('select', { class: 'text_pole', onchange: (e) => { s.lang = e.target.value; save(); } },
         LANGUAGES.map(([code, label]) => el('option', { value: code, selected: code === s.lang, text: label })));
-    const status = el('div', { class: 'kg-progress' });
+    const status = el('div', { class: 'kg-progress', text: cut ? `Обрезанных переводов в чате: ${cut}. «Перевести» переведёт их заново` : '' });
     const bar = el('div', { class: 'kg-bar' }, el('i'));
     bar.hidden = true;
     const startBtn = el('button', { type: 'button', class: 'menu_button kg-main', text: 'Перевести' });
@@ -872,6 +1412,7 @@ export function openTranslate(preset = {}) {
             status.textContent = n ? `Оригинал возвращён в ${n} сообщ.` : 'Переведённых сообщений нет';
         },
     });
+    const journalBtn = el('button', { type: 'button', class: 'menu_button', text: 'Журнал', onclick: openJournal });
     let retryIds = null;
     const retryBtn = el('button', { type: 'button', class: 'menu_button', text: 'Повторить пропущенные' });
     retryBtn.hidden = true;
@@ -920,11 +1461,20 @@ export function openTranslate(preset = {}) {
     const autoBox = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.auto, onchange: (e) => { s.auto = e.target.checked; save(); if (s.auto) quietStAuto(); } }),
         el('span', { text: 'Переводить новые ответы сразу (и приветствие нового чата), этим же переводчиком' }));
-    // Which model translates when «Модель Корректора» is chosen: separate from the model of the replies.
+    // Which model translates when «Модель Корректора» is chosen: separate from the model of the replies,
+    // or a key of its own just for translation.
     const modelRow = el('div', { class: 'kg-model' });
     const drawModelRow = async () => {
         if (s.engine !== 'model') return modelRow.replaceChildren();
-        const choice = await loadModelChoice();
+        const [choice, key] = await Promise.all([loadModelChoice(), loadKey()]);
+        const keyBtn = el('button', { type: 'button', class: 'menu_button', text: key?.hasKey ? 'Изменить ключ' : 'Свой ключ для перевода…', onclick: openKeySheet });
+        if (key?.active) {
+            modelRow.replaceChildren(
+                el('div', { class: 'kg-label', text: 'Чем переводит модель' }),
+                el('div', { class: 'kg-progress', text: keyLine(key) }),
+                el('div', { class: 'kg-actions' }, keyBtn));
+            return;
+        }
         const { source, models } = tavernModels();
         const list = [...new Set([...(choice.model ? [choice.model] : []), ...models])];
         const select = el('select', {
@@ -942,6 +1492,8 @@ export function openTranslate(preset = {}) {
             el('div', { class: 'kg-label', text: 'Модель для перевода (ответы в таверне пишет другая — та, что выбрана в таверне)' }),
             select,
             models.length ? null : el('div', { class: 'kg-hint', text: 'Список моделей берётся из подключения таверны. Другую модель можно указать в Корректоре → Настройки → «Для перевода»' }),
+            key ? el('div', { class: 'kg-hint', text: keyLine(key) }) : null,
+            key ? el('div', { class: 'kg-actions' }, keyBtn) : null,
         ].filter(Boolean));
     };
     drawModelRow();
@@ -959,8 +1511,8 @@ export function openTranslate(preset = {}) {
         el('div', { class: 'kg-checks' }, mine, again, autoBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
-        el('div', { class: 'kg-actions' }, originalBtn),
-        el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}«Модель Корректора» — дешёвая модель из настроек Корректора: лучше держит ролевой стиль, но тратит немного денег. Если переводчик возвращает кусок на английском, Корректор переводит его заново по частям или другим переводчиком.` }));
+        el('div', { class: 'kg-actions' }, originalBtn, journalBtn),
+        el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}Одно сообщение — кнопка с языком в меню сообщения (⋯). «Модель Корректора» лучше держит ролевой стиль, но тратит немного денег; ей можно дать свой ключ. Если переводчик возвращает кусок на английском или обрывает конец, Корректор переводит его заново по частям.` }));
     sheet('Перевод чата', body, () => watchers.delete(watch));
 }
 
@@ -974,30 +1526,60 @@ function addMenuItem() {
     return true;
 }
 
+/**
+ * The language button in every message's menu (⋯). It takes the place of SillyTavern's own
+ * «Translate message», which sends the whole message to its translator in one piece.
+ */
+function addMessageButtons() {
+    const boxes = document.querySelectorAll('#message_template .extraMesButtons, #chat .mes .extraMesButtons');
+    for (const box of boxes) {
+        if (box.querySelector('.korrektor_mes_translate')) continue;
+        box.prepend(el('div', { class: 'mes_button korrektor_mes_translate fa-solid fa-language interactable', title: 'Перевести (Корректор)', tabindex: '0', role: 'button' }));
+    }
+    document.body.classList.add('korrektor-translates');
+}
+
 export function initTranslate() {
     window.korrektorTranslate = {
         open: openTranslate,
         chat: translateChat,
+        one: (id) => translateMessage(Number(id), { what: `сообщение #${id}`, why: 'button' }),
         stop: stopTranslation,
         original: showOriginal,
         running: () => Boolean(running),
         settings,
         setAuto,
         setModel,
-        translateModel: () => modelChoice,
+        keySheet: openKeySheet,
+        log: openJournal,
+        check: checkChat,
+        journal: journalText,
+        translateModel: () => ({ ...modelChoice, key: keyState ? { active: Boolean(keyState.active), label: keyState.label || '', model: keyState.model || '' } : null }),
         engines: ENGINES,
     };
     const timer = setInterval(() => { if (addMenuItem()) clearInterval(timer); }, 1000);
     loadModelChoice();
+    loadKey();
     sillyTavernParts();
+    addMessageButtons();
+    document.addEventListener('click', (e) => {
+        const button = e.target?.closest?.('.korrektor_mes_translate');
+        if (!button) return;
+        const id = Number(button.closest('.mes')?.getAttribute('mesid'));
+        if (Number.isInteger(id)) onMessageButton(id).catch((error) => tlog('error', `#${id} ${error.message}`));
+    });
     try {
         const { eventSource, eventTypes } = ctx();
-        // After a reply (or a new swipe) is shown in full.
+        // After a reply (or a new swipe) is shown in full. On opening a chat SillyTavern does not send this.
         eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (id) => { translateNew(id).catch(() => { }); });
-        // Swiping to another existing version: SillyTavern drops the old translation, translate this one.
+        // Swiping to another version: one translated before keeps its translation, another one is translated.
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => {
-            setTimeout(() => { if (!busy()) translateNew(id).catch(() => { }); }, 300);
+            setTimeout(() => { if (!busy()) translateNew(id, 'swiped').catch(() => { }); }, 300);
         });
+        // Messages drawn before this script ran get the language button too.
+        for (const type of [eventTypes.CHAT_CHANGED, eventTypes.MORE_MESSAGES_LOADED]) {
+            if (type) eventSource.on(type, () => setTimeout(addMessageButtons, 50));
+        }
     } catch {
         // older SillyTavern: only manual translation
     }

@@ -28,6 +28,29 @@ function isOpenAiReasoning(source, model) {
 }
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Claude models whose thinking SillyTavern controls with an effort level (adaptive thinking);
+// the older ones think only when asked to, so for speed they are not asked.
+const CLAUDE_ADAPTIVE = /^claude-(opus-4-[6-9]|sonnet-4-6|opus-5|sonnet-5|fable)/;
+
+/**
+ * 'fast' = as little thinking as the model allows (translation needs none): Gemini with no or the
+ * smallest thinking budget, OpenAI reasoning models at low effort, Claude without thinking
+ * where it can be off and at low effort where it cannot.
+ */
+export function fastEffort(source, model) {
+    const id = String(model || '');
+    if (source === 'claude') return CLAUDE_ADAPTIVE.test(id) ? 'low' : 'auto';
+    if (source === 'makersuite' || source === 'vertexai') return 'min';
+    if (isOpenAiReasoning(source, id)) return 'low';
+    return 'auto';
+}
+
+/** The answer stopped at the length limit (OpenAI style or Claude style; SillyTavern passes these along for most sources). */
+export function wasCut(data) {
+    const reason = data?.choices?.[0]?.finish_reason ?? data?.stop_reason ?? data?.candidates?.[0]?.finishReason;
+    return reason === 'length' || reason === 'max_tokens' || reason === 'MAX_TOKENS';
+}
+
 /** Token counts from a provider reply: OpenAI style, Claude style or Gemini style. */
 export function usageOf(data) {
     const u = data?.usage;
@@ -252,12 +275,15 @@ export class LlmClient {
             stream: false,
             ...connectionBody(this.stSettings, r.source),
         };
+        const effort = r.effort === 'fast' ? fastEffort(r.source, r.model) : r.effort;
         if (isOpenAiReasoning(r.source, r.model)) {
             body.max_completion_tokens = body.max_tokens;
             delete body.max_tokens;
-            if (r.effort !== 'auto') body.reasoning_effort = r.effort;
-        } else if (r.source === 'claude' && r.effort !== 'auto') {
-            body.reasoning_effort = r.effort;
+            if (effort !== 'auto') body.reasoning_effort = effort;
+        } else if (r.source === 'claude' && effort !== 'auto') {
+            body.reasoning_effort = effort;
+        } else if ((r.source === 'makersuite' || r.source === 'vertexai') && r.effort === 'fast') {
+            body.reasoning_effort = effort;
         }
         return body;
     }
@@ -291,13 +317,14 @@ export class LlmClient {
      * the provider's defaults are fine for analysis, and current Claude models
      * reject non-default temperature/top_p/top_k.
      */
-    async complete({ task, system, user, messages = null, maxTokens }) {
+    async complete({ task, system, user, messages = null, maxTokens, effort = null, strip = true }) {
         if (!this.available) {
             throw httpError(409, 'Нет связи с сессией SillyTavern. Откройте приложение, чтобы проверка с моделью заработала');
         }
         const conn = connectionInfo(this.stSettings);
         const r = this.resolve(task);
         if (maxTokens) r.maxTokens = maxTokens;
+        if (effort) r.effort = effort;
         if (r.api === 'chat' && !r.source) {
             throw httpError(400, conn.api === 'other'
                 ? 'Этот тип API SillyTavern Корректор не поддерживает. Выберите источник модели в настройках Корректора'
@@ -328,7 +355,8 @@ export class LlmClient {
             throw httpError(502, `Модель ${label} вернула ошибку: ${message}`);
         }
         const raw = extractText(data);
-        const text = stripThinking(raw);
+        // strip=false: the caller decides (a translated message may hold such tags itself).
+        const text = strip ? stripThinking(raw) : String(raw ?? '').trim();
         if (!text) throw httpError(502, `Модель ${label} вернула пустой ответ`);
         if (this.onUsage) {
             const used = usageOf(data) ?? { input: estimateTokens(JSON.stringify(body.messages ?? body.prompt ?? '')), output: estimateTokens(raw) };
@@ -338,7 +366,7 @@ export class LlmClient {
                 // the spending log must never break a model call
             }
         }
-        return { text, model: label, source: r.source, tier: r.tier };
+        return { text, model: label, source: r.source, tier: r.tier, cut: wasCut(data) };
     }
 
     async completeJson(options) {

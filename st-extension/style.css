@@ -65,3 +65,7 @@ html.korrektor-app .kg-win-head { background: var(--ka-raised); }
 html.korrektor-app .kt-task { background: var(--ka-bg); color: var(--ka-text); border-color: var(--ka-line); border-radius: 14px; }
 html.korrektor-app .kt-line b { color: var(--ka-accent); }
 html.korrektor-app .kt-bar { background: var(--ka-raised); }
+/* Translation journal; the message menu's language button is Korrektor's (SillyTavern's own one is hidden). */
+.kt-journal { max-height: 46vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.78em; line-height: 1.35; background: rgba(127, 127, 127, 0.1); border-radius: 8px; padding: 8px; margin: 0; user-select: text; -webkit-user-select: text; }
+body.korrektor-translates .mes .mes_translate { display: none !important; }
+html.korrektor-app .kt-journal { background: var(--ka-raised); color: var(--ka-text); }

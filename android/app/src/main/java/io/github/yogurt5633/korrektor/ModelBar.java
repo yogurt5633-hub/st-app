@@ -33,7 +33,8 @@ final class ModelBar {
             + "languages:[].map.call(tl.options,function(o){return [o.value,o.textContent];})};}"
             + "if(window.korrektorTranslate&&window.korrektorTranslate.settings){var ks=window.korrektorTranslate.settings();"
             + "var km=window.korrektorTranslate.translateModel?window.korrektorTranslate.translateModel():{};"
-            + "out.ours={auto:!!ks.auto,engine:ks.engine,lang:ks.lang,engines:window.korrektorTranslate.engines||[],model:km.model||'',modelSource:km.source||''};}"
+            + "out.ours={auto:!!ks.auto,engine:ks.engine,lang:ks.lang,engines:window.korrektorTranslate.engines||[],model:km.model||'',modelSource:km.source||'',"
+            + "key:km.key&&km.key.active?(km.key.label+' · '+km.key.model):'',keySheet:!!window.korrektorTranslate.keySheet};}"
             + "if(out.api==='openai'){var source=$('#chat_completion_source').val();"
             + "var map={makersuite:'model_google_select',vertexai:'model_vertexai_select',custom:'model_custom_select'};"
             + "var id=map[source]||('model_'+source+'_select');var sel=document.getElementById(id);"
@@ -186,8 +187,12 @@ final class ModelBar {
                 engine[0] = keys.get(i);
                 engineView[0].setText(picked);
             }));
+            String key = oursState.optString("key");
             final TextView[] modelView = new TextView[1];
-            modelView[0] = sheet.choice("Модель для перевода", translateModel[0].isEmpty() ? "дешёвая Корректора" : translateModel[0], v -> {
+            if (!key.isEmpty()) {
+                // A key of its own just for translation: its model translates.
+                sheet.choice("Модель для перевода", "свой ключ: " + key, v -> { sheet.dismiss(); run("window.korrektorTranslate.keySheet()"); });
+            } else modelView[0] = sheet.choice("Модель для перевода", translateModel[0].isEmpty() ? "дешёвая Корректора" : translateModel[0], v -> {
                 List<String> names = new ArrayList<>();
                 names.add("Дешёвая модель Корректора");
                 JSONArray list = state.optJSONArray("models");
@@ -200,6 +205,11 @@ final class ModelBar {
                 });
             });
             sheet.note("Модель для перевода — не та, что пишет ответы: ответы пишет модель таверны (кнопка с моделью в этой строке)");
+            if (oursState.optBoolean("keySheet")) {
+                sheet.choice("Свой ключ для перевода", key.isEmpty() ? "не задан" : key, v -> { sheet.dismiss(); run("window.korrektorTranslate.keySheet()"); });
+                sheet.choice("Журнал перевода", "что происходило, скопировать", v -> { sheet.dismiss(); run("window.korrektorTranslate.log()"); });
+            }
+            sheet.note("Одно сообщение — кнопка с языком в меню сообщения (⋯)");
         }
 
         Runnable apply = () -> {

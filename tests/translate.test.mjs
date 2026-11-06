@@ -9,15 +9,29 @@ import { chunkText } from '../st-extension/translate.js';
 
 test('translate: the model gets the text and the language, the answer comes back clean', async () => {
     const calls = [];
-    const llm = { complete: async (args) => { calls.push(args); return { text: '```\nПривет, *машет*\n```' }; } };
+    let reply = { text: '```\nПривет, *машет*\n```', model: 'm1' };
+    const llm = { settings: { models: { translateEffort: 'low' } }, complete: async (args) => { calls.push(args); return reply; } };
     const out = await translateText(llm, 'Hello, *waves*', 'ru');
-    assert.equal(out, 'Привет, *машет*');
+    assert.equal(out.text, 'Привет, *машет*');
+    assert.equal(out.cut, false);
+    assert.equal(out.via, 'tavern');
     assert.equal(calls[0].task, 'translate');
+    assert.equal(calls[0].effort, 'fast', 'translation asks for as little thinking as possible');
     assert.match(calls[0].system, /русский/);
     assert.equal(calls[0].user, 'Hello, *waves*');
-    assert.equal(await translateText(llm, '   ', 'ru'), '');
+    assert.equal((await translateText(llm, '   ', 'ru')).text, '');
     assert.equal(languageName('xx'), 'xx');
     await assert.rejects(translateText(llm, 'a'.repeat(20000), 'ru'), /слишком длинное/);
+    // A code block the message itself ends with keeps its closing fence.
+    reply = { text: 'Статус:\n```\nХП: 10\n```' };
+    assert.equal((await translateText(llm, 'Status:\n```\nHP: 10\n```', 'ru')).text, 'Статус:\n```\nХП: 10\n```');
+    // The model's own thinking goes; a thinking block that is part of the message stays.
+    reply = { text: '<think>hm</think>Привет' };
+    assert.equal((await translateText(llm, 'Hello', 'ru')).text, 'Привет');
+    reply = { text: '<thinking>Она думает</thinking>\nПривет', cut: true };
+    const kept = await translateText(llm, '<thinking>She thinks</thinking>\nHello', 'ru');
+    assert.equal(kept.text, '<thinking>Она думает</thinking>\nПривет');
+    assert.equal(kept.cut, true, 'a cut answer is reported');
 });
 
 test('translate: long text is cut at paragraphs and sentences, nothing is lost', () => {
@@ -155,4 +169,153 @@ test('translate: «Стоп» cuts off a request that hangs', async () => {
     const pending = translator('model', 'ru', controller.signal)('The knight walks into the tavern and smiles.');
     setTimeout(() => controller.abort(), 50);
     await assert.rejects(pending, (e) => e.stopped === true);
+});
+
+function fakeTavern() {
+    globalThis.SillyTavern = { getContext: () => ({ getRequestHeaders: () => ({}), extensionSettings: {} }) };
+}
+
+test('translate: a free translator that drops the end of a piece: the piece is split and translated again, nothing is lost', async () => {
+    const { translator, looksCut } = await import('../st-extension/translate.js');
+    fakeTavern();
+    const calls = [];
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        calls.push(text.length);
+        // Like Google with longer text: only the first third comes back.
+        const words = text.replace(/[A-Za-z]+/g, 'слово');
+        const out = text.length > 500 ? words.slice(0, Math.floor(words.length / 3)) : words;
+        return { ok: true, status: 200, text: async () => out };
+    };
+    const source = Array.from({ length: 10 }, (_, i) => `Line ${i}: the knight walks into the tavern and orders ale.`).join(' ');
+    const out = await translator('google', 'ru')(source);
+    assert.ok(!looksCut(source, out, 'ru'), `whole: ${out.length} of ${source.length}`);
+    assert.match(out, /слово 9: .*слово\.$/, 'the last line is there');
+    assert.ok(calls.some(n => n <= 500), 'smaller pieces were asked for');
+    assert.equal(looksCut('word '.repeat(100), 'слово '.repeat(30), 'ru'), true);
+    assert.equal(looksCut('word '.repeat(100), 'слово '.repeat(90), 'ru'), false);
+    assert.equal(looksCut('short text', '', 'ru'), false, 'short texts are not judged');
+});
+
+test('translate: a model answer cut at the length limit is translated again in parts; a long reply goes in parts at once', async () => {
+    const { translator } = await import('../st-extension/translate.js');
+    fakeTavern();
+    const seen = [];
+    let active = 0;
+    let most = 0;
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        seen.push(text.length);
+        active++;
+        most = Math.max(most, active);
+        await new Promise(r => setTimeout(r, 20));
+        active--;
+        const words = text.replace(/[A-Za-z]+/g, 'слово');
+        // The whole text is too long for the model's limit: its answer stops halfway.
+        if (text.length > 2500) return { ok: true, status: 200, json: async () => ({ text: words.slice(0, 900), cut: true, model: 'm' }) };
+        return { ok: true, status: 200, json: async () => ({ text: words, model: 'm' }) };
+    };
+    const paragraph = 'The knight walks into the tavern, looks around and orders some ale for his tired friends.';
+    const reply = Array.from({ length: 34 }, () => paragraph).join('\n\n');
+    const out = await translator('model', 'ru')(reply);
+    assert.ok(!/knight|tavern/.test(out), 'all of it is translated');
+    assert.equal(out.split('\n\n').length, reply.split('\n\n').length, 'paragraphs keep their places');
+    assert.ok(seen.length > 1 && seen.every(n => n <= 3100), `in parts: ${seen}`);
+    assert.ok(most >= 2, 'parts go at the same time');
+});
+
+test('translate: parts of a message are cut outside HTML blocks and code blocks, and join back to the text', async () => {
+    const { splitParts } = await import('../st-extension/translate.js');
+    const text = 'One.\n\n<details>\n<summary>Status</summary>\n\nInside.\n\nMore inside.\n</details>\n\nTwo.\n\n```\na\n\nb\n```\n\nThree.';
+    const parts = splitParts(text, 10);
+    assert.equal(parts.join(''), text);
+    assert.ok(parts.some(p => p.startsWith('<details>') && p.includes('</details>')), 'the block stays whole');
+    assert.ok(parts.some(p => p.startsWith('```') && p.trim().endsWith('```')), 'the code block stays whole');
+    assert.deepEqual(splitParts('short', 100), ['short']);
+});
+
+test('translate: a saved translation that lost its end is found', async () => {
+    const { translationCut } = await import('../st-extension/translate.js');
+    globalThis.SillyTavern = { getContext: () => ({ getRequestHeaders: () => ({}), extensionSettings: {}, chat: [] }) };
+    globalThis.localStorage = { getItem: () => null, setItem: () => { } };
+    const mes = 'The knight walks into the tavern and orders ale. '.repeat(12);
+    assert.equal(translationCut({ mes, extra: { display_text: 'Рыцарь входит в таверну.' } }), true);
+    assert.equal(translationCut({ mes, extra: { display_text: 'Рыцарь входит в таверну и заказывает эль. '.repeat(12) } }), false);
+    assert.equal(translationCut({ mes, extra: {} }), false);
+    // Made by this version: compared with the source it was translated from.
+    assert.equal(translationCut({ mes: 'x', extra: { display_text: 'Коротко.', korrektor_translation: { letters: 900, lang: 'ru' } } }), true);
+});
+
+test('translate key: saved apart, never shown back, used directly; a cut answer is reported; the check translates one line', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'korrektor-key-'));
+    const { saveKeyConfig, readKeyConfig, publicKeyConfig, completeWithKey, checkKey } = await import('../plugin/lib/translate-key.mjs');
+    await assert.rejects(saveKeyConfig(dir, { provider: 'nope' }), /чей это ключ/);
+    let cfg = await saveKeyConfig(dir, { provider: 'openrouter', key: 'sk-or-secret-1234', model: 'google/gemini-2.5-flash' });
+    const shown = publicKeyConfig(cfg);
+    assert.equal(shown.hasKey, true);
+    assert.equal(shown.keyHint, '…1234');
+    assert.equal(shown.active, true);
+    assert.ok(!JSON.stringify(shown).includes('secret'), 'the key is never in what the page gets');
+    // A new model without a new key keeps the key.
+    cfg = await saveKeyConfig(dir, { model: 'openai/gpt-5-mini' });
+    assert.equal((await readKeyConfig(dir)).key, 'sk-or-secret-1234');
+    assert.equal((fs.statSync(path.join(dir, 'translate-key.json')).mode & 0o777), 0o600);
+
+    const requests = [];
+    const fetchImpl = async (url, init) => {
+        requests.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+        if (url.endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'openai/gpt-5-mini' }, { id: 'x/y' }] }));
+        if (url.includes('anthropic')) return new Response(JSON.stringify({ content: [{ type: 'text', text: 'Привет' }], stop_reason: 'max_tokens', model: 'claude-haiku-5-5', usage: { input_tokens: 5, output_tokens: 7 } }));
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'В таверне было тихо.' }, finish_reason: 'stop' }], model: 'openai/gpt-5-mini' }));
+    };
+    const out = await completeWithKey(cfg, { system: 's', user: 'u', maxTokens: 100, fetchImpl });
+    assert.equal(out.text, 'В таверне было тихо.');
+    assert.equal(out.cut, false);
+    const sent = requests[0];
+    assert.equal(sent.url, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.equal(sent.init.headers.Authorization, 'Bearer sk-or-secret-1234');
+    assert.equal(sent.body.max_completion_tokens, 100, 'reasoning models get max_completion_tokens');
+
+    const claude = await saveKeyConfig(dir, { provider: 'anthropic', key: 'sk-ant-xyz9', model: 'claude-haiku-5-5' });
+    const answer = await completeWithKey(claude, { system: 's', user: 'u', maxTokens: 100, fetchImpl });
+    assert.equal(answer.cut, true, 'stop_reason max_tokens = the end is missing');
+    const claudeReq = requests.at(-1);
+    assert.equal(claudeReq.url, 'https://api.anthropic.com/v1/messages');
+    assert.equal(claudeReq.init.headers['x-api-key'], 'sk-ant-xyz9');
+    assert.equal(claudeReq.body.output_config.effort, 'low');
+    assert.equal(claudeReq.body.system, 's');
+
+    const check = await checkKey(await saveKeyConfig(dir, { provider: 'openrouter', key: 'sk-or-new-5678', model: 'openai/gpt-5-mini' }), { fetchImpl });
+    assert.equal(check.ok, true, check.message);
+    assert.match(check.message, /Работает/);
+    assert.deepEqual(check.models, ['openai/gpt-5-mini', 'x/y']);
+    const refused = await checkKey(cfg, { fetchImpl: async () => new Response(JSON.stringify({ error: { message: 'bad key' } }), { status: 401 }) });
+    assert.equal(refused.ok, false);
+    assert.match(refused.message, /ключ не принят/);
+
+    await saveKeyConfig(dir, { clear: true });
+    assert.equal(publicKeyConfig(await readKeyConfig(dir)).hasKey, false);
+});
+
+test('translate key: never packed into a backup', async () => {
+    const { collectFiles } = await import('../plugin/lib/archive.mjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'korrektor-arch-'));
+    fs.mkdirSync(path.join(root, 'korrektor'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'korrektor', 'translate-key.json'), '{"key":"secret"}');
+    fs.writeFileSync(path.join(root, 'korrektor', 'settings.json'), '{}');
+    const names = (await collectFiles(root)).map(f => f.name);
+    assert.ok(names.includes('korrektor/settings.json'));
+    assert.ok(!names.includes('korrektor/translate-key.json'));
+});
+
+test('llm: translation thinks as little as the model allows; a cut answer is noticed', async () => {
+    const { fastEffort, wasCut } = await import('../plugin/lib/llm.mjs');
+    assert.equal(fastEffort('claude', 'claude-haiku-4-5'), 'auto', 'older Claude: no thinking at all');
+    assert.equal(fastEffort('claude', 'claude-sonnet-5-5'), 'low');
+    assert.equal(fastEffort('makersuite', 'gemini-2.5-flash'), 'min');
+    assert.equal(fastEffort('openai', 'gpt-5-mini'), 'low');
+    assert.equal(fastEffort('openrouter', 'deepseek/deepseek-chat'), 'auto');
+    assert.equal(wasCut({ choices: [{ finish_reason: 'length' }] }), true);
+    assert.equal(wasCut({ stop_reason: 'max_tokens' }), true);
+    assert.equal(wasCut({ choices: [{ finish_reason: 'stop' }] }), false);
 });

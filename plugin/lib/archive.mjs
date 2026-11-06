@@ -9,8 +9,8 @@ import { httpError, isInside, writeFileAtomic } from './util.mjs';
 
 const SKIP_DIRS = new Set(['backups', 'thumbnails', 'vectors', '_cache', '_uploads', '_storage', 'korrektor/backups', 'korrektor/archives', 'korrektor/catalog-uploads']);
 const SKIP_FILES = new Set(['secrets.json']);
-// The catalog author's GitHub token: like secrets.json, never packed.
-const SKIP_PATHS = new Set(['korrektor/catalog-admin.json']);
+// The catalog author's GitHub token and the translator's own key: like secrets.json, never packed.
+const SKIP_PATHS = new Set(['korrektor/catalog-admin.json', 'korrektor/translate-key.json']);
 const MAX_FILE = 64 * 1024 * 1024;
 const MAX_TOTAL = 3.5 * 1024 * 1024 * 1024;
 const MAX_ENTRIES = 65000;

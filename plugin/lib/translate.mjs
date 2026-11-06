@@ -2,6 +2,8 @@
 // Used by the companion's "Translate chat" when free translators do not answer
 // or when the person wants roleplay style kept.
 
+import { stripThinking } from './llm.mjs';
+import { completeWithKey } from './translate-key.mjs';
 import { httpError } from './util.mjs';
 
 const NAMES = {
@@ -17,9 +19,21 @@ export function languageName(code) {
     return NAMES[code] || code;
 }
 
-export async function translateText(llm, text, lang) {
+/** How much the model may think while translating: as little as possible unless chosen otherwise. */
+function translateEffort(llm) {
+    const chosen = llm?.settings?.models?.translateEffort;
+    // 'low' was the default before 'fast' existed.
+    return !chosen || chosen === 'low' || chosen === 'fast' ? 'fast' : chosen;
+}
+
+/**
+ * Translates one message (or one part of it). With the translator's own key (`key`, see
+ * translate-key.mjs) the request goes straight to that provider; otherwise through SillyTavern.
+ * Returns { text, cut, model, via, ms }: cut = the answer hit the length limit, so its end is missing.
+ */
+export async function translateText(llm, text, lang, { key = null, signal = null } = {}) {
     const source = String(text ?? '');
-    if (!source.trim()) return '';
+    if (!source.trim()) return { text: '', cut: false, model: '', via: '', ms: 0 };
     if (source.length > MAX_TRANSLATE_CHARS) throw httpError(413, 'Сообщение слишком длинное для перевода моделью');
     const target = languageName(String(lang || 'ru'));
     const system = [
@@ -32,12 +46,25 @@ export async function translateText(llm, text, lang) {
         'Если текст уже на нужном языке, верни его без изменений.',
         'Ответь только переводом, без кавычек вокруг и без комментариев.',
     ].join(' ');
-    const reply = await llm.complete({
-        task: 'translate',
-        system,
-        user: source,
-        // Room for the whole translation, and for the thinking of reasoning models.
-        maxTokens: Math.min(16000, 1500 + source.length * 2),
-    });
-    return String(reply.text ?? '').replace(/^\s*```[a-z]*\n?|\n?```\s*$/g, '').trim();
+    // Room for the whole translation, and for the thinking of reasoning models.
+    const maxTokens = Math.min(16000, 2000 + source.length * 2);
+    const started = Date.now();
+    let reply;
+    let via;
+    if (key) {
+        reply = await completeWithKey(key, { system, user: source, maxTokens, signal, strip: false });
+        via = 'key';
+    } else {
+        reply = await llm.complete({ task: 'translate', system, user: source, maxTokens, effort: translateEffort(llm), strip: false });
+        via = 'tavern';
+    }
+    // The model's own thinking is cut out, unless the message itself has such tags.
+    let out = /<\/?(think|thinking|reasoning)>/i.test(source) ? String(reply.text ?? '').trim() : stripThinking(reply.text);
+    // Some models wrap the whole answer in a code fence; a fence the message itself has stays.
+    if (/^```/.test(out) && !/^\s*```/.test(source)) {
+        out = out.replace(/^```[a-z]*\n?/, '');
+        if (!/```\s*$/.test(source)) out = out.replace(/\n?```$/, '');
+        out = out.trim();
+    }
+    return { text: out, cut: Boolean(reply.cut), model: reply.model || '', via, ms: Date.now() - started, usage: reply.usage || null };
 }

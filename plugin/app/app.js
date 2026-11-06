@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.19';
+const APP_VERSION = '0.4.20';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -1166,6 +1166,81 @@ function deepMerge(base, patch) {
     return out;
 }
 
+/**
+ * The translator's own key: whose, the key, the model, «Проверить и сохранить». The key is kept by
+ * the plugin and never comes back here — only its last four characters.
+ */
+function translateKeyBlock() {
+    const box = h('div', { class: 'field' }, h('span', { class: 'label', text: 'Свой ключ для перевода' }), h('span', { class: 'hint', text: 'Загружаю…' }));
+    api('/translate/key').then((cfg) => {
+        const provider = h('select', { class: 'select', 'aria-label': 'Чей ключ', style: 'flex:1;min-width:0' },
+            (cfg.providers || []).map(p => h('option', { value: p.id, text: p.label })));
+        provider.value = cfg.provider || 'openrouter';
+        const url = h('input', { class: 'input mono', type: 'url', value: cfg.provider === 'custom' ? cfg.url || '' : '', placeholder: 'https://адрес-сервера/v1', style: 'flex:1;min-width:0', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Адрес сервера' });
+        const kind = h('select', { class: 'select', 'aria-label': 'Формат', style: 'flex:1;min-width:0' },
+            [['openai', 'Формат OpenAI'], ['anthropic', 'Формат Anthropic']].map(([v, t]) => h('option', { value: v, text: t })));
+        kind.value = cfg.kind || 'openai';
+        const customRow = h('div', { class: 'field-row' }, url, kind);
+        const showCustom = () => { customRow.hidden = provider.value !== 'custom'; };
+        provider.addEventListener('change', showCustom);
+        showCustom();
+        const key = h('input', { class: 'input mono', type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', style: 'flex:1;min-width:0', 'aria-label': 'Ключ', placeholder: cfg.hasKey ? `сохранён ${cfg.keyHint} — вставьте новый, чтобы заменить` : 'вставьте ключ' });
+        const listId = 'models-translate-key';
+        const datalist = h('datalist', { id: listId });
+        const model = h('input', { class: 'input mono', list: listId, value: cfg.model || '', placeholder: 'модель, например google/gemini-2.5-flash', style: 'flex:1;min-width:0', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Модель' });
+        const fill = (list) => datalist.replaceChildren(...(list || []).slice(0, 1500).map(m => h('option', { value: m })));
+        if (cfg.hasKey) api('/translate/key/models').then(r => fill(r.models)).catch(() => { });
+        let on = cfg.on !== false;
+        const status = h('span', { class: 'hint', text: cfg.checked?.message || (cfg.hasKey ? '' : 'Не задан: переводит подключение таверны') });
+        const checkBtn = h('button', { class: 'btn small', type: 'button', text: 'Проверить и сохранить' });
+        checkBtn.addEventListener('click', async () => {
+            if (!cfg.hasKey && !key.value.trim()) {
+                status.textContent = 'Сначала вставьте ключ';
+                return;
+            }
+            checkBtn.disabled = true;
+            status.textContent = 'Проверяю: прошу модель перевести одну строку…';
+            try {
+                const body = { provider: provider.value, model: model.value.trim(), on, check: true };
+                if (provider.value === 'custom') Object.assign(body, { url: url.value.trim(), kind: kind.value });
+                if (key.value.trim()) body.key = key.value.trim();
+                const out = await api('/translate/key', { method: 'POST', body, timeout: 180000 });
+                Object.assign(cfg, out);
+                key.value = '';
+                key.placeholder = `сохранён ${out.keyHint} — вставьте новый, чтобы заменить`;
+                fill(out.check?.models);
+                status.textContent = out.check?.message || 'Сохранено';
+            } catch (error) {
+                status.textContent = error.message;
+            } finally {
+                checkBtn.disabled = false;
+            }
+        });
+        const removeBtn = h('button', { class: 'btn quiet small', type: 'button', text: 'Убрать ключ' });
+        removeBtn.addEventListener('click', async () => {
+            try {
+                await api('/translate/key', { method: 'POST', body: { clear: true } });
+                cfg.hasKey = false;
+                key.placeholder = 'вставьте ключ';
+                status.textContent = 'Ключ удалён: переводит подключение таверны';
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        });
+        put(box,
+            h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Свой ключ для перевода' }),
+                sw(on, (v) => { on = v; if (cfg.hasKey) api('/translate/key', { method: 'POST', body: { on: v } }).catch(() => { }); }, 'Переводить этим ключом')),
+            h('div', { class: 'field-row' }, provider),
+            customRow,
+            h('div', { class: 'field-row' }, key),
+            h('div', { class: 'field-row' }, model, datalist),
+            h('div', { class: 'field-row', style: 'justify-content:flex-start;gap:8px' }, checkBtn, removeBtn),
+            status,
+            h('span', { class: 'hint', text: 'Чтобы перевод не тратил ключ таверны или переводила другая, быстрая модель. Ключ хранится только в этой таверне, не попадает в резервные копии и синхронизацию и сюда обратно не показывается. Когда ключ включён, перевод «Моделью Корректора» идёт с ним напрямую к сервису.' }));
+    }).catch(() => put(box, h('span', { class: 'label', text: 'Свой ключ для перевода' }), h('span', { class: 'hint', text: 'Обновите Корректор, чтобы задать свой ключ для перевода' })));
+    return box;
+}
+
 async function renderSettings(reload = true) {
     const view = $('#view');
     if (reload || !state.settings) {
@@ -1205,9 +1280,13 @@ async function renderSettings(reload = true) {
         const datalist = h('datalist', { id: listId });
         if (effectiveSource) fillModels(effectiveSource, datalist);
 
+        const efforts = [['auto', 'Рассуждение: как у модели'], ['low', 'Рассуждение: низкое'], ['medium', 'Рассуждение: среднее'], ['high', 'Рассуждение: высокое']];
+        // Translation: as little thinking as the model allows, so it is quick ('low' was the old default).
+        if (tier === 'translate') efforts.splice(0, 2, ['fast', 'Рассуждение: без него — быстрее'], ['auto', 'Рассуждение: как у модели']);
         const effort = h('select', { class: 'select', 'aria-label': 'Усилие рассуждения', style: 'flex:1;min-width:0' },
-            [['auto', 'Рассуждение: как у модели'], ['low', 'Рассуждение: низкое'], ['medium', 'Рассуждение: среднее'], ['high', 'Рассуждение: высокое']].map(([v, label]) => h('option', { value: v, text: label })));
-        effort.value = s.models[`${tier}Effort`] || 'auto';
+            efforts.map(([v, label]) => h('option', { value: v, text: label })));
+        const savedEffort = s.models[`${tier}Effort`] || 'auto';
+        effort.value = tier === 'translate' && (savedEffort === 'low' || savedEffort === 'fast') ? 'fast' : savedEffort;
         effort.addEventListener('change', () => save({ models: { [`${tier}Effort`]: effort.value } }));
 
         const max = h('input', { class: 'input mono', type: 'number', inputmode: 'numeric', min: 0, step: 256, value: s.models[`${tier}MaxTokens`] || '', placeholder: 'авто', style: 'width:96px;text-align:right', 'aria-label': 'Лимит ответа, токенов' });
@@ -1282,7 +1361,8 @@ async function renderSettings(reload = true) {
                 recommendation,
                 tierBlock('scan', 'Дешёвая, для фоновой проверки'),
                 tierBlock('heavy', 'Сильная, для сложных правок'),
-                tierBlock('translate', 'Для перевода сообщений в чате (пусто — модель из «Какая модель для какой задачи»)'))),
+                tierBlock('translate', 'Для перевода сообщений в чате (пусто — модель из «Какая модель для какой задачи»)'),
+                translateKeyBlock())),
 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Какая модель для какой задачи' }),

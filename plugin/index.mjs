@@ -27,6 +27,7 @@ import { logUsage, usageSummary, refreshOpenRouterPrices, getPrices, setPrice, l
 import { cardHealth } from './lib/health.mjs';
 import { makeRecap } from './lib/recap.mjs';
 import { translateText } from './lib/translate.mjs';
+import { checkKey, listKeyModels, publicKeyConfig, readKeyConfig, saveKeyConfig } from './lib/translate-key.mjs';
 import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
 import { loadCatalog, installItem, installData } from './lib/catalog.mjs';
@@ -269,6 +270,7 @@ export async function init(router) {
         const state = await user.store.getState();
         const proposals = await user.store.getProposals();
         const llm = new LlmClient({ auth: user.auth, settings, stSettings });
+        const translateKey = publicKeyConfig(await readKeyConfig(user.store.dir));
         return {
             version: VERSION,
             // Where SillyTavern loaded the plugin from: shows which folder the installer must update.
@@ -276,6 +278,7 @@ export async function init(router) {
             user: user.ctx.handle,
             connection: connectionInfo(stSettings),
             models: { scan: llm.resolveTier('scan'), heavy: llm.resolveTier('heavy'), translate: llm.resolve('translate') },
+            translateKey: { active: translateKey.active, label: translateKey.label, model: translateKey.model },
             open: proposals.filter(p => OPEN_STATUSES.includes(p.status)).length,
             lastScan: state.lastScan ?? null,
             scanning: publicJob(runningJob(user.ctx.handle, 'scan')),
@@ -444,11 +447,38 @@ export async function init(router) {
     }));
 
     // ---------- translation of a chat message (companion's "Translate chat") ----------
-    router.post('/translate', route(async (req, user) => {
+    router.post('/translate', route(async (req, user, res) => {
         const text = String(req.body?.text ?? '');
         const lang = String(req.body?.lang || 'ru').slice(0, 12);
-        return { text: await translateText(await llmFor(user), text, lang) };
+        // The translator's own key, if one is saved and switched on; otherwise the tavern's connection.
+        const keyCfg = await readKeyConfig(user.store.dir);
+        const key = keyCfg.on && keyCfg.key && keyCfg.model && keyCfg.provider ? keyCfg : null;
+        // «Стоп» in the tavern closes the request: the provider's request is cut off too.
+        const controller = new AbortController();
+        res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+        const out = await translateText(key ? null : await llmFor(user), text, lang, { key, signal: controller.signal });
+        if (key && out.text) {
+            // Spending with the translator's key goes to the same screen as Korrektor's other calls.
+            const used = out.usage?.input || out.usage?.output ? out.usage : { input: Math.ceil(text.length / 3), output: Math.ceil(out.text.length / 3) };
+            await logUsage(user.store, { kind: 'korrektor', model: out.model, input: used.input, output: used.output, task: 'translate' }).catch(() => { });
+        }
+        delete out.usage;
+        return out;
     }));
+
+    // The translator's own key: saved here, never sent back (only its last four characters).
+    router.get('/translate/key', route(async (req, user) => publicKeyConfig(await readKeyConfig(user.store.dir))));
+    router.post('/translate/key', route(async (req, user) => {
+        const body = req.body || {};
+        let cfg = await saveKeyConfig(user.store.dir, body);
+        let check = null;
+        if (body.check && cfg.key) {
+            check = await checkKey(cfg);
+            cfg = await saveKeyConfig(user.store.dir, { checked: { ok: check.ok, message: check.message, at: new Date().toISOString() } });
+        }
+        return { ...publicKeyConfig(cfg), check };
+    }));
+    router.get('/translate/key/models', route(async (req, user) => ({ models: await listKeyModels(await readKeyConfig(user.store.dir)) })));
 
     // ---------- full backup of SillyTavern data ----------
     const uploads = path.join('korrektor', 'archives');
