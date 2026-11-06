@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { stripThinking } from './llm.mjs';
+import { CUT_REASONS, sseParser, streamDelta } from './sse.mjs';
 import { httpError, readJson, writeJson } from './util.mjs';
 
 export const KEY_FILE = 'translate-key.json';
@@ -165,6 +166,72 @@ async function call(cfg, method, urlPath, body, { timeout = 120000, signal = nul
     return data;
 }
 
+/** A request read as it comes (server-sent events); a provider that answers in one piece is read as usual. */
+async function streamCall(cfg, urlPath, body, onDelta, { timeout = 300000, signal = null, fetchImpl = globalThis.fetch } = {}) {
+    const base = baseUrl(cfg);
+    if (!base) throw httpError(400, 'Не указан адрес сервера ключа');
+    const signals = [AbortSignal.timeout(timeout), signal].filter(Boolean);
+    let res;
+    try {
+        res = await fetchImpl(`${base}${urlPath}`, {
+            method: 'POST',
+            headers: { ...headersFor(cfg), Accept: 'text/event-stream' },
+            body: JSON.stringify({ ...body, stream: true }),
+            signal: signals.length > 1 && AbortSignal.any ? AbortSignal.any(signals) : signals[0],
+        });
+    } catch (error) {
+        if (signal?.aborted) throw httpError(499, 'Остановлено');
+        if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw httpError(504, `${PROVIDERS[cfg.provider]?.label || 'Сервер'} не ответил за ${Math.round(timeout / 1000)} с`);
+        throw httpError(502, `Нет связи с ${base}: ${error.cause?.code || error.message}`);
+    }
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        let data = null;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            data = null;
+        }
+        throw httpError(res.status === 401 || res.status === 403 ? 401 : 502, `Ключ для перевода: ${reasonOf(res.status, data, text)}`);
+    }
+    let text = '';
+    let finish = null;
+    let failure = '';
+    let plain = '';
+    const parser = sseParser((json) => {
+        const delta = streamDelta(json);
+        if (delta.error) failure = delta.error;
+        if (delta.text) {
+            text += delta.text;
+            onDelta?.(text);
+        }
+        if (delta.finish) finish = delta.finish;
+    });
+    const decoder = new TextDecoder();
+    try {
+        for await (const chunk of res.body) {
+            const piece = typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+            if (!parser.events && plain.length < 2_000_000) plain += piece;
+            parser.push(piece);
+        }
+    } catch (error) {
+        if (signal?.aborted) throw httpError(499, 'Остановлено');
+        throw httpError(502, `Ключ для перевода: ответ оборвался (${error.message})`);
+    }
+    parser.end();
+    if (failure) throw httpError(502, `Ключ для перевода: ${failure}`);
+    if (!parser.events) {
+        let data = null;
+        try {
+            data = JSON.parse(plain);
+        } catch {
+            throw httpError(502, 'Ключ для перевода: сервер ответил не так, как ожидалось — проверьте адрес');
+        }
+        return { data, text: '', finish: null, plain: true };
+    }
+    return { data: null, text, finish, plain: false };
+}
+
 // Claude models that take output_config.effort (older ones reject it).
 const CLAUDE_EFFORT = /claude-(opus-4-[5-9]|sonnet-4-6|opus-5|sonnet-5|haiku-5|fable|mythos)/;
 const OPENAI_REASONING = /(^|\/)(gpt-5|o[1-9])/;
@@ -173,7 +240,7 @@ const OPENAI_REASONING = /(^|\/)(gpt-5|o[1-9])/;
  * One request with the translator's key. Returns { text, cut, model, usage }:
  * cut = the answer stopped at the length limit (the end of the translation is missing).
  */
-export async function completeWithKey(cfg, { system, user, maxTokens = 4096, signal = null, fetchImpl, strip = true } = {}) {
+export async function completeWithKey(cfg, { system, user, maxTokens = 4096, signal = null, fetchImpl, strip = true, onDelta = null } = {}) {
     if (!cfg?.key) throw httpError(400, 'Ключ для перевода не сохранён');
     if (!cfg.model) throw httpError(400, 'Укажите модель для ключа перевода');
     const timeout = Math.min(300000, 60000 + String(user || '').length * 40);
@@ -181,6 +248,12 @@ export async function completeWithKey(cfg, { system, user, maxTokens = 4096, sig
         const body = { model: cfg.model, max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] };
         // Translation needs little thinking: faster and cheaper.
         if (CLAUDE_EFFORT.test(cfg.model)) body.output_config = { effort: 'low' };
+        if (onDelta) {
+            const streamed = await streamCall(cfg, '/messages', body, onDelta, { timeout, signal, fetchImpl });
+            if (!streamed.plain) {
+                return { text: strip ? stripThinking(streamed.text) : streamed.text.trim(), cut: CUT_REASONS.has(streamed.finish), model: cfg.model, usage: null };
+            }
+        }
         const data = await call(cfg, 'POST', '/messages', body, { timeout, signal, fetchImpl });
         if (data.stop_reason === 'refusal') throw httpError(502, 'Модель отказалась переводить этот текст');
         const text = (data.content || []).filter(b => b?.type === 'text').map(b => b.text).join('');
@@ -199,15 +272,29 @@ export async function completeWithKey(cfg, { system, user, maxTokens = 4096, sig
         body.max_tokens = maxTokens;
     }
     if (cfg.provider === 'openrouter') body.reasoning = { effort: 'low', exclude: true };
+    if (onDelta) {
+        const streamed = await streamCall(cfg, '/chat/completions', body, onDelta, { timeout, signal, fetchImpl });
+        if (!streamed.plain) {
+            return { text: strip ? stripThinking(streamed.text) : streamed.text.trim(), cut: CUT_REASONS.has(streamed.finish), model: cfg.model, usage: null };
+        }
+        // A server that ignores «stream»: its whole answer is in streamed.data.
+        return fromChat(streamed.data, cfg, strip, onDelta);
+    }
     const data = await call(cfg, 'POST', '/chat/completions', body, { timeout, signal, fetchImpl });
-    const choice = data.choices?.[0] || {};
+    return fromChat(data, cfg, strip);
+}
+
+/** An OpenAI-style answer in one piece. */
+function fromChat(data, cfg, strip, onDelta = null) {
+    const choice = data?.choices?.[0] || {};
     const content = choice.message?.content;
     const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map(p => (typeof p === 'string' ? p : p?.text || '')).join('') : String(choice.text || '');
+    onDelta?.(text);
     return {
         text: strip ? stripThinking(text) : text.trim(),
         cut: choice.finish_reason === 'length' || choice.finish_reason === 'max_tokens',
-        model: data.model || cfg.model,
-        usage: { input: Number(data.usage?.prompt_tokens) || 0, output: Number(data.usage?.completion_tokens) || 0 },
+        model: data?.model || cfg.model,
+        usage: { input: Number(data?.usage?.prompt_tokens) || 0, output: Number(data?.usage?.completion_tokens) || 0 },
     };
 }
 

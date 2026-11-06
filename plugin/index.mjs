@@ -467,7 +467,9 @@ export async function init(router) {
         const controller = new AbortController();
         res.on('close', () => { if (!res.writableEnded) controller.abort(); });
         const context = typeof req.body?.context === 'string' ? req.body.context : '';
-        const out = await translateText(key ? null : await llmFor(user), text, lang, { key, signal: controller.signal, context });
+        const llm = key ? null : await llmFor(user);
+        if (req.body?.stream) return streamTranslation(res, user, llm, text, lang, { key, signal: controller.signal, context });
+        const out = await translateText(llm, text, lang, { key, signal: controller.signal, context });
         if (key && out.text) {
             // Spending with the translator's key goes to the same screen as Korrektor's other calls.
             const used = out.usage?.input || out.usage?.output ? out.usage : { input: Math.ceil(text.length / 3), output: Math.ceil(out.text.length / 3) };
@@ -476,6 +478,59 @@ export async function init(router) {
         delete out.usage;
         return out;
     }));
+
+    /**
+     * The translation as it is written, one JSON line at a time: {"d": "more text"} while it grows,
+     * {"k": 1} now and then while the model is still thinking, {"done": true, …} or {"error": "…"} at the end.
+     */
+    async function streamTranslation(res, user, llm, text, lang, options) {
+        res.status(200);
+        res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+        // no-transform: SillyTavern's compression must not hold the lines back.
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders?.();
+        const send = (obj) => {
+            if (res.writableEnded) return;
+            res.write(`${JSON.stringify(obj)}\n`);
+            res.flush?.();
+        };
+        let sent = 0;
+        let pending = '';
+        let timer = null;
+        const flushDelta = () => {
+            timer = null;
+            if (pending) send({ d: pending });
+            pending = '';
+        };
+        const alive = setInterval(() => send({ k: 1 }), 10000);
+        try {
+            const out = await translateText(llm, text, lang, {
+                ...options,
+                onDelta: (soFar) => {
+                    // Only what is new since last time; a few at once, not every token.
+                    if (soFar.length <= sent) return;
+                    pending += soFar.slice(sent);
+                    sent = soFar.length;
+                    if (!timer) timer = setTimeout(flushDelta, 120);
+                },
+            });
+            clearTimeout(timer);
+            flushDelta();
+            if (options.key && out.text) {
+                const used = out.usage?.input || out.usage?.output ? out.usage : { input: Math.ceil(text.length / 3), output: Math.ceil(out.text.length / 3) };
+                await logUsage(user.store, { kind: 'korrektor', model: out.model, input: used.input, output: used.output, task: 'translate' }).catch(() => { });
+            }
+            delete out.usage;
+            send({ done: true, ...out });
+        } catch (error) {
+            clearTimeout(timer);
+            send({ error: error.message, status: Number(error.status) || 500 });
+        } finally {
+            clearInterval(alive);
+            res.end();
+        }
+    }
 
     // The translator's own key: saved here, never sent back (only its last four characters).
     router.get('/translate/key', route(async (req, user) => publicKeyConfig(await readKeyConfig(user.store.dir))));

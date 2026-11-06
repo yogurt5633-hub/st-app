@@ -32,7 +32,7 @@ function translateEffort(llm) {
  * translate-key.mjs) the request goes straight to that provider; otherwise through SillyTavern.
  * Returns { text, cut, model, via, ms }: cut = the answer hit the length limit, so its end is missing.
  */
-export async function translateText(llm, text, lang, { key = null, signal = null, context = '' } = {}) {
+export async function translateText(llm, text, lang, { key = null, signal = null, context = '', onDelta = null } = {}) {
     const source = String(text ?? '');
     if (!source.trim()) return { text: '', cut: false, model: '', via: '', ms: 0 };
     if (source.length > MAX_TRANSLATE_CHARS) throw httpError(413, 'Сообщение слишком длинное для перевода моделью');
@@ -57,9 +57,13 @@ export async function translateText(llm, text, lang, { key = null, signal = null
     const started = Date.now();
     let reply;
     let via;
+    // onDelta: the translation is read as the model writes it (shown in the message as it grows).
     if (key) {
-        reply = await completeWithKey(key, { system: prompt, user: source, maxTokens, signal, strip: false });
+        reply = await completeWithKey(key, { system: prompt, user: source, maxTokens, signal, strip: false, onDelta });
         via = 'key';
+    } else if (onDelta && llm.completeStream) {
+        reply = await llm.completeStream({ task: 'translate', system: prompt, user: source, maxTokens, effort: translateEffort(llm), strip: false, onDelta, signal });
+        via = 'tavern';
     } else {
         reply = await llm.complete({ task: 'translate', system: prompt, user: source, maxTokens, effort: translateEffort(llm), strip: false });
         via = 'tavern';

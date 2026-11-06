@@ -3,6 +3,7 @@ import https from 'node:https';
 import { chatModelFor, connectionBody, connectionInfo, textgenInfo } from './st-settings.mjs';
 import { httpError } from './util.mjs';
 import { estimateTokens } from './tokens.mjs';
+import { CUT_REASONS, sseParser, streamDelta } from './sse.mjs';
 
 // Model calls go through SillyTavern's own endpoint
 // /api/backends/chat-completions/generate on the loopback address.
@@ -109,6 +110,51 @@ function postLoopback(auth, urlPath, body, host) {
         req.on('error', reject);
         req.end(payload);
     });
+}
+
+/** The same request, read as it comes: onChunk(text) for every piece of the answer. */
+function streamLoopback(auth, urlPath, body, host, onChunk, signal) {
+    const payload = Buffer.from(JSON.stringify(body), 'utf8');
+    const transport = auth.tls ? https : http;
+    const headers = {
+        'Content-Type': 'application/json',
+        'Content-Length': payload.length,
+        'Accept': 'text/event-stream',
+    };
+    if (auth.cookie) headers.Cookie = auth.cookie;
+    if (auth.authorization) headers.Authorization = auth.authorization;
+    if (auth.csrf) headers['X-CSRF-Token'] = auth.csrf;
+    return new Promise((resolve, reject) => {
+        const req = transport.request({ host, port: auth.port, path: urlPath, method: 'POST', headers, rejectUnauthorized: false, timeout: REQUEST_TIMEOUT_MS }, res => {
+            res.setEncoding('utf8');
+            if (res.statusCode >= 400) {
+                let text = '';
+                res.on('data', chunk => { text += chunk; });
+                res.on('end', () => resolve({ status: res.statusCode, text }));
+                res.on('error', reject);
+                return;
+            }
+            res.on('data', chunk => onChunk(chunk));
+            res.on('end', () => resolve({ status: res.statusCode, text: '' }));
+            res.on('error', reject);
+        });
+        const onAbort = () => req.destroy(Object.assign(new Error('Остановлено'), { stopped: true }));
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener('abort', onAbort, { once: true });
+        req.on('close', () => signal?.removeEventListener('abort', onAbort));
+        req.on('timeout', () => req.destroy(new Error('Модель не ответила за 10 минут')));
+        req.on('error', reject);
+        req.end(payload);
+    });
+}
+
+async function streamToSillyTavern(auth, urlPath, body, onChunk, signal) {
+    try {
+        return await streamLoopback(auth, urlPath, body, '127.0.0.1', onChunk, signal);
+    } catch (error) {
+        if (error.code === 'ECONNREFUSED') return streamLoopback(auth, urlPath, body, '::1', onChunk, signal);
+        throw error;
+    }
 }
 
 async function postToSillyTavern(auth, urlPath, body) {
@@ -367,6 +413,82 @@ export class LlmClient {
             }
         }
         return { text, model: label, source: r.source, tier: r.tier, cut: wasCut(data) };
+    }
+
+    /**
+     * Like complete(), but the answer is read as the model writes it: onDelta(textSoFar) is
+     * called as it grows. Text Completion is not streamed here: it comes whole, once.
+     */
+    async completeStream({ task, system, user, maxTokens, effort = null, strip = true, onDelta = null, signal = null }) {
+        if (!this.available) {
+            throw httpError(409, 'Нет связи с сессией SillyTavern. Откройте приложение, чтобы проверка с моделью заработала');
+        }
+        const r = this.resolve(task);
+        if (r.api !== 'chat') {
+            const out = await this.complete({ task, system, user, maxTokens, effort, strip });
+            onDelta?.(out.text);
+            return out;
+        }
+        if (maxTokens) r.maxTokens = maxTokens;
+        if (effort) r.effort = effort;
+        if (!r.source) throw httpError(400, 'В SillyTavern не выбран источник Chat Completion');
+        if (!r.model) throw httpError(400, 'Не задана модель для этой задачи. Укажите её в настройках');
+        const body = { ...this.chatBody(r, system, user), stream: true };
+        const label = r.model || r.source;
+        let text = '';
+        let finish = null;
+        let failure = '';
+        // A proxy that ignores «stream» answers in one piece: kept to read it the usual way.
+        let plain = '';
+        const parser = sseParser((json) => {
+            const delta = streamDelta(json);
+            if (delta.error) failure = delta.error;
+            if (delta.text) {
+                text += delta.text;
+                onDelta?.(text);
+            }
+            if (delta.finish) finish = delta.finish;
+        });
+        this.calls++;
+        const res = await streamToSillyTavern(this.auth, GENERATE_PATH, body, (chunk) => {
+            if (!parser.events && plain.length < 2_000_000) plain += chunk;
+            parser.push(chunk);
+        }, signal);
+        parser.end();
+        if (res.status === 403) throw httpError(401, 'SillyTavern отклонил запрос: сессия устарела. Откройте приложение заново');
+        if (res.status >= 400) {
+            let data = null;
+            try {
+                data = JSON.parse(res.text);
+            } catch {
+                data = res.text;
+            }
+            const message = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.message === 'string' ? data.message : typeof data === 'string' && data ? data.slice(0, 300) : 'подробности в консоли SillyTavern';
+            throw httpError(502, `Модель ${label} вернула ошибку: ${message}`);
+        }
+        if (failure) throw httpError(502, `Модель ${label} вернула ошибку: ${failure}`);
+        if (!parser.events) {
+            let data = null;
+            try {
+                data = JSON.parse(plain);
+            } catch {
+                data = plain;
+            }
+            if (data?.error) throw httpError(502, `Модель ${label} вернула ошибку: ${data.error.message || data.error}`);
+            text = extractText(data);
+            if (wasCut(data)) finish = 'length';
+            onDelta?.(text);
+        }
+        const out = strip ? stripThinking(text) : String(text).trim();
+        if (!out) throw httpError(502, `Модель ${label} вернула пустой ответ`);
+        if (this.onUsage) {
+            try {
+                await this.onUsage({ model: label, task, input: estimateTokens(JSON.stringify(body.messages)), output: estimateTokens(text) });
+            } catch {
+                // the spending log must never break a model call
+            }
+        }
+        return { text: out, model: label, source: r.source, tier: r.tier, cut: CUT_REASONS.has(finish) };
     }
 
     async completeJson(options) {

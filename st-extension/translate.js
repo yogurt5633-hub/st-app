@@ -22,7 +22,7 @@ const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
 const KEY_API = '/api/plugins/korrektor/translate/key';
 // The companion's version, for the journal (the same as in manifest.json).
-const COMPANION_VERSION = '0.4.23';
+const COMPANION_VERSION = '0.4.24';
 
 // ---------- journal ----------
 // What the translation did: requests, retries, cut answers, errors. Kept in this browser
@@ -375,26 +375,129 @@ async function free(provider, text, lang, signal) {
     return out;
 }
 
-async function viaModel(text, lang, signal, label = '', context = null) {
-    // X-Korrektor: the plugin may use this tab's session to reach the model.
-    const headers = { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' };
-    // A paragraph gets about a minute, a whole long reply up to four.
-    const limit = Math.min(240000, 45000 + text.length * 40);
-    const started = Date.now();
-    // context: the whole message, when this is one part of it (read for names and genders, not translated).
-    const body = context ? { text, lang, context } : { text, lang };
-    const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify(body) }, signal, limit, 'модель для перевода');
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-        tlog('error', `${label}модель: ${data.error || res.status} (${seconds(Date.now() - started)})`);
-        throw Object.assign(new Error(data.error || `модель: ${res.status}`), { fatal: res.status === 404 || res.status === 409 || res.status === 400 || res.status === 401 });
-    }
+/** What the plugin answered for one model translation: logged, checked, the text. */
+function modelResult(data, text, started, label) {
     const out = String(data.text ?? '');
     const via = data.via === 'key' ? 'свой ключ' : 'таверна';
     tlog(data.cut ? 'warn' : 'info', `${label}модель ${data.model || ''} (${via}): ${text.length} → ${out.length} зн. за ${seconds(Date.now() - started)}${data.cut ? ' · ответ оборвался на лимите длины' : ''}`);
     if (data.cut) throw Object.assign(new Error('модель: ответ оборвался на лимите длины'), { cut: true });
     if (!out.trim() && text.trim()) throw new Error('модель: пустой ответ');
     return out;
+}
+
+function modelError(message, status, started, label) {
+    tlog('error', `${label}модель: ${message} (${seconds(Date.now() - started)})`);
+    return Object.assign(new Error(message), { fatal: status === 404 || status === 409 || status === 400 || status === 401 });
+}
+
+/**
+ * One request to Korrektor's model. With `onStream(textSoFar)` the translation is read as the
+ * model writes it; the request then may last as long as the model keeps writing, but not 90 s of silence.
+ */
+async function viaModel(text, lang, signal, label = '', context = null, onStream = null) {
+    // X-Korrektor: the plugin may use this tab's session to reach the model.
+    const headers = { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' };
+    const started = Date.now();
+    // context: the whole message, when this is one part of it (read for names and genders, not translated).
+    const body = { text, lang, ...(context ? { context } : {}), ...(onStream ? { stream: true } : {}) };
+    if (!onStream) {
+        // A paragraph gets about a minute, a whole long reply up to four.
+        const limit = Math.min(240000, 45000 + text.length * 40);
+        const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify(body) }, signal, limit, 'модель для перевода');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw modelError(data.error || `модель: ${res.status}`, res.status, started, label);
+        return modelResult(data, text, started, label);
+    }
+    const limit = Math.min(360000, 90000 + text.length * 60);
+    const controller = new AbortController();
+    const onOuter = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', onOuter, { once: true });
+    let why = '';
+    let quiet = null;
+    const hush = () => {
+        clearTimeout(quiet);
+        quiet = setTimeout(() => { why = 'silent'; controller.abort(); }, 90000);
+    };
+    const total = setTimeout(() => { why = 'total'; controller.abort(); }, limit);
+    hush();
+    try {
+        const res = await fetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+        if (!/ndjson/.test(res.headers.get('content-type') || '')) {
+            // An older plugin, or an error before the translation started: one answer.
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw modelError(data.error || `модель: ${res.status}`, res.status, started, label);
+            return modelResult(data, text, started, label);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let soFar = '';
+        let done = null;
+        for (;;) {
+            const { value, done: end } = await reader.read();
+            if (end) break;
+            hush();
+            buffer += decoder.decode(value, { stream: true });
+            let at;
+            while ((at = buffer.indexOf('\n')) >= 0) {
+                const line = buffer.slice(0, at);
+                buffer = buffer.slice(at + 1);
+                if (!line.trim()) continue;
+                let msg;
+                try {
+                    msg = JSON.parse(line);
+                } catch {
+                    continue;
+                }
+                if (msg.d) {
+                    soFar += msg.d;
+                    try {
+                        onStream(soFar);
+                    } catch {
+                        // drawing is not the translation's business
+                    }
+                } else if (msg.error) {
+                    throw modelError(msg.error, msg.status, started, label);
+                } else if (msg.done) {
+                    done = msg;
+                }
+            }
+        }
+        if (!done) throw modelError('ответ оборвался', 0, started, label);
+        return modelResult(done, text, started, label);
+    } catch (error) {
+        if (signal?.aborted) throw Object.assign(new Error('Остановлено'), { fatal: true, stopped: true });
+        if (why) {
+            throw Object.assign(new Error(why === 'silent' ? 'модель для перевода молчит 90 с' : `модель для перевода не уложилась в ${Math.round(limit / 1000)} с`), { timeout: true });
+        }
+        throw error;
+    } finally {
+        clearTimeout(quiet);
+        clearTimeout(total);
+        signal?.removeEventListener('abort', onOuter);
+    }
+}
+
+/**
+ * A translation still being written, laid over its original: the translated text so far, then
+ * the paragraphs of the original it has not reached yet. Thinking at the start is not shown.
+ */
+export function alignPartial(orig, partial) {
+    let text = String(partial || '');
+    const think = text.match(/^\s*<(think|thinking)>/i);
+    if (think) {
+        const end = text.search(new RegExp(`</${think[1]}>`, 'i'));
+        if (end < 0) return orig;
+        text = text.slice(end + think[1].length + 3).replace(/^\s+/, '');
+    }
+    if (!text.trim()) return orig;
+    const source = String(orig).split(/\n[ \t]*\n/);
+    const started = text.split(/\n[ \t]*\n/).length;
+    const rest = source.slice(started);
+    // The whitespace at the end of the original part stays (it separates it from the next part).
+    const tail = String(orig).match(/\s*$/)[0];
+    return rest.length ? `${text.replace(/\s+$/, '')}\n\n${rest.join('\n\n').replace(/\s+$/, '')}${tail}` : `${text.replace(/\s+$/, '')}${tail}`;
 }
 
 /** One provider, one piece of text: `tries` attempts with growing pauses. */
@@ -483,6 +586,11 @@ export class Tracker {
         let partial = 0;
         const now = Date.now();
         for (const job of this.running) {
+            if (job.streamed) {
+                // Read as it is written: as far as the translation has got (about as long as its source).
+                partial += job.chars * Math.min(0.97, job.streamed / (job.chars * 1.1));
+                continue;
+            }
             // About how long a request takes: a free translator a second or two, a model longer for longer text.
             const expected = this.engine === 'model' ? Math.max(4000, job.chars * 12) : 1500;
             partial += job.chars * 0.9 * (1 - Math.exp(-(now - job.since) / expected));
@@ -498,12 +606,14 @@ const PROBLEMS = { untranslated: 'вернул текст без перевод�
  * untranslated or cut short is split in half and tried again (twice at most); if it still is,
  * the provider has failed (the model keeps such a small part in the original instead).
  */
-async function byProvider(provider, text, lang, run, limit = LIMITS[provider], depth = 0) {
+async function byProvider(provider, text, lang, run, limit = LIMITS[provider], depth = 0, onStream = null) {
     const { signal, tracker, pool, label } = run;
-    const call = provider === 'model' ? (part, context = run.context) => viaModel(part, lang, signal, label, context) : (part) => free(provider, part, lang, signal);
+    const call = provider === 'model' ? (part, context = run.context, stream = null) => viaModel(part, lang, signal, label, context, stream) : (part) => free(provider, part, lang, signal);
     let pieces = provider === 'model' ? splitParts(text, limit) : chunkText(text, limit);
     // One big block without blank lines: cut at lines and sentences instead.
     if (pieces.length === 1 && text.length > limit) pieces = chunkText(text, limit);
+    // Read as it is written: only a piece that is the whole part shown, the first try.
+    const stream = depth === 0 && pieces.length === 1 ? onStream : null;
     const outs = await Promise.all(pieces.map(async (part) => {
         if (!part.trim()) return part;
         const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
@@ -512,7 +622,11 @@ async function byProvider(provider, text, lang, run, limit = LIMITS[provider], d
         let problem = '';
         const started = Date.now();
         try {
-            const raw = await pool(provider, () => withRetries(() => call(core), 2));
+            const onText = stream ? (soFar) => {
+                if (job) job.streamed = soFar.length;
+                stream(soFar);
+            } : null;
+            const raw = await pool(provider, () => withRetries(() => (onText ? call(core, run.context, onText) : call(core)), 2));
             result = fixMarkup(core, decodeEntities(core, raw));
             // Far longer than its part: the model translated the whole message it was given to read. Once more without it.
             if (provider === 'model' && run.context && letterCount(result) > letterCount(core) * 2 + 200) {
@@ -565,7 +679,7 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
         if (!pools.has(provider)) pools.set(provider, limiter(CONCURRENCY[provider] || 3));
         return pools.get(provider)(fn);
     };
-    const translateRun = async (run, piece, limit) => {
+    const translateRun = async (run, piece, limit, onStream = null) => {
         if (!piece.trim()) return piece;
         const alive = order.filter((p) => (strikes.get(p) || 0) < 2);
         if (!alive.length) {
@@ -576,7 +690,7 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
         let last;
         for (const provider of alive) {
             try {
-                const out = await byProvider(provider, piece, lang, run, limit);
+                const out = await byProvider(provider, piece, lang, run, limit, 0, onStream);
                 strikes.set(provider, 0);
                 if (order[0] !== provider) order = [provider, ...order.filter((p) => p !== provider)];
                 return out;
@@ -662,15 +776,17 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
                 previewTimer = null;
                 if (closed) return;
                 try {
-                    onPreview(slots.map(x => x.value ?? x.orig).join(''));
+                    onPreview(slots.map(x => x.value ?? (x.partial ? alignPartial(x.orig, x.partial) : x.orig)).join(''));
                 } catch {
                     // the message is gone from the screen
                 }
             }, 120);
         };
+        // work: the text itself, a promise of its translation, or a function given the slot (to show it as it is written).
         const add = (orig, work) => {
-            const one = { orig, value: typeof work === 'string' ? work : null };
-            one.promise = typeof work === 'string' ? Promise.resolve(work) : work.then((value) => {
+            const one = { orig, value: typeof work === 'string' ? work : null, partial: null };
+            const pending = typeof work === 'function' ? work(one) : work;
+            one.promise = typeof pending === 'string' ? Promise.resolve(pending) : pending.then((value) => {
                 one.value = value;
                 preview();
                 return value;
@@ -691,7 +807,7 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
                         continue;
                     }
                     const limit = parts.length === 1 && text.length > MODEL_WHOLE ? MODEL_PART : undefined;
-                    add(part, translateRun(run, part, limit).catch((error) => {
+                    add(part, (slot) => translateRun(run, part, limit, onPreview ? (soFar) => { slot.partial = soFar; preview(); } : null).catch((error) => {
                         if (!error.untranslated) throw error;
                         tlog('warn', `${label}модель вернула текст без перевода — оставлен оригинал${parts.length > 1 ? ' этой части' : ''}`);
                         run.partial++;
@@ -1258,6 +1374,7 @@ async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) 
         showMessage(id, message);
         await ctx().saveChat();
         tlog(partial ? 'warn' : 'info', `${label}готово за ${seconds(Date.now() - started)}: ${source.length} → ${text.length} зн.${partial ? ` · кусков в оригинале: ${partial}` : ''}`);
+        slowHint(engine, Date.now() - started);
         return true;
     } catch (error) {
         if (error.stopped) {
@@ -1275,6 +1392,17 @@ async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) 
         // A part shown and then stopped or failed: the message goes back to what is saved.
         endPreview(id, message);
     }
+}
+
+let slowHinted = false;
+
+/** A model translation that took long: once per visit, how to make it quicker. */
+function slowHint(engine, ms) {
+    if (engine !== 'model' || ms < 45000 || slowHinted) return;
+    slowHinted = true;
+    const model = keyState?.active ? keyState.model : modelChoice.model || 'модель из настроек Корректора';
+    tlog('warn', `перевод моделью ${model} идёт долго (${seconds(ms)})`);
+    toastr.info(`Перевод моделью ${model} занял ${Math.round(ms / 1000)} с. Быстрее — дать переводу быструю модель (Haiku, Flash, mini): «Перевод» → «Модель для перевода» или «Свой ключ для перевода»`, 'Корректор', { timeOut: 12000 });
 }
 
 /** A new reply (or the greeting of a new chat), if «Переводить новые ответы» is on. */

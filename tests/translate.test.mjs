@@ -330,7 +330,8 @@ test('translate: shown as it goes — finished parts take the place of the origi
         bodies.push(body);
         // Parts answer at different times: the later ones take longer.
         await new Promise(r => setTimeout(r, 40 + 150 * n++));
-        return { ok: true, status: 200, json: async () => ({ text: body.text.replace(/[A-Za-z]+/g, 'слово'), model: 'm' }) };
+        // An older plugin: one answer, not a stream.
+        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ text: body.text.replace(/[A-Za-z]+/g, 'слово'), model: 'm' }) };
     };
     const paragraph = 'The knight walks into the tavern, looks around and orders some ale for his tired friends.';
     const reply = Array.from({ length: 30 }, (_, i) => `${paragraph} (${i})`).join('\n\n');
@@ -377,4 +378,58 @@ test('translate: free translators show their finished pieces as they go too', as
     assert.equal(out, 'слово слово слово слово.\nЛира молчит.\nслово слово слово.\nЛира кивает.\nслово слово слово слово.');
     assert.ok(previews.some(p => /слово/.test(p) && /[A-Za-z]{4}/.test(p)), 'a preview mixes finished and waiting pieces');
     assert.ok(previews.every(p => p.split('\n').length === 5));
+});
+
+test('translate: read as the model writes it — the words appear over the original from the top', async () => {
+    const { translator, alignPartial } = await import('../st-extension/translate.js');
+    fakeTavern();
+    const bodies = [];
+    globalThis.fetch = async (url, init) => {
+        const body = JSON.parse(init.body);
+        bodies.push(body);
+        const words = body.text.replace(/[A-Za-z]+/g, 'слово');
+        const encoder = new TextEncoder();
+        // The plugin's stream: the translation in small pieces, then the end.
+        const stream = new ReadableStream({
+            async start(controller) {
+                for (let i = 0; i < words.length; i += 10) {
+                    controller.enqueue(encoder.encode(JSON.stringify({ d: words.slice(i, i + 10) }) + '\n'));
+                    await new Promise(r => setTimeout(r, 60));
+                }
+                controller.enqueue(encoder.encode(JSON.stringify({ done: true, text: words, model: 'm', via: 'tavern' }) + '\n'));
+                controller.close();
+            },
+        });
+        return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/x-ndjson' } });
+    };
+    const reply = ['The knight walks into the tavern.', 'He orders some cold ale.', 'Then he sits down by the fire.'].join('\n\n');
+    const previews = [];
+    const out = await translator('model', 'ru', null, null, { onPreview: (t) => previews.push(t) })(reply);
+    assert.equal(out, 'слово слово слово слово слово слово.\n\nслово слово слово слово слово.\n\nслово слово слово слово слово слово слово.');
+    assert.ok(bodies.every(b => b.stream === true), 'asked as a stream');
+    assert.ok(previews.some(p => /^слово/.test(p) && /fire/.test(p)), `the top is translated while the end is still the original: ${previews.join(' | ')}`);
+    // Laying a part of the translation over the original.
+    assert.equal(alignPartial('One.\n\nTwo.\n\nThree.', 'Раз.\n\nДв'), 'Раз.\n\nДв\n\nThree.');
+    assert.equal(alignPartial('One.\n\nTwo.', '<think>hm'), 'One.\n\nTwo.', 'thinking is not shown');
+    assert.equal(alignPartial('One.\n\nTwo.\n\n', 'Раз.'), 'Раз.\n\nTwo.\n\n', 'the blank lines after a part stay');
+});
+
+test('plugin: a streamed answer is read as it comes — OpenAI style, Claude style, Gemini style; a cut is seen', async () => {
+    const { sseParser, streamDelta, CUT_REASONS } = await import('../plugin/lib/sse.mjs');
+    const read = (raw) => {
+        let text = '';
+        let finish = null;
+        const parser = sseParser((json) => { const d = streamDelta(json); text += d.text || ''; if (d.finish) finish = d.finish; });
+        // Split at odd places, as the network does.
+        for (let i = 0; i < raw.length; i += 7) parser.push(raw.slice(i, i + 7));
+        parser.end();
+        return { text, cut: CUT_REASONS.has(finish) };
+    };
+    const openai = 'data: {"choices":[{"delta":{"content":"При"}}]}\n\ndata: {"choices":[{"delta":{"reasoning":"x","content":"вет"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n';
+    assert.deepEqual(read(openai), { text: 'Привет', cut: true });
+    const claude = 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hm"}}\n\nevent: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Мир"}}\n\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n';
+    assert.deepEqual(read(claude), { text: 'Мир', cut: false });
+    const gemini = 'data: {"candidates":[{"content":{"parts":[{"text":"думаю","thought":true},{"text":"Да"}]},"finishReason":"MAX_TOKENS"}]}\r\n\r\n';
+    assert.deepEqual(read(gemini), { text: 'Да', cut: true });
+    assert.equal(streamDelta({ error: { message: 'bad' } }).error, 'bad');
 });
