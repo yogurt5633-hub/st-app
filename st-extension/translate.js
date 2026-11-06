@@ -95,11 +95,18 @@ function latinShare(text) {
  */
 export function looksUntranslated(source, out, lang) {
     if (lang === 'en' || latinShare(source) < 0.6) return false;
+    // Only ordinary words count (lower-case, 3+ letters): names, places, dates and terms
+    // in Latin letters are fine in a translation — «Room 314, Calloway Hall» stays as is.
+    const words = String(source).match(/(?<![\p{L}])[a-z][a-z']{2,}(?![\p{L}])/gu) || [];
+    if (!words.length) return false;
     const src = String(source).replace(/\s+/g, ' ').trim();
     const res = String(out).replace(/\s+/g, ' ').trim();
-    if ((src.match(/[A-Za-z]/g) || []).length < 12) return false;
-    if (src === res) return true;
-    return CYRILLIC_TARGETS.has(lang) && latinShare(res) > 0.35;
+    if (src === res) return words.length >= 2;
+    if (words.length < 4) return false;
+    const left = new Set((res.match(/(?<![\p{L}])[a-z][a-z']{2,}(?![\p{L}])/gu) || []));
+    const kept = words.filter(w => left.has(w)).length;
+    // Half or more of the ordinary words came back as they were: (part of) the text is not translated.
+    return kept / words.length > 0.4;
 }
 
 // ---------- markup the translators break ----------
@@ -176,7 +183,9 @@ async function viaModel(text, lang) {
     const res = await fetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(data.error || `модель: ${res.status}`), { fatal: res.status === 404 || res.status === 409 || res.status === 400 });
-    return String(data.text ?? '');
+    const out = String(data.text ?? '');
+    if (!out.trim() && text.trim()) throw new Error('модель: пустой ответ');
+    return out;
 }
 
 /** One provider, one piece of text: `tries` attempts with growing pauses. */
@@ -285,17 +294,37 @@ export function translator(engine, lang) {
     // Line by line: lines in the target language, lines without letters (borders, numbers) and
     // table borders stay exactly as they are, so status blocks and tables keep their shape.
     // Neighbouring lines that need translating go together, for context.
+    let partial = 0;
     const translatePiece = async (piece) => {
         if (!piece.trim()) return piece;
         const out = [];
         let group = [];
         const flush = async () => {
             if (!group.length) return;
-            out.push(await translateRun(group.join('\n')));
+            // Blank lines at the end of a group stay outside it.
+            let tail = 0;
+            while (tail < group.length && !group[group.length - 1 - tail].trim()) tail++;
+            const body = group.slice(0, group.length - tail);
+            const blanks = group.slice(group.length - tail);
             group = [];
+            if (body.length) {
+                const source = body.join('\n');
+                try {
+                    out.push(await translateRun(source));
+                } catch (error) {
+                    // One stubborn piece does not cost the whole reply: it stays in the original.
+                    if (!error.untranslated) throw error;
+                    out.push(source);
+                    partial++;
+                }
+            }
+            out.push(...blanks);
         };
         for (const line of piece.split('\n')) {
-            if (!needsTranslation(line, lang)) {
+            if (!line.trim() && group.length) {
+                // Paragraphs of one reply go together: fewer requests, more context.
+                group.push(line);
+            } else if (!needsTranslation(line, lang)) {
                 await flush();
                 out.push(line);
             } else if (TABLE_ROW.test(line)) {

@@ -117,3 +117,30 @@ test('translate: status blocks, tables and lines already in Russian keep their s
     assert.equal(alreadyTarget('Лира усмехнулась, глядя на Nika', 'ru'), true);
     assert.equal(alreadyTarget('Lira smiled at Ника', 'ru'), false);
 });
+
+test('translate: a reply that starts with names and places is translated, the names may stay in Latin', async () => {
+    const { translator, looksUntranslated } = await import('../st-extension/translate.js');
+    const calls = [];
+    globalThis.SillyTavern = { getContext: () => ({ getRequestHeaders: () => ({}), extensionSettings: {} }) };
+    // Like a model: ordinary words translated, names, places and dates kept as they are.
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        calls.push(text);
+        return { ok: true, status: 200, json: async () => ({ text: text.replace(/(?<![A-Za-z])[a-z][a-z']*/g, 'слово') }) };
+    };
+    const reply = [
+        'Friday, November 6, 2026, 23:41',
+        'Room 314, Calloway Hall, Whitmore University, Hadley Falls, Massachusetts',
+        '',
+        'Nico was not waiting up.',
+        '',
+        'He was working. There was a difference, and the difference was the half-finished model.',
+    ].join('\n');
+    const out = await translator('model', 'ru')(reply);
+    assert.match(out, /Room 314, Calloway Hall, Whitmore University/);
+    assert.match(out, /Nico слово слово слово слово\./);
+    assert.equal(out.split('\n').length, reply.split('\n').length, 'paragraphs keep their places');
+    assert.equal(calls.length, 1, 'one reply is one request to the model');
+    assert.equal(looksUntranslated('Room 314, Calloway Hall, Whitmore University, Hadley Falls', 'Комната 314, Calloway Hall, Whitmore University, Hadley Falls', 'ru'), false);
+    assert.equal(looksUntranslated('He was working. There was a difference.', 'Он работал. There was a difference.', 'ru'), true);
+});
