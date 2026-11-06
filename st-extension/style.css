@@ -41,8 +41,6 @@
 .kt-bar { height: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.25); overflow: hidden; margin-top: 6px; }
 .kt-bar i { display: block; height: 100%; width: 0; background: var(--SmartThemeQuoteColor, #e3a54a); transition: width 0.2s linear; }
 .kg-model select { width: 100%; margin-bottom: 10px; }
-/* Translation of a reply while it is being written */
-.kt-live { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--SmartThemeQuoteColor, #e3a54a); background: rgba(127, 127, 127, 0.1); border-radius: 6px; white-space: pre-wrap; font-size: 0.95em; opacity: 0.9; }
 
 /* Inside the Korrektor app: the same look as the app and its sheets (colours come from the app). */
 html.korrektor-app .kg-sheet { background: rgba(0, 0, 0, 0.5); }
@@ -67,4 +65,3 @@ html.korrektor-app .kg-win-head { background: var(--ka-raised); }
 html.korrektor-app .kt-task { background: var(--ka-bg); color: var(--ka-text); border-color: var(--ka-line); border-radius: 14px; }
 html.korrektor-app .kt-line b { color: var(--ka-accent); }
 html.korrektor-app .kt-bar { background: var(--ka-raised); }
-html.korrektor-app .kt-live { border-left-color: var(--ka-accent); }

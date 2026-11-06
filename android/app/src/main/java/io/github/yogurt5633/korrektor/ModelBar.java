@@ -143,7 +143,7 @@ final class ModelBar {
         final boolean[] replies = {oursState != null ? oursState.optBoolean("auto") || "responses".equals(mode) || "both".equals(mode)
                 : "responses".equals(mode) || "both".equals(mode)};
         final boolean[] mine = {"inputs".equals(mode) || "both".equals(mode)};
-        sheet.toggle("Переводить новые ответы", oursState != null ? "Абзацы переводятся, пока модель пишет. Модель видит оригинал" : "Перевод показывается вместо текста, модель видит оригинал", replies[0], v -> replies[0] = v);
+        sheet.toggle("Переводить новые ответы", oursState != null ? "Когда ответ дописан. Модель видит оригинал" : "Перевод показывается вместо текста, модель видит оригинал", replies[0], v -> replies[0] = v);
         sheet.toggle("Мои сообщения — на английский", "Перед отправкой, переводчиком таверны", mine[0], v -> mine[0] = v);
 
         final String[] lang = {oursState != null && !oursState.optString("lang").isEmpty() ? oursState.optString("lang") : tr.optString("lang")};

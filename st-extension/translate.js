@@ -8,7 +8,7 @@
 //  - long text goes in small pieces, and a piece that comes back untranslated is
 //    split further or given to the next translator;
 //  - a range (last 20 / 50 / all), progress, a Stop button, failed messages can be retried;
-//  - optionally every new reply is translated as it arrives.
+//  - optionally every new reply is translated once it is fully written.
 // The translation goes to message.extra.display_text — the same place SillyTavern's
 // translator uses: the original text stays, and "Show original" brings it back.
 
@@ -48,14 +48,12 @@ export function settings() {
         range: saved.range || 'last20',
         mine: saved.mine ?? true,
         auto: Boolean(saved.auto),
-        // Translated paragraphs shown under a reply while it is being written.
-        live: Boolean(saved.live),
         again: false,
     };
 }
 
 function saveSettings(s) {
-    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto, live: s.live });
+    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto });
 }
 
 // ---------- splitting ----------
@@ -746,125 +744,6 @@ function tavernModels() {
     return { source, models: models.slice(0, 1500) };
 }
 
-// ---------- while a reply is being written ----------
-// Each finished paragraph is translated in the background, while the model writes the next one.
-// When the reply is done only the last paragraph is left. The thinking is never sent: nothing
-// is taken until the reasoning block is closed, and the final translation is assembled from the
-// finished message (thinking cut out), so a paragraph of thinking could never get into it anyway.
-
-let live = null;
-
-function resetLive() {
-    live?.controller.abort();
-    live?.box?.remove();
-    live = null;
-}
-
-/** The reply part of the streamed text, or null while the model is still thinking. */
-function replyPart(text) {
-    const r = ctx().powerUserSettings?.reasoning;
-    if (!r?.auto_parse || !r.prefix || !r.suffix) return text;
-    const prefixInPrompt = stParts?.reasoning?.PromptReasoning?.getLatestPrefix?.() || '';
-    if (!String(text).trimStart().startsWith(r.prefix) && !prefixInPrompt) return text;
-    const end = text.indexOf(r.suffix);
-    return end < 0 ? null : text.slice(end + r.suffix.length);
-}
-
-function drawLive() {
-    if (!live || !settings().live) return;
-    const block = document.querySelector(`#chat .mes[mesid="${live.id}"] .mes_block`);
-    if (!block) return;
-    const done = live.order.filter(key => live.ready.has(key)).map(key => live.ready.get(key));
-    if (!done.length) return;
-    if (!live.box || !live.box.isConnected) {
-        live.box = el('div', { class: 'kt-live', title: 'Перевод по ходу ответа' });
-        block.append(live.box);
-    }
-    live.box.textContent = done.join('\n\n');
-}
-
-async function onStream(text) {
-    const s = settings();
-    if (!s.auto) return;
-    const c = ctx();
-    const id = Number(c.streamingProcessor?.messageId ?? c.chat.length - 1);
-    const message = c.chat?.[id];
-    if (!message || message.is_user || message.is_system) return;
-    await sillyTavernParts();
-    if (!live || live.id !== id || live.engine !== s.engine || live.lang !== s.lang) {
-        resetLive();
-        live = { id, engine: s.engine, lang: s.lang, controller: new AbortController(), cache: new Map(), ready: new Map(), order: [], chain: Promise.resolve(), box: null };
-    }
-    const reply = replyPart(String(text || ''));
-    if (reply === null) return;
-    // The last paragraph is still being written.
-    const finished = reply.split(/\n{2,}/).slice(0, -1);
-    for (const paragraph of finished) {
-        if (!paragraph.trim()) continue;
-        // Keys without the spaces and line breaks around: the finished message may have them trimmed.
-        const key = (await displayForm(paragraph.trim(), message, id)).trim();
-        if (!key.trim() || live.cache.has(key)) continue;
-        const current = live;
-        const job = current.chain.then(() => translator(current.engine, current.lang, current.controller.signal)(key));
-        current.chain = job.catch(() => { });
-        current.cache.set(key, job);
-        current.order.push(key);
-        job.then((out) => {
-            current.ready.set(key, out);
-            if (current === live) drawLive();
-        }, () => { });
-    }
-}
-
-/**
- * The finished reply translated with what was done while it was written: paragraphs already
- * translated are taken as they are, the rest are translated now.
- */
-/** Waits for a promise, but gives up at once on «Стоп». */
-function untilStopped(promise, signal) {
-    if (!signal) return promise;
-    if (signal.aborted) return Promise.reject(Object.assign(new Error('Остановлено'), { fatal: true, stopped: true }));
-    return new Promise((resolve, reject) => {
-        const onStop = () => reject(Object.assign(new Error('Остановлено'), { fatal: true, stopped: true }));
-        signal.addEventListener('abort', onStop, { once: true });
-        promise.then((v) => { signal.removeEventListener('abort', onStop); resolve(v); },
-            (e) => { signal.removeEventListener('abort', onStop); reject(e); });
-    });
-}
-
-async function assemble(source, id, s, signal, tracker) {
-    const parts = source.split(/(\n{2,})/);
-    const cache = live && live.id === id && live.engine === s.engine && live.lang === s.lang ? live.cache : null;
-    tracker?.plan(parts.filter((p, i) => i % 2 === 0).reduce((n, p) => n + p.trim().length, 0) || 1);
-    const translate = translator(s.engine, s.lang, signal, tracker, { plan: false });
-    const out = [];
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        if (i % 2 === 1 || !part.trim()) {
-            out.push(part);
-            continue;
-        }
-        let text = null;
-        const core = part.trim();
-        if (cache?.has(core)) {
-            // Translated (or being translated) while the reply was written: wait for it, stoppable,
-            // and the bar keeps moving meanwhile.
-            tracker?.start(core.length);
-            try {
-                const [, lead, , tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
-                text = lead + await untilStopped(cache.get(core), signal) + tail;
-            } catch (error) {
-                if (error.stopped) throw error;
-                text = null;
-            } finally {
-                tracker?.end(text === null ? 0 : core.length);
-            }
-        }
-        out.push(text ?? await translate(part));
-    }
-    return out.join('');
-}
-
 // ---------- new replies ----------
 
 /** SillyTavern's own auto-translation would translate the same reply again: leave it only for my messages. */
@@ -891,11 +770,7 @@ async function translateNew(messageId) {
     let tracker = new Tracker(s.engine);
     // The first message of a chat is the greeting: translated as soon as a new chat opens.
     const what = c.chat.findIndex(m => !m.is_system) === id ? 'приветствие' : 'ответ';
-    const stopAll = () => {
-        controller.abort();
-        if (live?.id === id) live.controller.abort();
-    };
-    const onScreen = showTask({ label: () => `Перевожу ${what}`, fraction: () => tracker.fraction(), stop: stopAll });
+    const onScreen = showTask({ label: () => `Перевожу ${what}`, fraction: () => tracker.fraction(), stop: () => controller.abort() });
     let outcome = '';
     try {
         // SillyTavern cuts the thinking out of a new reply a moment after it appears: wait for that.
@@ -907,15 +782,11 @@ async function translateNew(messageId) {
             source = await prepare(message, id);
             tracker = new Tracker(s.engine);
             try {
-                // Written with streaming: paragraphs translated meanwhile are used; otherwise all at once.
-                text = live && live.id === id && live.cache.size
-                    ? await assemble(source, id, s, controller.signal, tracker)
-                    : await translator(s.engine, s.lang, controller.signal, tracker)(source);
+                text = await translator(s.engine, s.lang, controller.signal, tracker)(source);
             } catch (error) {
                 if (error.stopped || s.engine !== 'model') throw error;
                 // The translation model did not answer or failed: the reply still gets translated, by a free translator.
                 toastr.warning(`Модель для перевода не сработала (${error.message}). Перевожу бесплатным переводчиком — выберите другую модель в «Перевод»`, 'Корректор', { timeOut: 9000 });
-                if (live?.id === id) live.controller.abort();
                 tracker = new Tracker('auto');
                 text = await translator('auto', s.lang, controller.signal, tracker)(source);
             }
@@ -928,10 +799,6 @@ async function translateNew(messageId) {
         if (text === source) return;
         if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
         message.extra.display_text = text;
-        if (live?.id === id) {
-            live.box?.remove();
-            live.box = null;
-        }
         showMessage(id, message);
         await ctx().saveChat();
     } catch (error) {
@@ -944,10 +811,6 @@ async function translateNew(messageId) {
     } finally {
         autoQueue.delete(id);
         onScreen.finish(outcome);
-        if (live?.id === id) {
-            live.box?.remove();
-            live.box = null;
-        }
     }
 }
 
@@ -1057,9 +920,6 @@ export function openTranslate(preset = {}) {
     const autoBox = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.auto, onchange: (e) => { s.auto = e.target.checked; save(); if (s.auto) quietStAuto(); } }),
         el('span', { text: 'Переводить новые ответы сразу (и приветствие нового чата), этим же переводчиком' }));
-    const liveBox = el('label', { class: 'checkbox_label' },
-        el('input', { type: 'checkbox', checked: s.live, onchange: (e) => { s.live = e.target.checked; save(); } }),
-        el('span', { text: 'Показывать перевод под ответом, пока он пишется' }));
     // Which model translates when «Модель Корректора» is chosen: separate from the model of the replies.
     const modelRow = el('div', { class: 'kg-model' });
     const drawModelRow = async () => {
@@ -1096,7 +956,7 @@ export function openTranslate(preset = {}) {
         el('select', { class: 'text_pole', onchange: (e) => { s.engine = e.target.value; save(); drawModelRow(); } },
             ENGINES.map(([key, label]) => el('option', { value: key, selected: key === s.engine, text: label }))),
         modelRow,
-        el('div', { class: 'kg-checks' }, mine, again, autoBox, liveBox),
+        el('div', { class: 'kg-checks' }, mine, again, autoBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn),
@@ -1125,8 +985,6 @@ export function initTranslate() {
         setAuto,
         setModel,
         translateModel: () => modelChoice,
-        // For checking what was translated in advance while a reply was written.
-        liveState: () => (live ? { id: live.id, keys: [...live.order], ready: live.ready.size, box: Boolean(live.box?.isConnected) } : null),
         engines: ENGINES,
     };
     const timer = setInterval(() => { if (addMenuItem()) clearInterval(timer); }, 1000);
@@ -1136,16 +994,6 @@ export function initTranslate() {
         const { eventSource, eventTypes } = ctx();
         // After a reply (or a new swipe) is shown in full.
         eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (id) => { translateNew(id).catch(() => { }); });
-        // While a reply is being written: paragraphs are translated as they are finished.
-        // The handler returns at once, so streaming itself is never slowed down.
-        eventSource.on(eventTypes.STREAM_TOKEN_RECEIVED, (text) => { onStream(text).catch(() => { }); });
-        // A new generation, a stop, another chat: what was translated in advance is thrown away.
-        // Background generations (Summarize, quiet prompts) and dry runs (token counting) are not a new reply.
-        eventSource.on(eventTypes.GENERATION_STARTED, (type, options, dryRun) => {
-            if (dryRun || type === 'quiet' || options?.quiet_prompt) return;
-            resetLive();
-        });
-        eventSource.on(eventTypes.CHAT_CHANGED, () => resetLive());
         // Swiping to another existing version: SillyTavern drops the old translation, translate this one.
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => {
             setTimeout(() => { if (!busy()) translateNew(id).catch(() => { }); }, 300);
