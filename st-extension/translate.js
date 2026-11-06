@@ -35,7 +35,7 @@ export const ENGINES = [
 ];
 const AUTO = ['google', 'bing', 'yandex', 'lingva'];
 // Characters per request. Free translators drop the end of long text, so pieces stay small.
-const LIMITS = { google: 1800, bing: 1000, yandex: 1500, lingva: 900, deepl: 4000, model: 3000 };
+const LIMITS = { google: 1800, bing: 1000, yandex: 1500, lingva: 900, deepl: 4000, model: 11000 };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function settings() {
@@ -345,6 +345,16 @@ export function translator(engine, lang) {
         return out.join('\n');
     };
     return async (text) => {
+        if (engine === 'model') {
+            // The model gets the whole message at once — markup, blocks and all — and keeps it.
+            if (!text.split('\n').some(line => needsTranslation(line, lang))) return text;
+            try {
+                return await translateRun(text);
+            } catch (error) {
+                if (error.untranslated) return text;
+                throw error;
+            }
+        }
         let out = '';
         // split() with a group keeps the kept pieces in the list.
         for (const piece of text.split(KEEP)) {
@@ -376,11 +386,53 @@ function pickMessages(chat, { range, mine, again }) {
     return ids;
 }
 
-function prepare(message) {
+// SillyTavern's own regex engine and reasoning parser: what is translated is the message as it
+// is shown — thinking cut out, display regexes applied (status/info blocks made from markers).
+let stParts = null;
+async function sillyTavernParts() {
+    if (stParts) return stParts;
+    const load = async (path) => {
+        try {
+            return await import(path);
+        } catch {
+            return null;
+        }
+    };
+    stParts = { regex: await load('../../regex/engine.js'), reasoning: await load('../../../reasoning.js') };
+    return stParts;
+}
+
+/** The text of a message as SillyTavern shows it, before translation. */
+async function prepare(message, id) {
     const c = ctx();
-    return String(message.mes)
+    let text = String(message.mes)
         .replace(/\{\{user\}\}/gi, c.name1 || '{{user}}')
         .replace(/\{\{char\}\}/gi, message.is_user ? (c.name2 || '{{char}}') : (message.name || c.name2 || '{{char}}'));
+    const { regex, reasoning } = await sillyTavernParts();
+    try {
+        // A thinking block still in the text (it is cut out a moment after the reply arrives).
+        if (reasoning?.removeReasoningFromString) text = reasoning.removeReasoningFromString(text);
+    } catch {
+        // keep the text as it is
+    }
+    try {
+        if (regex?.getRegexedString) {
+            // The same call SillyTavern makes before showing a message: display-only regexes
+            // turn markers like [STATUS] into blocks and hide what should be hidden. Translating
+            // after them keeps the markers out of the translator's hands.
+            const placement = message.is_user ? 1 : message.extra?.type === 'narrator' ? 3 : 2;
+            const usable = (c.chat || []).map((m, i) => ({ m, i })).filter(x => !x.m.is_system);
+            const at = usable.findIndex(x => x.i === Number(id));
+            text = regex.getRegexedString(text, placement, {
+                characterOverride: message.name,
+                isMarkdown: true,
+                depth: at >= 0 ? usable.length - at - 1 : undefined,
+            });
+        }
+    } catch {
+        // without regexes: the raw text
+    }
+    return text;
 }
 
 function busy() {
@@ -415,7 +467,7 @@ export async function translateChat(options, onProgress = () => { }) {
             const message = chat[id];
             if (!message || (busy() && id === chat.length - 1)) continue;
             try {
-                const source = prepare(message);
+                const source = await prepare(message, id);
                 const text = await translate(source);
                 if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
                 // Already in this language: no translation over the original (an old bad one goes away).
@@ -475,10 +527,20 @@ async function translateNew(messageId) {
     autoQueue.add(id);
     const chatId = c.getCurrentChatId?.();
     try {
-        const source = prepare(message);
-        const text = await translator(s.engine, s.lang)(source);
+        // SillyTavern cuts the thinking out of a new reply a moment after it appears: wait for that.
+        await sleep(600);
+        let text = null;
+        let source = '';
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const before = message.mes;
+            source = await prepare(message, id);
+            text = await translator(s.engine, s.lang)(source);
+            // The text changed while it was being translated (thinking cut out, edited): once more.
+            if (message.mes === before) break;
+            text = null;
+        }
         // The reply may have been edited, swiped or the chat changed meanwhile.
-        if (ctx().getCurrentChatId?.() !== chatId || ctx().chat?.[id] !== message) return;
+        if (text === null || ctx().getCurrentChatId?.() !== chatId || ctx().chat?.[id] !== message) return;
         if (text === source) return;
         if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
         message.extra.display_text = text;
