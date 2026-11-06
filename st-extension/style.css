@@ -31,3 +31,12 @@
 .kg-bar i { display: block; height: 100%; width: 0; background: var(--SmartThemeQuoteColor, #e3a54a); transition: width 0.2s; }
 .kg-progress { margin-top: 8px; font-size: 0.9em; min-height: 1.2em; }
 .kg-sheet [hidden] { display: none !important; }
+/* Translation progress: a small panel at the top of the tavern */
+.kt-progress { position: fixed; top: calc(var(--topBarBlockSize, 50px) + 6px); left: 50%; transform: translateX(-50%); width: min(380px, calc(100vw - 24px)); z-index: 10030; display: grid; gap: 6px; pointer-events: none; }
+.kt-task { pointer-events: auto; background: var(--SmartThemeBlurTintColor, #171717); color: var(--SmartThemeBodyColor, #ddd); border: 1px solid var(--SmartThemeBorderColor, #333); border-radius: 12px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); font-size: 0.9em; }
+.kt-line { display: flex; align-items: center; gap: 8px; }
+.kt-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kt-line b { font-variant-numeric: tabular-nums; }
+.kt-x { border: 0; background: transparent; color: inherit; opacity: 0.7; font-size: 14px; width: 26px; height: 26px; border-radius: 13px; cursor: pointer; }
+.kt-bar { height: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.25); overflow: hidden; margin-top: 6px; }
+.kt-bar i { display: block; height: 100%; width: 0; background: var(--SmartThemeQuoteColor, #e3a54a); transition: width 0.2s linear; }

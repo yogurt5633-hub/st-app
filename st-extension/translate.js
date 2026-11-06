@@ -276,7 +276,48 @@ export function needsTranslation(line, lang) {
 
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
-async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0, signal = null) {
+/**
+ * How far one message's translation has got, 0…1. Parts already sent count fully; the part
+ * being translated now creeps forward with time, so the bar moves while a request waits.
+ */
+export class Tracker {
+    constructor(engine) {
+        this.engine = engine;
+        this.total = 0;
+        this.done = 0;
+        this.current = 0;
+        this.since = 0;
+        this.finished = false;
+    }
+
+    plan(chars) {
+        this.total = Math.max(1, chars);
+    }
+
+    start(chars) {
+        this.current = chars;
+        this.since = Date.now();
+    }
+
+    end(chars) {
+        this.done += chars;
+        this.current = 0;
+    }
+
+    fraction() {
+        if (this.finished) return 1;
+        if (!this.total) return 0;
+        let partial = 0;
+        if (this.current) {
+            // About how long a request takes: a free translator a second or two, a model longer for longer text.
+            const expected = this.engine === 'model' ? Math.max(4000, this.current * 15) : 1500;
+            partial = this.current * 0.9 * (1 - Math.exp(-(Date.now() - this.since) / expected));
+        }
+        return Math.min(0.99, (this.done + partial) / this.total);
+    }
+}
+
+async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0, signal = null, tracker = null) {
     const call = provider === 'model' ? (part) => viaModel(part, lang, signal) : (part) => free(provider, part, lang, signal);
     let out = '';
     for (const part of chunkText(text, limit)) {
@@ -285,9 +326,15 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
             continue;
         }
         const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
-        let result = fixMarkup(core, decodeEntities(core, await withRetries(() => call(core), 2)));
+        tracker?.start(core.length);
+        let result;
+        try {
+            result = fixMarkup(core, decodeEntities(core, await withRetries(() => call(core), 2)));
+        } finally {
+            tracker?.end(depth ? 0 : core.length);
+        }
         if (looksUntranslated(core, result, lang)) {
-            if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1, signal);
+            if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1, signal, tracker);
             else throw Object.assign(new Error(`${provider}: вернул текст без перевода`), { untranslated: true });
         }
         out += lead + result + tail;
@@ -299,7 +346,7 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
  * The translator for one run. With «Авто» free providers are tried in turn and the one
  * that worked goes first for the rest of the run; a chosen provider is used alone.
  */
-export function translator(engine, lang, signal = null) {
+export function translator(engine, lang, signal = null, tracker = null) {
     let order = engine === 'auto' || engine === 'free' ? [...AUTO] : [engine];
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
@@ -315,7 +362,7 @@ export function translator(engine, lang, signal = null) {
         let last;
         for (const provider of alive) {
             try {
-                const out = await byProvider(provider, piece, lang, undefined, 0, signal);
+                const out = await byProvider(provider, piece, lang, undefined, 0, signal, tracker);
                 strikes.set(provider, 0);
                 if (order[0] !== provider) order = [provider, ...order.filter((p) => p !== provider)];
                 return out;
@@ -381,6 +428,8 @@ export function translator(engine, lang, signal = null) {
         return out.join('\n');
     };
     return async (text) => {
+        // What will be sent, for the progress bar: the lines that need translating.
+        tracker?.plan(text.split('\n').filter(line => needsTranslation(line, lang)).reduce((n, line) => n + line.length + 1, 0));
         if (engine === 'model') {
             // The model gets the whole message at once — markup, blocks and all — and keeps it.
             if (!text.split('\n').some(line => needsTranslation(line, lang))) return text;
@@ -398,6 +447,60 @@ export function translator(engine, lang, signal = null) {
             out += KEEP_ALL.test(piece) ? piece : await translatePiece(piece);
         }
         return out;
+    };
+}
+
+// ---------- progress on screen ----------
+// A small panel at the top of the tavern: what is being translated, percent, a moving bar,
+// ✕ to stop. For new replies (and a new chat's greeting) and for translating the chat.
+
+const tasks = new Map();
+let taskSeq = 0;
+let panel = null;
+let ticker = null;
+
+function drawTasks() {
+    if (!tasks.size) {
+        panel?.remove();
+        panel = null;
+        clearInterval(ticker);
+        ticker = null;
+        return;
+    }
+    if (!panel || !panel.isConnected) {
+        panel = el('div', { class: 'kt-progress', role: 'status', 'aria-live': 'polite' });
+        document.body.append(panel);
+    }
+    const rows = [];
+    for (const task of tasks.values()) {
+        const percent = Math.round(Math.max(0, Math.min(1, task.fraction())) * 100);
+        rows.push(el('div', { class: 'kt-task' },
+            el('div', { class: 'kt-line' },
+                el('span', { class: 'kt-label', text: task.label() }),
+                el('b', { text: task.message || `${percent}%` }),
+                task.stop && !task.closing ? el('button', { class: 'kt-x', type: 'button', title: 'Остановить', onclick: task.stop, text: '✕' }) : null),
+            el('div', { class: 'kt-bar' }, el('i', { style: `width:${task.message ? 100 : percent}%` }))));
+    }
+    panel.replaceChildren(...rows);
+    // Running translation: the sheet follows the same clock.
+    if (running) notify(running);
+}
+
+/** Shows a translation on screen until finish() is called. */
+function showTask({ label, fraction, stop }) {
+    const id = ++taskSeq;
+    const task = { label, fraction, stop, message: '' };
+    tasks.set(id, task);
+    if (!ticker) ticker = setInterval(drawTasks, 200);
+    drawTasks();
+    return {
+        finish(message = '') {
+            task.closing = true;
+            task.fraction = () => 1;
+            task.message = message;
+            drawTasks();
+            setTimeout(() => { tasks.delete(id); drawTasks(); }, message ? 2500 : 700);
+        },
     };
 }
 
@@ -482,6 +585,19 @@ async function prepare(message, id) {
     return text;
 }
 
+/**
+ * Redraws a message if it is on screen. SillyTavern shows only the latest messages and fails
+ * on one that is not drawn; that one shows its translation when it is scrolled to.
+ */
+function showMessage(id, message) {
+    if (!document.querySelector(`#chat .mes[mesid="${id}"]`)) return;
+    try {
+        ctx().updateMessageBlock(id, message);
+    } catch (error) {
+        console.debug('[korrektor] could not redraw message', id, error);
+    }
+}
+
 function busy() {
     const p = ctx().streamingProcessor;
     return Boolean(p && !p.isFinished);
@@ -503,9 +619,16 @@ export async function translateChat(options, onProgress = () => { }) {
     if (!chatId || !chat?.length) throw new Error('Откройте чат');
     const ids = options.ids || pickMessages(chat, options);
     const controller = new AbortController();
-    const translate = translator(options.engine, options.lang, controller.signal);
+    let tracker = new Tracker(options.engine);
     const state = { done: 0, total: ids.length, failed: [], stopped: false, error: '', current: 0, lastTick: Date.now(), controller, finished: false };
+    // Overall progress: finished messages plus how far the current one has got.
+    state.fraction = () => (state.total ? Math.min(1, (state.done + state.failed.length + (state.current ? tracker.fraction() : 0)) / state.total) : 1);
     running = state;
+    const onScreen = ids.length ? showTask({
+        label: () => (state.current ? `Перевожу чат: ${state.current} из ${state.total}` : `Перевожу чат: ${state.done + state.failed.length} из ${state.total}`),
+        fraction: state.fraction,
+        stop: stopTranslation,
+    }) : null;
     const tick = () => {
         state.lastTick = Date.now();
         onProgress(state);
@@ -524,15 +647,16 @@ export async function translateChat(options, onProgress = () => { }) {
             const message = chat[id];
             if (!message || (busy() && id === chat.length - 1)) continue;
             state.current = state.done + state.failed.length + 1;
+            tracker = new Tracker(options.engine);
             tick();
             try {
                 const source = await prepare(message, id);
-                const text = await translate(source);
+                const text = await translator(options.engine, options.lang, controller.signal, tracker)(source);
                 if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
                 // Already in this language: no translation over the original (an old bad one goes away).
                 if (text === source) delete message.extra.display_text;
                 else message.extra.display_text = text;
-                ctx().updateMessageBlock(id, message);
+                showMessage(id, message);
                 state.done++;
                 streak = 0;
             } catch (error) {
@@ -567,6 +691,7 @@ export async function translateChat(options, onProgress = () => { }) {
         running = null;
         state.finished = true;
         notify(state);
+        onScreen?.finish(state.stopped ? 'остановлено' : state.failed.length ? `не вышло: ${state.failed.length}` : '');
     }
 }
 
@@ -592,6 +717,12 @@ async function translateNew(messageId) {
     if (!message || message.is_user || message.is_system || !String(message.mes || '').trim() || autoQueue.has(id)) return;
     autoQueue.add(id);
     const chatId = c.getCurrentChatId?.();
+    const controller = new AbortController();
+    let tracker = new Tracker(s.engine);
+    // The first message of a chat is the greeting: translated as soon as a new chat opens.
+    const what = c.chat.findIndex(m => !m.is_system) === id ? 'приветствие' : 'ответ';
+    const onScreen = showTask({ label: () => `Перевожу ${what}`, fraction: () => tracker.fraction(), stop: () => controller.abort() });
+    let outcome = '';
     try {
         // SillyTavern cuts the thinking out of a new reply a moment after it appears: wait for that.
         await sleep(600);
@@ -600,7 +731,8 @@ async function translateNew(messageId) {
         for (let attempt = 0; attempt < 2; attempt++) {
             const before = message.mes;
             source = await prepare(message, id);
-            text = await translator(s.engine, s.lang)(source);
+            tracker = new Tracker(s.engine);
+            text = await translator(s.engine, s.lang, controller.signal, tracker)(source);
             // The text changed while it was being translated (thinking cut out, edited): once more.
             if (message.mes === before) break;
             text = null;
@@ -610,12 +742,18 @@ async function translateNew(messageId) {
         if (text === source) return;
         if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
         message.extra.display_text = text;
-        ctx().updateMessageBlock(id, message);
+        showMessage(id, message);
         await ctx().saveChat();
     } catch (error) {
-        toastr.warning(`Не перевёл ответ: ${error.message}`, 'Корректор', { timeOut: 6000 });
+        if (error.stopped) {
+            outcome = 'остановлено';
+        } else {
+            outcome = 'не вышло';
+            toastr.warning(`Не перевёл ${what}: ${error.message}`, 'Корректор', { timeOut: 6000 });
+        }
     } finally {
         autoQueue.delete(id);
+        onScreen.finish(outcome);
     }
 }
 
@@ -639,7 +777,7 @@ export async function showOriginal() {
     c.chat?.forEach((message, id) => {
         if (message?.extra?.display_text) {
             delete message.extra.display_text;
-            c.updateMessageBlock(id, message);
+            showMessage(id, message);
             changed++;
         }
     });
@@ -687,10 +825,10 @@ export function openTranslate(preset = {}) {
         stopBtn.hidden = false;
         retryBtn.hidden = true;
         const fill = bar.firstChild;
-        const finished = st.done + st.failed.length;
-        fill.style.width = `${st.total ? Math.round((finished / st.total) * 100) : 100}%`;
-        const now = st.current ? `Перевожу ${st.current} из ${st.total}…` : `Переведено ${st.done} из ${st.total}`;
-        status.textContent = `${now}${st.failed.length ? ` Не вышло: ${st.failed.length}.` : ''}${st.stopped ? ' Останавливаю…' : ''}`;
+        const percent = Math.round((st.fraction ? st.fraction() : 0) * 100);
+        fill.style.width = `${percent}%`;
+        const now = st.current ? `Перевожу ${st.current} из ${st.total} · ${percent}%` : `Переведено ${st.done} из ${st.total} · ${percent}%`;
+        status.textContent = `${now}${st.failed.length ? ` · не вышло: ${st.failed.length}` : ''}${st.stopped ? ' · останавливаю…' : ''}`;
     };
     const showResult = (result) => {
         startBtn.disabled = false;
@@ -724,7 +862,7 @@ export function openTranslate(preset = {}) {
         el('input', { type: 'checkbox', checked: s.mine, onchange: (e) => { s.mine = e.target.checked; save(); } }), el('span', { text: 'И мои сообщения' }));
     const autoBox = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.auto, onchange: (e) => { s.auto = e.target.checked; save(); if (s.auto) quietStAuto(); } }),
-        el('span', { text: 'Переводить новые ответы сразу (этим же переводчиком)' }));
+        el('span', { text: 'Переводить новые ответы сразу (и приветствие нового чата), этим же переводчиком' }));
     const again = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.again, onchange: (e) => { s.again = e.target.checked; } }), el('span', { text: 'Заново (уже переведённые тоже)' }));
 
