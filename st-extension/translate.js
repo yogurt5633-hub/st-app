@@ -160,12 +160,48 @@ export function fixMarkup(source, out) {
 
 // ---------- providers ----------
 
-async function free(provider, text, lang) {
+/**
+ * A signal for one request: stops on «Стоп» (the run's signal) or after `ms` without an answer,
+ * so a translator that never answers cannot hang the translation.
+ */
+function requestSignal(outer, ms) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    const onOuter = () => controller.abort();
+    if (outer) {
+        if (outer.aborted) controller.abort();
+        else outer.addEventListener('abort', onOuter, { once: true });
+    }
+    const done = () => {
+        clearTimeout(timer);
+        outer?.removeEventListener('abort', onOuter);
+    };
+    controller.signal.addEventListener('abort', done, { once: true });
+    return { signal: controller.signal, done };
+}
+
+/** fetch() with a time limit; «Стоп» turns into a fatal «stopped» error. */
+async function limitedFetch(url, init, outer, ms, who) {
+    const { signal, done } = requestSignal(outer, ms);
+    try {
+        const res = await fetch(url, { ...init, signal });
+        // The body is read right after; the limit stays until then is not needed.
+        return res;
+    } catch (error) {
+        if (outer?.aborted) throw Object.assign(new Error('Остановлено'), { fatal: true, stopped: true });
+        if (error?.name === 'AbortError') throw new Error(`${who}: не ответил за ${Math.round(ms / 1000)} с`);
+        throw error;
+    } finally {
+        done();
+    }
+}
+
+async function free(provider, text, lang, signal) {
     const headers = ctx().getRequestHeaders();
     const body = provider === 'yandex' ? { chunks: [text], lang }
         : provider === 'deepl' ? { text, lang, endpoint: ctx().extensionSettings?.translate?.deepl_endpoint || 'free' }
             : { text, lang };
-    const res = await fetch(`/api/translate/${provider}`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const res = await limitedFetch(`/api/translate/${provider}`, { method: 'POST', headers, body: JSON.stringify(body) }, signal, 30000, provider);
     if (!res.ok) {
         if (provider === 'deepl' && res.status === 400) {
             throw Object.assign(new Error('Для DeepL нужен ключ: Расширения → Chat Translation → DeepL → значок ключа'), { fatal: true });
@@ -177,10 +213,10 @@ async function free(provider, text, lang) {
     return out;
 }
 
-async function viaModel(text, lang) {
+async function viaModel(text, lang, signal) {
     // X-Korrektor: the plugin may use this tab's session to reach the model.
     const headers = { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' };
-    const res = await fetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) });
+    const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) }, signal, 180000, 'модель');
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(data.error || `модель: ${res.status}`), { fatal: res.status === 404 || res.status === 409 || res.status === 400 });
     const out = String(data.text ?? '');
@@ -196,7 +232,7 @@ async function withRetries(fn, tries = 3) {
             return await fn();
         } catch (error) {
             last = error;
-            if (error.fatal || error.status === 400 || error.status === 403) break;
+            if (error.fatal || error.stopped || error.status === 400 || error.status === 403) break;
             if (i < tries - 1) await sleep(800 * (i + 1) * (i + 1));
         }
     }
@@ -240,8 +276,8 @@ export function needsTranslation(line, lang) {
 
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
-async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0) {
-    const call = provider === 'model' ? (part) => viaModel(part, lang) : (part) => free(provider, part, lang);
+async function byProvider(provider, text, lang, limit = LIMITS[provider], depth = 0, signal = null) {
+    const call = provider === 'model' ? (part) => viaModel(part, lang, signal) : (part) => free(provider, part, lang, signal);
     let out = '';
     for (const part of chunkText(text, limit)) {
         if (!part.trim()) {
@@ -251,7 +287,7 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
         const [, lead, core, tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
         let result = fixMarkup(core, decodeEntities(core, await withRetries(() => call(core), 2)));
         if (looksUntranslated(core, result, lang)) {
-            if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1);
+            if (depth < 2 && core.length > 200) result = await byProvider(provider, core, lang, Math.ceil(core.length / 2), depth + 1, signal);
             else throw Object.assign(new Error(`${provider}: вернул текст без перевода`), { untranslated: true });
         }
         out += lead + result + tail;
@@ -263,7 +299,7 @@ async function byProvider(provider, text, lang, limit = LIMITS[provider], depth 
  * The translator for one run. With «Авто» free providers are tried in turn and the one
  * that worked goes first for the rest of the run; a chosen provider is used alone.
  */
-export function translator(engine, lang) {
+export function translator(engine, lang, signal = null) {
     let order = engine === 'auto' || engine === 'free' ? [...AUTO] : [engine];
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
@@ -279,7 +315,7 @@ export function translator(engine, lang) {
         let last;
         for (const provider of alive) {
             try {
-                const out = await byProvider(provider, piece, lang);
+                const out = await byProvider(provider, piece, lang, undefined, 0, signal);
                 strikes.set(provider, 0);
                 if (order[0] !== provider) order = [provider, ...order.filter((p) => p !== provider)];
                 return out;
@@ -368,6 +404,17 @@ export function translator(engine, lang) {
 // ---------- the run ----------
 
 let running = null;
+// Sheets that show the run in progress (also one opened again while it runs).
+const watchers = new Set();
+function notify(state) {
+    for (const watch of watchers) {
+        try {
+            watch(state);
+        } catch {
+            // a closed sheet
+        }
+    }
+}
 
 function pickMessages(chat, { range, mine, again }) {
     const ids = [];
@@ -445,15 +492,25 @@ function busy() {
  * after each one. Returns { done, failed: [ids], stopped, error }.
  */
 export async function translateChat(options, onProgress = () => { }) {
-    if (running) throw new Error('Перевод уже идёт');
+    if (running) {
+        // A run that has shown no sign of life for 3 minutes is stuck: it gives way.
+        if (Date.now() - running.lastTick > 180000) stopTranslation();
+        else throw new Error('Перевод уже идёт');
+    }
     const c = ctx();
     const chatId = c.getCurrentChatId?.();
     const chat = c.chat;
     if (!chatId || !chat?.length) throw new Error('Откройте чат');
     const ids = options.ids || pickMessages(chat, options);
-    const translate = translator(options.engine, options.lang);
-    const state = { done: 0, total: ids.length, failed: [], stopped: false, error: '' };
+    const controller = new AbortController();
+    const translate = translator(options.engine, options.lang, controller.signal);
+    const state = { done: 0, total: ids.length, failed: [], stopped: false, error: '', current: 0, lastTick: Date.now(), controller, finished: false };
     running = state;
+    const tick = () => {
+        state.lastTick = Date.now();
+        onProgress(state);
+        notify(state);
+    };
     let streak = 0;
     let lastError = null;
     try {
@@ -466,6 +523,8 @@ export async function translateChat(options, onProgress = () => { }) {
             }
             const message = chat[id];
             if (!message || (busy() && id === chat.length - 1)) continue;
+            state.current = state.done + state.failed.length + 1;
+            tick();
             try {
                 const source = await prepare(message, id);
                 const text = await translate(source);
@@ -477,6 +536,10 @@ export async function translateChat(options, onProgress = () => { }) {
                 state.done++;
                 streak = 0;
             } catch (error) {
+                if (error.stopped) {
+                    state.stopped = true;
+                    break;
+                }
                 state.failed.push(id);
                 lastError = error;
                 streak++;
@@ -492,7 +555,8 @@ export async function translateChat(options, onProgress = () => { }) {
                     break;
                 }
             }
-            onProgress(state);
+            state.current = 0;
+            tick();
             if (state.done && state.done % 10 === 0) await ctx().saveChat();
             if (options.engine !== 'model') await sleep(250);
         }
@@ -501,6 +565,8 @@ export async function translateChat(options, onProgress = () => { }) {
         return state;
     } finally {
         running = null;
+        state.finished = true;
+        notify(state);
     }
 }
 
@@ -561,7 +627,10 @@ export function setAuto(on, options = {}) {
 }
 
 export function stopTranslation() {
-    if (running) running.stopped = true;
+    if (!running) return;
+    running.stopped = true;
+    // The request already sent is cut off too, not waited for.
+    running.controller?.abort();
 }
 
 export async function showOriginal() {
@@ -612,27 +681,38 @@ export function openTranslate(preset = {}) {
     const retryBtn = el('button', { type: 'button', class: 'menu_button', text: 'Повторить пропущенные' });
     retryBtn.hidden = true;
 
-    const run = async (ids = null) => {
-        startBtn.disabled = true;
-        retryBtn.hidden = true;
-        stopBtn.hidden = false;
+    const showProgress = (st) => {
         bar.hidden = false;
+        startBtn.disabled = true;
+        stopBtn.hidden = false;
+        retryBtn.hidden = true;
         const fill = bar.firstChild;
-        fill.style.width = '0%';
+        const finished = st.done + st.failed.length;
+        fill.style.width = `${st.total ? Math.round((finished / st.total) * 100) : 100}%`;
+        const now = st.current ? `Перевожу ${st.current} из ${st.total}…` : `Переведено ${st.done} из ${st.total}`;
+        status.textContent = `${now}${st.failed.length ? ` Не вышло: ${st.failed.length}.` : ''}${st.stopped ? ' Останавливаю…' : ''}`;
+    };
+    const showResult = (result) => {
+        startBtn.disabled = false;
+        stopBtn.hidden = true;
+        if (!result.total) status.textContent = s.again ? 'Нечего переводить' : 'Всё в этом диапазоне уже переведено. Включите «Заново», чтобы перевести ещё раз';
+        else status.textContent = `${result.stopped && !result.error ? 'Остановлено. ' : ''}Переведено ${result.done} из ${result.total}.${result.failed.length ? ` Не вышло: ${result.failed.length}.` : ''}${result.error ? ` ${result.error}` : ''}`;
+        retryIds = result.failed.length ? result.failed : null;
+        retryBtn.hidden = !retryIds;
+    };
+    // The sheet follows the run, also one started before the sheet was opened.
+    const watch = (st) => (st.finished ? showResult(st) : showProgress(st));
+    watchers.add(watch);
+    if (running) showProgress(running);
+    const run = async (ids = null) => {
         status.textContent = 'Начинаю…';
+        bar.hidden = false;
+        bar.firstChild.style.width = '0%';
         try {
-            const result = await translateChat({ ...s, ids }, (st) => {
-                fill.style.width = `${st.total ? Math.round(((st.done + st.failed.length) / st.total) * 100) : 100}%`;
-                status.textContent = `Переведено ${st.done} из ${st.total}${st.failed.length ? `, не вышло: ${st.failed.length}` : ''}`;
-            });
-            if (!result.total) status.textContent = s.again ? 'Нечего переводить' : 'Всё в этом диапазоне уже переведено. Включите «Заново», чтобы перевести ещё раз';
-            else status.textContent = `${result.stopped && !result.error ? 'Остановлено. ' : ''}Переведено ${result.done} из ${result.total}.${result.failed.length ? ` Не вышло: ${result.failed.length}.` : ''}${result.error ? ` ${result.error}` : ''}`;
-            retryIds = result.failed.length ? result.failed : null;
-            retryBtn.hidden = !retryIds;
+            const result = await translateChat({ ...s, ids });
             if (result.done) toastr.success(`Переведено сообщений: ${result.done}`, 'Корректор');
         } catch (error) {
             status.textContent = error.message;
-        } finally {
             startBtn.disabled = false;
             stopBtn.hidden = true;
         }
@@ -660,7 +740,7 @@ export function openTranslate(preset = {}) {
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn),
         el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}«Модель Корректора» — дешёвая модель из настроек Корректора: лучше держит ролевой стиль, но тратит немного денег. Если переводчик возвращает кусок на английском, Корректор переводит его заново по частям или другим переводчиком.` }));
-    sheet('Перевод чата', body);
+    sheet('Перевод чата', body, () => watchers.delete(watch));
 }
 
 // ---------- entry points ----------

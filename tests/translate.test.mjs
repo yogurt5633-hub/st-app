@@ -144,3 +144,15 @@ test('translate: a reply that starts with names and places is translated, the na
     assert.equal(looksUntranslated('Room 314, Calloway Hall, Whitmore University, Hadley Falls', 'Комната 314, Calloway Hall, Whitmore University, Hadley Falls', 'ru'), false);
     assert.equal(looksUntranslated('He was working. There was a difference.', 'Он работал. There was a difference.', 'ru'), true);
 });
+
+test('translate: «Стоп» cuts off a request that hangs', async () => {
+    const { translator } = await import('../st-extension/translate.js');
+    globalThis.SillyTavern = { getContext: () => ({ getRequestHeaders: () => ({}), extensionSettings: {} }) };
+    globalThis.fetch = (url, init) => new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    });
+    const controller = new AbortController();
+    const pending = translator('model', 'ru', controller.signal)('The knight walks into the tavern and smiles.');
+    setTimeout(() => controller.abort(), 50);
+    await assert.rejects(pending, (e) => e.stopped === true);
+});
