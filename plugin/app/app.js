@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.22';
+const APP_VERSION = '0.4.23';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -541,6 +541,8 @@ function renderFeed() {
     const single = !['all', 'watched'].includes(state.feedChat);
     const children = [
         h('p', { class: 'scanline', id: 'scanline' }),
+        // Not wanted at all: one switch, at the top, where it is seen without scrolling past every card.
+        h('div', { class: 'feed-off' }, h('button', { class: 'btn quiet small', type: 'button', onclick: () => setRemarks(false), text: 'Выключить замечания' })),
         h('div', { class: 'chat-filter' }, chatSelect),
         single ? h('a', { class: 'btn secondary small', href: `#chat/${encodeURIComponent(state.feedChat)}`, style: 'margin:0 0 12px', text: 'Попросить Корректора об этом чате' }) : null,
         filters,
@@ -556,8 +558,6 @@ function renderFeed() {
     } else {
         children.push(h('div', { class: 'list' }, visible.map(renderCard)));
     }
-    // Not wanted at all: one switch.
-    children.push(h('p', { class: 'feed-off' }, h('button', { class: 'btn quiet small', type: 'button', onclick: () => setRemarks(false), text: 'Выключить замечания' })));
     put(view, ...children);
     renderScanline();
 }

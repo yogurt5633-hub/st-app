@@ -439,5 +439,5 @@ button.row, a.row { width: 100%; border-left: 0; border-right: 0; border-bottom:
 .viewer-close { position: absolute; top: 12px; right: 12px; width: 40px; height: 40px; border: 0; border-radius: 20px; background: rgba(255, 255, 255, 0.12); color: #fff; font-size: 18px; cursor: pointer; }
 .viewer-count { position: absolute; bottom: 16px; left: 0; right: 0; text-align: center; color: #ddd; font-size: 13px; }
 .badge.dropped { text-decoration: line-through; opacity: 0.6; }
-/* «Выключить замечания» under the feed: quiet, out of the way. */
-.feed-off { text-align: center; margin: 20px 0 8px; }
+/* «Выключить замечания» at the top of the feed: quiet, on the right. */
+.feed-off { display: flex; justify-content: flex-end; margin: -6px 0 6px; }
