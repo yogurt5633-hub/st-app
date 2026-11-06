@@ -1,20 +1,13 @@
 package io.github.yogurt5633.korrektor;
 
-import android.app.AlertDialog;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.text.Editable;
-import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebView;
-import android.widget.ArrayAdapter;
-import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
-import android.widget.Switch;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -104,30 +97,31 @@ final class ModelBar {
     private void draw() {
         chips.removeAllViews();
         root.setBackgroundColor(palette.bg);
-        chips.addView(chip("Обновить", true, v -> activity.reloadTavern()));
+        chips.addView(chip(R.drawable.ic_bar_refresh, null, false, v -> activity.reloadTavern()));
         if (state == null || !state.optBoolean("ok")) return;
 
         JSONObject tr = state.optJSONObject("translate");
         JSONObject ours = state.optJSONObject("ours");
         String mode = tr == null ? "none" : tr.optString("mode", "none");
         boolean on = (ours != null && ours.optBoolean("auto")) || "responses".equals(mode) || "both".equals(mode);
-        chips.addView(chip(on ? "Перевод: " + tr.optString("langName") : "Перевод", false, v -> translateDialog()));
+        String lang = ours != null && !ours.optString("lang").isEmpty() ? ours.optString("lang") : tr == null ? "" : tr.optString("lang");
+        chips.addView(chip(R.drawable.ic_bar_translate, on ? "Перевод · " + lang.toUpperCase(java.util.Locale.ROOT) : "Перевод", on, v -> translateDialog()));
 
         if (state.optBoolean("gallery")) {
-            chips.addView(chip("Фоны", false, v -> tavern.evaluateJavascript("window.korrektorGallery&&window.korrektorGallery.backgrounds()", null)));
-            chips.addView(chip("Аватар", false, v -> tavern.evaluateJavascript("window.korrektorGallery&&window.korrektorGallery.avatar()", null)));
+            chips.addView(chip(R.drawable.ic_bar_image, "Фоны", false, v -> tavern.evaluateJavascript("window.korrektorGallery&&window.korrektorGallery.backgrounds()", null)));
+            chips.addView(chip(R.drawable.ic_bar_avatar, "Аватар", false, v -> tavern.evaluateJavascript("window.korrektorGallery&&window.korrektorGallery.avatar()", null)));
         }
 
         if (!activity.prefs.flag(Prefs.SHOW_MODEL_BAR, true)) return;
         if (!"openai".equals(state.optString("api"))) {
-            chips.addView(chip("Модель — в настройках таверны (Text Completion)", true, null));
+            chips.addView(chip(R.drawable.ic_bar_model, "Модель — в настройках таверны", false, null));
             return;
         }
         String model = state.optString("model");
-        chips.addView(chip("Модель: " + (model.isEmpty() ? "не выбрана" : model), false, v -> pickModel()));
+        chips.addView(chip(R.drawable.ic_bar_model, model.isEmpty() ? "Модель не выбрана" : model, false, v -> pickModel()));
         JSONArray presets = state.optJSONArray("presets");
         if (presets != null && presets.length() > 0) {
-            chips.addView(chip("Пресет: " + state.optString("preset"), false, v -> pickPreset()));
+            chips.addView(chip(R.drawable.ic_bar_preset, state.optString("preset"), false, v -> pickPreset()));
         }
     }
 
@@ -143,50 +137,38 @@ final class ModelBar {
             return;
         }
         String mode = tr.optString("mode", "none");
-        LinearLayout box = new LinearLayout(activity);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(8), dp(20), dp(4));
-
         JSONObject oursState = state.optJSONObject("ours");
-        Switch replies = new Switch(activity);
-        replies.setText("Переводить новые ответы");
-        replies.setChecked(oursState != null ? oursState.optBoolean("auto") || "responses".equals(mode) || "both".equals(mode)
-                : "responses".equals(mode) || "both".equals(mode));
-        Switch mine = new Switch(activity);
-        mine.setText("Мои сообщения — на английский перед отправкой");
-        mine.setChecked("inputs".equals(mode) || "both".equals(mode));
-        box.addView(replies, row());
-        box.addView(mine, row());
+        Sheet sheet = new Sheet(activity, palette, "Перевод");
+
+        final boolean[] replies = {oursState != null ? oursState.optBoolean("auto") || "responses".equals(mode) || "both".equals(mode)
+                : "responses".equals(mode) || "both".equals(mode)};
+        final boolean[] mine = {"inputs".equals(mode) || "both".equals(mode)};
+        sheet.toggle("Переводить новые ответы", oursState != null ? "Абзацы переводятся, пока модель пишет. Модель видит оригинал" : "Перевод показывается вместо текста, модель видит оригинал", replies[0], v -> replies[0] = v);
+        sheet.toggle("Мои сообщения — на английский", "Перед отправкой, переводчиком таверны", mine[0], v -> mine[0] = v);
 
         final String[] lang = {oursState != null && !oursState.optString("lang").isEmpty() ? oursState.optString("lang") : tr.optString("lang")};
-        final String[] langName = {oursState != null ? nameOf(tr, lang[0], lang[0]) : tr.optString("langName")};
         // Most people here read Russian: offer it instead of SillyTavern's default English.
-        if ("en".equals(lang[0]) && !replies.isChecked()) {
-            lang[0] = "ru";
-            langName[0] = nameOf(tr, "ru", "Russian");
+        if ("en".equals(lang[0]) && !replies[0]) lang[0] = "ru";
+        JSONArray langList = tr.optJSONArray("languages");
+        List<String> langNames = new ArrayList<>();
+        List<String> langCodes = new ArrayList<>();
+        for (int i = 0; langList != null && i < langList.length(); i++) {
+            JSONArray pair = langList.optJSONArray(i);
+            if (pair == null) continue;
+            langCodes.add(pair.optString(0));
+            langNames.add(pair.optString(1));
         }
-        TextView language = text("Язык перевода: " + langName[0], true);
-        language.setOnClickListener(v -> {
-            JSONArray list = tr.optJSONArray("languages");
-            List<String> names = new ArrayList<>();
-            List<String> codes = new ArrayList<>();
-            for (int i = 0; list != null && i < list.length(); i++) {
-                JSONArray pair = list.optJSONArray(i);
-                if (pair == null) continue;
-                codes.add(pair.optString(0));
-                names.add(pair.optString(1));
-            }
-            pick("Язык перевода", names, langName[0], picked -> {
-                int at = names.indexOf(picked);
-                if (at < 0) return;
-                lang[0] = codes.get(at);
-                langName[0] = picked;
-                language.setText("Язык перевода: " + picked);
-            });
-        });
-        box.addView(language, row());
-        // Which translator: Korrektor's own translation (Google, Bing, Yandex, DeepL, Lingva or its model).
+        final TextView[] langView = new TextView[1];
+        langView[0] = sheet.choice("Язык", nameOf(tr, lang[0], lang[0]), v -> Sheet.pick(activity, palette, "Язык перевода", langNames, nameOf(tr, lang[0], lang[0]), picked -> {
+            int at = langNames.indexOf(picked);
+            if (at < 0) return;
+            lang[0] = langCodes.get(at);
+            langView[0].setText(picked);
+        }));
+
+        // Which translator and which model: Korrektor's own translation.
         final String[] engine = {oursState == null ? "" : oursState.optString("engine", "auto")};
+        final String[] translateModel = {oursState == null ? "" : oursState.optString("model")};
         if (oursState != null) {
             JSONArray engines = oursState.optJSONArray("engines");
             List<String> keys = new ArrayList<>();
@@ -197,77 +179,53 @@ final class ModelBar {
                 keys.add(pair.optString(0));
                 labels.add(pair.optString(1));
             }
-            int at = keys.indexOf(engine[0]);
-            TextView engineView = text("Переводчик: " + (at >= 0 ? labels.get(at) : engine[0]), true);
-            engineView.setOnClickListener(v -> pick("Переводчик", labels, keys.indexOf(engine[0]) >= 0 ? labels.get(keys.indexOf(engine[0])) : "", picked -> {
+            final TextView[] engineView = new TextView[1];
+            engineView[0] = sheet.choice("Переводчик", labelOf(keys, labels, engine[0]), v -> Sheet.pick(activity, palette, "Чем переводить", labels, labelOf(keys, labels, engine[0]), picked -> {
                 int i = labels.indexOf(picked);
                 if (i < 0) return;
                 engine[0] = keys.get(i);
-                engineView.setText("Переводчик: " + picked);
+                engineView[0].setText(picked);
             }));
-            box.addView(engineView, row());
-            // The model that translates (Korrektor's), separate from the one writing the replies.
-            final String[] translateModel = {oursState.optString("model")};
-            TextView modelView = text("Модель для перевода: " + (translateModel[0].isEmpty() ? "дешёвая Корректора" : translateModel[0]), true);
-            modelView.setOnClickListener(v -> {
+            final TextView[] modelView = new TextView[1];
+            modelView[0] = sheet.choice("Модель для перевода", translateModel[0].isEmpty() ? "дешёвая Корректора" : translateModel[0], v -> {
                 List<String> names = new ArrayList<>();
-                names.add("Дешёвая модель Корректора (как в его настройках)");
+                names.add("Дешёвая модель Корректора");
                 JSONArray list = state.optJSONArray("models");
                 for (int i = 0; list != null && i < list.length(); i++) names.add(list.optString(i));
-                pick("Модель для перевода", names, translateModel[0].isEmpty() ? names.get(0) : translateModel[0], picked -> {
+                Sheet.pick(activity, palette, "Модель для перевода", names, translateModel[0].isEmpty() ? names.get(0) : translateModel[0], picked -> {
                     boolean cheap = names.indexOf(picked) == 0;
                     translateModel[0] = cheap ? "" : picked;
-                    modelView.setText("Модель для перевода: " + (cheap ? "дешёвая Корректора" : picked));
+                    modelView[0].setText(cheap ? "дешёвая Корректора" : picked);
                     run("window.korrektorTranslate.setModel(" + JSONObject.quote(cheap ? "" : state.optString("source")) + "," + JSONObject.quote(translateModel[0]) + ")");
                 });
             });
-            box.addView(modelView, row());
+            sheet.note("Модель для перевода — не та, что пишет ответы: ответы пишет модель таверны (кнопка с моделью в этой строке)");
         }
-        TextView note = text(oursState != null
-                ? "Перевод показывается вместо текста, а модель по-прежнему видит оригинал. Длинные ответы переводятся по частям, и если кусок вернулся на английском, Корректор переведёт его заново. Уже написанные сообщения — «Старые сообщения»"
-                : "Новые ответы переводит " + providerName(tr.optString("provider")) + " через саму таверну: перевод показывается вместо текста, а модель по-прежнему видит оригинал."
-                + (ours ? " Уже написанные сообщения — кнопка «Старые сообщения»: по одному, с повтором при ошибке, можно моделью Корректора" : ""), false);
-        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        box.addView(note, row());
 
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setTitle("Перевод чата")
-                .setView(box)
-                .setPositiveButton("Готово", (d, w) -> {
-                    if (oursState != null) {
-                        // New replies: Korrektor's translation (small pieces, checked, another translator if needed).
-                        // SillyTavern's own keeps only «my messages to English».
-                        String stMode = mine.isChecked() ? "inputs" : "none";
-                        run("(function(on,l,e,m){var $=window.jQuery;window.korrektorTranslate.setAuto(on,{lang:l,engine:e});"
-                                + "$('#translation_target_language').val(l).trigger('change');$('#translation_auto_mode').val(m).trigger('change');})("
-                                + replies.isChecked() + "," + JSONObject.quote(lang[0]) + "," + JSONObject.quote(engine[0]) + "," + JSONObject.quote(stMode) + ")");
-                        return;
-                    }
-                    String next = replies.isChecked() && mine.isChecked() ? "both" : replies.isChecked() ? "responses" : mine.isChecked() ? "inputs" : "none";
-                    run("(function(m,l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');"
-                            + "$('#translation_auto_mode').val(m).trigger('change');})(" + JSONObject.quote(next) + "," + JSONObject.quote(lang[0]) + ")");
-                })
-                .setNeutralButton(ours ? "Старые сообщения" : "Ещё", (d, w) -> {
-                    if (ours) run("window.korrektorTranslate.open({lang:" + JSONObject.quote(lang[0]) + "})");
-                    else moreDialog(lang[0]);
-                })
-                .setNegativeButton("Отмена", null)
-                .create();
-        dialog.show();
+        Runnable apply = () -> {
+            if (oursState != null) {
+                // New replies: Korrektor's translation; SillyTavern's own keeps only «my messages to English».
+                String stMode = mine[0] ? "inputs" : "none";
+                run("(function(on,l,e,m){var $=window.jQuery;window.korrektorTranslate.setAuto(on,{lang:l,engine:e});"
+                        + "$('#translation_target_language').val(l).trigger('change');$('#translation_auto_mode').val(m).trigger('change');})("
+                        + replies[0] + "," + JSONObject.quote(lang[0]) + "," + JSONObject.quote(engine[0]) + "," + JSONObject.quote(stMode) + ")");
+                return;
+            }
+            String next = replies[0] && mine[0] ? "both" : replies[0] ? "responses" : mine[0] ? "inputs" : "none";
+            run("(function(m,l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');"
+                    + "$('#translation_auto_mode').val(m).trigger('change');})(" + JSONObject.quote(next) + "," + JSONObject.quote(lang[0]) + ")");
+        };
+        sheet.buttons("Готово", apply, ours ? "Старые сообщения" : "Перевести чат", () -> {
+            apply.run();
+            if (ours) run("window.korrektorTranslate.open({lang:" + JSONObject.quote(lang[0]) + "})");
+            else run("(function(l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');$('#translate_chat').trigger('click');})(" + JSONObject.quote(lang[0]) + ")");
+        });
+        sheet.show();
     }
 
-    private void moreDialog(String lang) {
-        new AlertDialog.Builder(activity)
-                .setTitle("Перевод чата")
-                .setItems(new String[]{"Перевести весь этот чат сейчас", "Показать оригинал (убрать переводы)"}, (d, which) -> {
-                    if (which == 0) {
-                        run("(function(l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');$('#translate_chat').trigger('click');})(" + JSONObject.quote(lang) + ")");
-                        activity.toast("Перевожу чат: длинный чат займёт время");
-                    } else {
-                        run("window.jQuery('#translation_clear').trigger('click')");
-                    }
-                })
-                .show();
+    private static String labelOf(List<String> keys, List<String> labels, String key) {
+        int i = keys.indexOf(key);
+        return i >= 0 ? labels.get(i) : key;
     }
 
     private static String nameOf(JSONObject tr, String code, String fallback) {
@@ -277,18 +235,6 @@ final class ModelBar {
             if (pair != null && code.equals(pair.optString(0))) return pair.optString(1);
         }
         return fallback;
-    }
-
-    private static String providerName(String provider) {
-        switch (provider == null ? "" : provider) {
-            case "google": return "Google (бесплатно, без ключа)";
-            case "deepl": return "DeepL";
-            case "yandex": return "Яндекс";
-            case "bing": return "Bing";
-            case "libre": return "LibreTranslate";
-            case "lingva": return "Lingva";
-            default: return provider == null || provider.isEmpty() ? "переводчик таверны" : provider;
-        }
     }
 
     // ---------- model and preset ----------
@@ -301,7 +247,7 @@ final class ModelBar {
             activity.toast("Список моделей пуст: подключитесь к API в настройках таверны, и он появится");
             return;
         }
-        pick("Модель", items, state.optString("model"), value -> run(
+        Sheet.pick(activity, palette, "Модель для ответов", items, state.optString("model"), value -> run(
                 "(function(v){var $=window.jQuery;var id=" + JSONObject.quote(state.optString("select")) + ";"
                         + "if(id){$('#'+id).val(v).trigger('change');}"
                         + "if(" + JSONObject.quote(state.optString("source")) + "==='custom'){$('#custom_model_id').val(v).trigger('input');}"
@@ -312,7 +258,7 @@ final class ModelBar {
         JSONArray list = state.optJSONArray("presets");
         List<String> items = new ArrayList<>();
         for (int i = 0; list != null && i < list.length(); i++) items.add(list.optString(i));
-        pick("Пресет", items, state.optString("preset"), value -> run(
+        Sheet.pick(activity, palette, "Пресет", items, state.optString("preset"), value -> run(
                 "(function(name){var ps=document.getElementById('settings_preset_openai');if(!ps)return;"
                         + "var o=[].find.call(ps.options,function(x){return x.textContent===name;});"
                         + "if(o)window.jQuery(ps).val(o.value).trigger('change');})(" + JSONObject.quote(value) + ")"));
@@ -322,85 +268,30 @@ final class ModelBar {
         tavern.evaluateJavascript(js, ignored -> activity.runOnUiThread(() -> tavern.postDelayed(this::refresh, 700)));
     }
 
-    interface Picked {
-        void on(String value);
-    }
-
-    /** A list with a search field: OpenRouter alone offers hundreds of models. */
-    private void pick(String title, List<String> items, String current, Picked onPick) {
-        LinearLayout box = new LinearLayout(activity);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(8), dp(16), 0);
-        EditText search = new EditText(activity);
-        search.setHint("Поиск");
-        search.setSingleLine(true);
-        ListView listView = new ListView(activity);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(activity, android.R.layout.simple_list_item_single_choice, new ArrayList<>(items));
-        listView.setAdapter(adapter);
-        listView.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
-        int index = items.indexOf(current);
-        if (index >= 0) {
-            listView.setItemChecked(index, true);
-            listView.setSelection(Math.max(0, index - 2));
-        }
-        box.addView(search);
-        box.addView(listView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(360)));
-        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle(title).setView(box).setNegativeButton("Отмена", null).create();
-        listView.setOnItemClickListener((parent, view, position, id) -> {
-            onPick.on(adapter.getItem(position));
-            dialog.dismiss();
-        });
-        search.addTextChangedListener(new TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-            }
-
-            @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {
-                String q = s.toString().toLowerCase();
-                adapter.clear();
-                for (String item : items) if (item.toLowerCase().contains(q)) adapter.add(item);
-                listView.clearChoices();
-                for (int i = 0; i < adapter.getCount(); i++) if (adapter.getItem(i).equals(current)) listView.setItemChecked(i, true);
-            }
-
-            @Override
-            public void afterTextChanged(Editable s) {
-            }
-        });
-        dialog.show();
-    }
-
     // ---------- views ----------
 
-    private LinearLayout.LayoutParams row() {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(10);
-        return lp;
-    }
-
-    private TextView text(String value, boolean link) {
-        TextView view = new TextView(activity);
-        view.setText(value);
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, link ? 15 : 13);
-        if (link) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        view.setPadding(0, dp(4), 0, dp(4));
-        return view;
-    }
-
-    private TextView chip(String text, boolean quiet, View.OnClickListener click) {
+    /** A rounded button of the row: an icon, a short text, the accent when something is on. */
+    private TextView chip(int icon, String text, boolean on, View.OnClickListener click) {
         TextView chip = new TextView(activity);
-        chip.setText(text);
+        chip.setText(text == null ? "" : text);
         chip.setSingleLine(true);
+        chip.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        chip.setMaxWidth(dp(200));
         chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        chip.setTextColor(quiet ? palette.muted : palette.text);
-        chip.setPadding(dp(12), dp(6), dp(12), dp(6));
+        int color = on ? palette.accent : palette.text;
+        chip.setTextColor(color);
+        chip.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        chip.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0);
+        chip.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(on ? palette.accent : palette.muted));
+        chip.setCompoundDrawablePadding(text == null ? 0 : dp(6));
+        chip.setPadding(text == null ? dp(9) : dp(11), dp(7), text == null ? dp(9) : dp(13), dp(7));
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(dp(14));
-        bg.setColor(quiet ? palette.bg : palette.raised);
-        bg.setStroke(1, palette.line);
+        bg.setCornerRadius(dp(18));
+        bg.setColor(on ? ((palette.accent & 0x00ffffff) | 0x1f000000) : palette.raised);
+        bg.setStroke(dp(1), on ? ((palette.accent & 0x00ffffff) | 0x80000000) : palette.line);
         chip.setBackground(bg);
         if (click != null) chip.setOnClickListener(click);
+        else chip.setAlpha(0.7f);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMarginEnd(dp(8));
         chip.setLayoutParams(lp);

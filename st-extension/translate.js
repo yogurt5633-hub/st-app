@@ -1045,10 +1045,11 @@ export function openTranslate(preset = {}) {
             },
         }, el('option', { value: '', selected: !choice.model, text: 'Как в настройках Корректора (дешёвая)' }),
         list.map(m => el('option', { value: m, selected: m === choice.model, text: m })));
-        modelRow.replaceChildren(
+        modelRow.replaceChildren(...[
             el('div', { class: 'kg-label', text: 'Модель для перевода (ответы в таверне пишет другая — та, что выбрана в таверне)' }),
             select,
-            models.length ? null : el('div', { class: 'kg-hint', text: 'Список моделей берётся из подключения таверны. Другую модель можно указать в Корректоре → Настройки → «Для перевода»' }));
+            models.length ? null : el('div', { class: 'kg-hint', text: 'Список моделей берётся из подключения таверны. Другую модель можно указать в Корректоре → Настройки → «Для перевода»' }),
+        ].filter(Boolean));
     };
     drawModelRow();
     const again = el('label', { class: 'checkbox_label' },

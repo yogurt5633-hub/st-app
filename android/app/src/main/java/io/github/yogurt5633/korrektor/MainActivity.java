@@ -381,7 +381,10 @@ public class MainActivity extends Activity {
                     if (pendingFile != null && stUp) deliverFile();
                 }
                 // SillyTavern fills its menus a little after the page loads.
-                if (v == tavern) handler.postDelayed(modelBar::refresh, 4000);
+                if (v == tavern) {
+                    handler.postDelayed(modelBar::refresh, 4000);
+                    passTavernTheme();
+                }
             }
 
             @Override
@@ -1135,6 +1138,24 @@ public class MainActivity extends Activity {
         String theme = Palette.resolvedTheme(this, prefs);
         String accent = prefs.text(Prefs.ACCENT);
         korrektor.evaluateJavascript("window.korrektorTheme&&window.korrektorTheme(" + JSONObject.quote(theme) + "," + JSONObject.quote(accent) + ")", null);
+        passTavernTheme();
+    }
+
+    /**
+     * Korrektor's windows inside the tavern (backgrounds, avatar, translation, progress) take the
+     * app's colours, so everything opened from the row above the tavern looks the same.
+     */
+    private void passTavernTheme() {
+        if (tavern == null) return;
+        String js = "(function(){var r=document.documentElement;if(!r)return;"
+                + "var c={bg:'" + hex(palette.card) + "',deep:'" + hex(palette.deep) + "',raised:'" + hex(palette.raised) + "',line:'" + hex(palette.line) + "',"
+                + "text:'" + hex(palette.text) + "',muted:'" + hex(palette.muted) + "',accent:'" + hex(palette.accent) + "',on:'" + hex(palette.onPrimary) + "'};"
+                + "for(var k in c)r.style.setProperty('--ka-'+k,c[k]);r.classList.add('korrektor-app');})()";
+        tavern.evaluateJavascript(js, null);
+    }
+
+    private static String hex(int color) {
+        return String.format("#%06x", color & 0xffffff);
     }
 
     // ---------- links shared to the app ----------

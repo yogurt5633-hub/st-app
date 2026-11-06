@@ -43,3 +43,28 @@
 .kg-model select { width: 100%; margin-bottom: 10px; }
 /* Translation of a reply while it is being written */
 .kt-live { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--SmartThemeQuoteColor, #e3a54a); background: rgba(127, 127, 127, 0.1); border-radius: 6px; white-space: pre-wrap; font-size: 0.95em; opacity: 0.9; }
+
+/* Inside the Korrektor app: the same look as the app and its sheets (colours come from the app). */
+html.korrektor-app .kg-sheet { background: rgba(0, 0, 0, 0.5); }
+html.korrektor-app .kg-sheet-box { background: var(--ka-bg); color: var(--ka-text); border: 1px solid var(--ka-line); border-bottom: 0; border-radius: 22px 22px 0 0; padding: 10px 18px 22px; box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35); font-family: inherit; }
+html.korrektor-app .kg-sheet-box::before { content: ''; display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--ka-line); margin: 0 auto 12px; }
+html.korrektor-app .kg-sheet-head { font-size: 1.15em; }
+html.korrektor-app .kg-sheet .menu_button { background: var(--ka-raised); color: var(--ka-text); border: 1px solid var(--ka-line); border-radius: 12px; padding: 8px 14px; filter: none; opacity: 1; }
+html.korrektor-app .kg-sheet .menu_button:disabled { opacity: 0.5; }
+html.korrektor-app .kg-sheet .kg-main { background: var(--ka-accent); color: var(--ka-on); border-color: transparent; }
+html.korrektor-app .kg-sheet .kg-x { border-radius: 50%; min-width: 34px; height: 34px; padding: 0; }
+html.korrektor-app .kg-seg button { border-color: var(--ka-line); color: var(--ka-text); background: var(--ka-raised); }
+html.korrektor-app .kg-seg button.on { background: var(--ka-accent); color: var(--ka-on); border-color: transparent; }
+html.korrektor-app .kg-sheet select.text_pole { background: var(--ka-deep); color: var(--ka-text); border: 1px solid var(--ka-line); border-radius: 12px; padding: 8px 10px; }
+html.korrektor-app .kg-sheet .kg-label, html.korrektor-app .kg-sheet .kg-hint { color: var(--ka-muted); opacity: 1; }
+html.korrektor-app .kg-sheet input[type="checkbox"] { accent-color: var(--ka-accent); }
+html.korrektor-app .kg-tile { background: var(--ka-raised); color: var(--ka-text); }
+html.korrektor-app .kg-tile.on { border-color: var(--ka-accent); }
+html.korrektor-app .kg-bar { background: var(--ka-raised); }
+html.korrektor-app .kg-bar i, html.korrektor-app .kt-bar i { background: var(--ka-accent); }
+html.korrektor-app .kg-win { background: var(--ka-bg); border-color: var(--ka-line); color: var(--ka-text); border-radius: 16px; }
+html.korrektor-app .kg-win-head { background: var(--ka-raised); }
+html.korrektor-app .kt-task { background: var(--ka-bg); color: var(--ka-text); border-color: var(--ka-line); border-radius: 14px; }
+html.korrektor-app .kt-line b { color: var(--ka-accent); }
+html.korrektor-app .kt-bar { background: var(--ka-raised); }
+html.korrektor-app .kt-live { border-left-color: var(--ka-accent); }
