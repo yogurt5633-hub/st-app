@@ -202,6 +202,9 @@ export class LlmClient {
 
     /** Works out which API, source and model a task uses. */
     resolve(task) {
+        // Translation may have a model of its own (chosen in the translation sheet or settings).
+        const m = this.settings.models || {};
+        if (task === 'translate' && (m.translateSource || (m.translate || '').trim())) return this.resolveTier('translate');
         return this.resolveTier(this.settings.tasks?.[task] === 'scan' ? 'scan' : 'heavy');
     }
 

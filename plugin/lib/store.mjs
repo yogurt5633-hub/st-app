@@ -20,6 +20,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
         // 0 = automatic
         scanMaxTokens: 0,
         heavyMaxTokens: 0,
+        // Translating chat messages: its own model, if chosen; empty = the task's tier below.
+        translateSource: '',
+        translate: '',
+        translateEffort: 'low',
+        translateMaxTokens: 0,
     },
     // Which model handles which task: 'scan' (cheap) or 'heavy'.
     tasks: {

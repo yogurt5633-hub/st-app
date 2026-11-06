@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.15';
+const APP_VERSION = '0.4.16';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -1281,7 +1281,8 @@ async function renderSettings(reload = true) {
             h('div', { class: 'rows' },
                 recommendation,
                 tierBlock('scan', 'Дешёвая, для фоновой проверки'),
-                tierBlock('heavy', 'Сильная, для сложных правок'))),
+                tierBlock('heavy', 'Сильная, для сложных правок'),
+                tierBlock('translate', 'Для перевода сообщений в чате (пусто — модель из «Какая модель для какой задачи»)'))),
 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Какая модель для какой задачи' }),

@@ -48,12 +48,14 @@ export function settings() {
         range: saved.range || 'last20',
         mine: saved.mine ?? true,
         auto: Boolean(saved.auto),
+        // Translated paragraphs shown under a reply while it is being written.
+        live: Boolean(saved.live),
         again: false,
     };
 }
 
 function saveSettings(s) {
-    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto });
+    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto, live: s.live });
 }
 
 // ---------- splitting ----------
@@ -554,17 +556,24 @@ async function sillyTavernParts() {
 
 /** The text of a message as SillyTavern shows it, before translation. */
 async function prepare(message, id) {
-    const c = ctx();
-    let text = String(message.mes)
-        .replace(/\{\{user\}\}/gi, c.name1 || '{{user}}')
-        .replace(/\{\{char\}\}/gi, message.is_user ? (c.name2 || '{{char}}') : (message.name || c.name2 || '{{char}}'));
-    const { regex, reasoning } = await sillyTavernParts();
+    let text = String(message.mes);
+    const { reasoning } = await sillyTavernParts();
     try {
         // A thinking block still in the text (it is cut out a moment after the reply arrives).
         if (reasoning?.removeReasoningFromString) text = reasoning.removeReasoningFromString(text);
     } catch {
         // keep the text as it is
     }
+    return displayForm(text, message, id);
+}
+
+/** Any text of a message (all of it, or one paragraph) with macros filled and display regexes applied. */
+async function displayForm(raw, message, id) {
+    const c = ctx();
+    let text = String(raw)
+        .replace(/\{\{user\}\}/gi, c.name1 || '{{user}}')
+        .replace(/\{\{char\}\}/gi, message.is_user ? (c.name2 || '{{char}}') : (message.name || c.name2 || '{{char}}'));
+    const { regex } = await sillyTavernParts();
     try {
         if (regex?.getRegexedString) {
             // The same call SillyTavern makes before showing a message: display-only regexes
@@ -695,6 +704,147 @@ export async function translateChat(options, onProgress = () => { }) {
     }
 }
 
+// ---------- which model translates (Korrektor's settings, separate from the tavern's reply model) ----------
+
+const SETTINGS_API = '/api/plugins/korrektor/settings';
+let modelChoice = { source: '', model: '' };
+
+async function loadModelChoice() {
+    try {
+        const res = await fetch(SETTINGS_API, { headers: { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' } });
+        if (!res.ok) return modelChoice;
+        const m = (await res.json()).models || {};
+        modelChoice = { source: m.translateSource || '', model: m.translate || '' };
+    } catch {
+        // plugin not reachable: the choice stays as it was
+    }
+    return modelChoice;
+}
+
+/** Sets the model that translates; empty = as in Korrektor's settings (its cheap model). */
+export async function setModel(source, model) {
+    const body = { models: { translateSource: model ? String(source || '') : '', translate: String(model || '') } };
+    const res = await fetch(SETTINGS_API, { method: 'POST', headers: { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`Не сохранилось: ${res.status}`);
+    modelChoice = { source: body.models.translateSource, model: body.models.translate };
+    return modelChoice;
+}
+
+/** The tavern's Chat Completion source and the models it lists (the same list as in its own menu). */
+function tavernModels() {
+    const $ = window.jQuery;
+    if (!$ || $('#main_api').val() !== 'openai') return { source: '', models: [] };
+    const source = $('#chat_completion_source').val();
+    const map = { makersuite: 'model_google_select', vertexai: 'model_vertexai_select', custom: 'model_custom_select' };
+    const select = document.getElementById(map[source] || `model_${source}_select`);
+    const models = select ? [...select.options].map(o => o.value).filter(Boolean) : [];
+    const custom = source === 'custom' ? document.getElementById('custom_model_id')?.value : '';
+    if (custom && !models.includes(custom)) models.unshift(custom);
+    return { source, models: models.slice(0, 1500) };
+}
+
+// ---------- while a reply is being written ----------
+// Each finished paragraph is translated in the background, while the model writes the next one.
+// When the reply is done only the last paragraph is left. The thinking is never sent: nothing
+// is taken until the reasoning block is closed, and the final translation is assembled from the
+// finished message (thinking cut out), so a paragraph of thinking could never get into it anyway.
+
+let live = null;
+
+function resetLive() {
+    live?.controller.abort();
+    live?.box?.remove();
+    live = null;
+}
+
+/** The reply part of the streamed text, or null while the model is still thinking. */
+function replyPart(text) {
+    const r = ctx().powerUserSettings?.reasoning;
+    if (!r?.auto_parse || !r.prefix || !r.suffix) return text;
+    const prefixInPrompt = stParts?.reasoning?.PromptReasoning?.getLatestPrefix?.() || '';
+    if (!String(text).trimStart().startsWith(r.prefix) && !prefixInPrompt) return text;
+    const end = text.indexOf(r.suffix);
+    return end < 0 ? null : text.slice(end + r.suffix.length);
+}
+
+function drawLive() {
+    if (!live || !settings().live) return;
+    const block = document.querySelector(`#chat .mes[mesid="${live.id}"] .mes_block`);
+    if (!block) return;
+    const done = live.order.filter(key => live.ready.has(key)).map(key => live.ready.get(key));
+    if (!done.length) return;
+    if (!live.box || !live.box.isConnected) {
+        live.box = el('div', { class: 'kt-live', title: 'Перевод по ходу ответа' });
+        block.append(live.box);
+    }
+    live.box.textContent = done.join('\n\n');
+}
+
+async function onStream(text) {
+    const s = settings();
+    if (!s.auto) return;
+    const c = ctx();
+    const id = Number(c.streamingProcessor?.messageId ?? c.chat.length - 1);
+    const message = c.chat?.[id];
+    if (!message || message.is_user || message.is_system) return;
+    await sillyTavernParts();
+    if (!live || live.id !== id || live.engine !== s.engine || live.lang !== s.lang) {
+        resetLive();
+        live = { id, engine: s.engine, lang: s.lang, controller: new AbortController(), cache: new Map(), ready: new Map(), order: [], chain: Promise.resolve(), box: null };
+    }
+    const reply = replyPart(String(text || ''));
+    if (reply === null) return;
+    // The last paragraph is still being written.
+    const finished = reply.split(/\n{2,}/).slice(0, -1);
+    for (const paragraph of finished) {
+        if (!paragraph.trim()) continue;
+        // Keys without the spaces and line breaks around: the finished message may have them trimmed.
+        const key = (await displayForm(paragraph.trim(), message, id)).trim();
+        if (!key.trim() || live.cache.has(key)) continue;
+        const current = live;
+        const job = current.chain.then(() => translator(current.engine, current.lang, current.controller.signal)(key));
+        current.chain = job.catch(() => { });
+        current.cache.set(key, job);
+        current.order.push(key);
+        job.then((out) => {
+            current.ready.set(key, out);
+            if (current === live) drawLive();
+        }, () => { });
+    }
+}
+
+/**
+ * The finished reply translated with what was done while it was written: paragraphs already
+ * translated are taken as they are, the rest are translated now.
+ */
+async function assemble(source, id, s, signal, tracker) {
+    const parts = source.split(/(\n{2,})/);
+    const cache = live && live.id === id && live.engine === s.engine && live.lang === s.lang ? live.cache : null;
+    const todo = parts.filter((p, i) => i % 2 === 0 && p.trim() && !cache?.has(p.trim()));
+    tracker?.plan(todo.reduce((n, p) => n + p.length, 0) || 1);
+    const translate = translator(s.engine, s.lang, signal, tracker);
+    const out = [];
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (i % 2 === 1 || !part.trim()) {
+            out.push(part);
+            continue;
+        }
+        let text = null;
+        const core = part.trim();
+        if (cache?.has(core)) {
+            try {
+                const [, lead, , tail] = part.match(/^(\s*)([\s\S]*?)(\s*)$/);
+                text = lead + await cache.get(core) + tail;
+            } catch {
+                text = null;
+            }
+        }
+        out.push(text ?? await translate(part));
+    }
+    return out.join('');
+}
+
 // ---------- new replies ----------
 
 /** SillyTavern's own auto-translation would translate the same reply again: leave it only for my messages. */
@@ -732,7 +882,10 @@ async function translateNew(messageId) {
             const before = message.mes;
             source = await prepare(message, id);
             tracker = new Tracker(s.engine);
-            text = await translator(s.engine, s.lang, controller.signal, tracker)(source);
+            // Written with streaming: paragraphs translated meanwhile are used; otherwise all at once.
+            text = live && live.id === id && live.cache.size
+                ? await assemble(source, id, s, controller.signal, tracker)
+                : await translator(s.engine, s.lang, controller.signal, tracker)(source);
             // The text changed while it was being translated (thinking cut out, edited): once more.
             if (message.mes === before) break;
             text = null;
@@ -742,6 +895,10 @@ async function translateNew(messageId) {
         if (text === source) return;
         if (typeof message.extra !== 'object' || !message.extra) message.extra = {};
         message.extra.display_text = text;
+        if (live?.id === id) {
+            live.box?.remove();
+            live.box = null;
+        }
         showMessage(id, message);
         await ctx().saveChat();
     } catch (error) {
@@ -754,6 +911,10 @@ async function translateNew(messageId) {
     } finally {
         autoQueue.delete(id);
         onScreen.finish(outcome);
+        if (live?.id === id) {
+            live.box?.remove();
+            live.box = null;
+        }
     }
 }
 
@@ -863,6 +1024,33 @@ export function openTranslate(preset = {}) {
     const autoBox = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.auto, onchange: (e) => { s.auto = e.target.checked; save(); if (s.auto) quietStAuto(); } }),
         el('span', { text: 'Переводить новые ответы сразу (и приветствие нового чата), этим же переводчиком' }));
+    const liveBox = el('label', { class: 'checkbox_label' },
+        el('input', { type: 'checkbox', checked: s.live, onchange: (e) => { s.live = e.target.checked; save(); } }),
+        el('span', { text: 'Показывать перевод под ответом, пока он пишется' }));
+    // Which model translates when «Модель Корректора» is chosen: separate from the model of the replies.
+    const modelRow = el('div', { class: 'kg-model' });
+    const drawModelRow = async () => {
+        if (s.engine !== 'model') return modelRow.replaceChildren();
+        const choice = await loadModelChoice();
+        const { source, models } = tavernModels();
+        const list = [...new Set([...(choice.model ? [choice.model] : []), ...models])];
+        const select = el('select', {
+            class: 'text_pole', onchange: async (e) => {
+                try {
+                    await setModel(e.target.value ? (choice.model === e.target.value ? choice.source || source : source) : '', e.target.value);
+                    toastr.success(e.target.value ? `Переводит: ${e.target.value}` : 'Переводит дешёвая модель Корректора', 'Корректор');
+                } catch (error) {
+                    toastr.error(error.message, 'Корректор');
+                }
+            },
+        }, el('option', { value: '', selected: !choice.model, text: 'Как в настройках Корректора (дешёвая)' }),
+        list.map(m => el('option', { value: m, selected: m === choice.model, text: m })));
+        modelRow.replaceChildren(
+            el('div', { class: 'kg-label', text: 'Модель для перевода (ответы в таверне пишет другая — та, что выбрана в таверне)' }),
+            select,
+            models.length ? null : el('div', { class: 'kg-hint', text: 'Список моделей берётся из подключения таверны. Другую модель можно указать в Корректоре → Настройки → «Для перевода»' }));
+    };
+    drawModelRow();
     const again = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.again, onchange: (e) => { s.again = e.target.checked; } }), el('span', { text: 'Заново (уже переведённые тоже)' }));
 
@@ -871,9 +1059,10 @@ export function openTranslate(preset = {}) {
         el('div', { class: 'kg-label', text: 'Какие сообщения' }),
         seg([['last20', 'Последние 20'], ['last50', 'Последние 50'], ['all', 'Весь чат']], s.range, (v) => { s.range = v; save(); }),
         el('div', { class: 'kg-label', text: 'Чем переводить' }),
-        el('select', { class: 'text_pole', onchange: (e) => { s.engine = e.target.value; save(); } },
+        el('select', { class: 'text_pole', onchange: (e) => { s.engine = e.target.value; save(); drawModelRow(); } },
             ENGINES.map(([key, label]) => el('option', { value: key, selected: key === s.engine, text: label }))),
-        el('div', { class: 'kg-checks' }, mine, again, autoBox),
+        modelRow,
+        el('div', { class: 'kg-checks' }, mine, again, autoBox, liveBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn),
@@ -900,13 +1089,29 @@ export function initTranslate() {
         running: () => Boolean(running),
         settings,
         setAuto,
+        setModel,
+        translateModel: () => modelChoice,
+        // For checking what was translated in advance while a reply was written.
+        liveState: () => (live ? { id: live.id, keys: [...live.order], ready: live.ready.size, box: Boolean(live.box?.isConnected) } : null),
         engines: ENGINES,
     };
     const timer = setInterval(() => { if (addMenuItem()) clearInterval(timer); }, 1000);
+    loadModelChoice();
+    sillyTavernParts();
     try {
         const { eventSource, eventTypes } = ctx();
         // After a reply (or a new swipe) is shown in full.
         eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (id) => { translateNew(id).catch(() => { }); });
+        // While a reply is being written: paragraphs are translated as they are finished.
+        // The handler returns at once, so streaming itself is never slowed down.
+        eventSource.on(eventTypes.STREAM_TOKEN_RECEIVED, (text) => { onStream(text).catch(() => { }); });
+        // A new generation, a stop, another chat: what was translated in advance is thrown away.
+        // Background generations (Summarize, quiet prompts) and dry runs (token counting) are not a new reply.
+        eventSource.on(eventTypes.GENERATION_STARTED, (type, options, dryRun) => {
+            if (dryRun || type === 'quiet' || options?.quiet_prompt) return;
+            resetLive();
+        });
+        eventSource.on(eventTypes.CHAT_CHANGED, () => resetLive());
         // Swiping to another existing version: SillyTavern drops the old translation, translate this one.
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => {
             setTimeout(() => { if (!busy()) translateNew(id).catch(() => { }); }, 300);

@@ -39,7 +39,8 @@ final class ModelBar {
             + "langName:tl.selectedOptions[0]?tl.selectedOptions[0].textContent:'',provider:$('#translation_provider').val(),"
             + "languages:[].map.call(tl.options,function(o){return [o.value,o.textContent];})};}"
             + "if(window.korrektorTranslate&&window.korrektorTranslate.settings){var ks=window.korrektorTranslate.settings();"
-            + "out.ours={auto:!!ks.auto,engine:ks.engine,lang:ks.lang,engines:window.korrektorTranslate.engines||[]};}"
+            + "var km=window.korrektorTranslate.translateModel?window.korrektorTranslate.translateModel():{};"
+            + "out.ours={auto:!!ks.auto,engine:ks.engine,lang:ks.lang,engines:window.korrektorTranslate.engines||[],model:km.model||'',modelSource:km.source||''};}"
             + "if(out.api==='openai'){var source=$('#chat_completion_source').val();"
             + "var map={makersuite:'model_google_select',vertexai:'model_vertexai_select',custom:'model_custom_select'};"
             + "var id=map[source]||('model_'+source+'_select');var sel=document.getElementById(id);"
@@ -205,6 +206,22 @@ final class ModelBar {
                 engineView.setText("Переводчик: " + picked);
             }));
             box.addView(engineView, row());
+            // The model that translates (Korrektor's), separate from the one writing the replies.
+            final String[] translateModel = {oursState.optString("model")};
+            TextView modelView = text("Модель для перевода: " + (translateModel[0].isEmpty() ? "дешёвая Корректора" : translateModel[0]), true);
+            modelView.setOnClickListener(v -> {
+                List<String> names = new ArrayList<>();
+                names.add("Дешёвая модель Корректора (как в его настройках)");
+                JSONArray list = state.optJSONArray("models");
+                for (int i = 0; list != null && i < list.length(); i++) names.add(list.optString(i));
+                pick("Модель для перевода", names, translateModel[0].isEmpty() ? names.get(0) : translateModel[0], picked -> {
+                    boolean cheap = names.indexOf(picked) == 0;
+                    translateModel[0] = cheap ? "" : picked;
+                    modelView.setText("Модель для перевода: " + (cheap ? "дешёвая Корректора" : picked));
+                    run("window.korrektorTranslate.setModel(" + JSONObject.quote(cheap ? "" : state.optString("source")) + "," + JSONObject.quote(translateModel[0]) + ")");
+                });
+            });
+            box.addView(modelView, row());
         }
         TextView note = text(oursState != null
                 ? "Перевод показывается вместо текста, а модель по-прежнему видит оригинал. Длинные ответы переводятся по частям, и если кусок вернулся на английском, Корректор переведёт его заново. Уже написанные сообщения — «Старые сообщения»"

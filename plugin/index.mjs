@@ -275,7 +275,7 @@ export async function init(router) {
             pluginDir: HERE,
             user: user.ctx.handle,
             connection: connectionInfo(stSettings),
-            models: { scan: llm.resolveTier('scan'), heavy: llm.resolveTier('heavy') },
+            models: { scan: llm.resolveTier('scan'), heavy: llm.resolveTier('heavy'), translate: llm.resolve('translate') },
             open: proposals.filter(p => OPEN_STATUSES.includes(p.status)).length,
             lastScan: state.lastScan ?? null,
             scanning: publicJob(runningJob(user.ctx.handle, 'scan')),
