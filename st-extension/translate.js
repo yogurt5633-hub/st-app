@@ -22,7 +22,7 @@ const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
 const KEY_API = '/api/plugins/korrektor/translate/key';
 // The companion's version, for the journal (the same as in manifest.json).
-const COMPANION_VERSION = '0.4.20';
+const COMPANION_VERSION = '0.4.21';
 
 // ---------- journal ----------
 // What the translation did: requests, retries, cut answers, errors. Kept in this browser
@@ -93,11 +93,15 @@ const AUTO = ['google', 'bing', 'yandex', 'lingva'];
 const LIMITS = { google: 1800, bing: 1000, yandex: 1500, lingva: 900, deepl: 4000, model: 11000 };
 // Requests at once, per translator: pieces of one message go in parallel, so a long reply
 // takes about as long as its longest piece.
-const CONCURRENCY = { google: 4, bing: 3, yandex: 3, lingva: 2, deepl: 3, model: 3 };
+const CONCURRENCY = { google: 4, bing: 3, yandex: 3, lingva: 2, deepl: 3, model: 4 };
 // A long message goes to the model in parts of about this size, translated at the same time.
 // Shorter messages go whole: one request keeps names and genders consistent.
 const MODEL_WHOLE = 4000;
 const MODEL_PART = 3000;
+// Shown as it goes: a message longer than this goes to the model in parts of about 600 characters,
+// at most 6 parts (a longer message gets longer parts), so a rate limit is not hit at once.
+const MODEL_GRADUAL_MIN = 800;
+const gradualPart = (length) => Math.max(600, Math.ceil(length / 6));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Runs at most `n` of the given jobs at once. */
@@ -129,12 +133,14 @@ export function settings() {
         range: saved.range || 'last20',
         mine: saved.mine ?? true,
         auto: Boolean(saved.auto),
+        // The translation appears in the message part by part while it is made.
+        gradual: saved.gradual ?? true,
         again: false,
     };
 }
 
 function saveSettings(s) {
-    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto });
+    store(SETTINGS_KEY, { lang: s.lang, engine: s.engine, range: s.range, mine: s.mine, auto: s.auto, gradual: s.gradual });
 }
 
 // ---------- splitting ----------
@@ -369,13 +375,15 @@ async function free(provider, text, lang, signal) {
     return out;
 }
 
-async function viaModel(text, lang, signal, label = '') {
+async function viaModel(text, lang, signal, label = '', context = null) {
     // X-Korrektor: the plugin may use this tab's session to reach the model.
     const headers = { ...ctx().getRequestHeaders(), 'X-Korrektor': '1' };
     // A paragraph gets about a minute, a whole long reply up to four.
     const limit = Math.min(240000, 45000 + text.length * 40);
     const started = Date.now();
-    const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify({ text, lang }) }, signal, limit, 'модель для перевода');
+    // context: the whole message, when this is one part of it (read for names and genders, not translated).
+    const body = context ? { text, lang, context } : { text, lang };
+    const res = await limitedFetch(MODEL_API, { method: 'POST', headers, body: JSON.stringify(body) }, signal, limit, 'модель для перевода');
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
         tlog('error', `${label}модель: ${data.error || res.status} (${seconds(Date.now() - started)})`);
@@ -492,7 +500,7 @@ const PROBLEMS = { untranslated: 'вернул текст без перевод�
  */
 async function byProvider(provider, text, lang, run, limit = LIMITS[provider], depth = 0) {
     const { signal, tracker, pool, label } = run;
-    const call = provider === 'model' ? (part) => viaModel(part, lang, signal, label) : (part) => free(provider, part, lang, signal);
+    const call = provider === 'model' ? (part, context = run.context) => viaModel(part, lang, signal, label, context) : (part) => free(provider, part, lang, signal);
     let pieces = provider === 'model' ? splitParts(text, limit) : chunkText(text, limit);
     // One big block without blank lines: cut at lines and sentences instead.
     if (pieces.length === 1 && text.length > limit) pieces = chunkText(text, limit);
@@ -506,6 +514,11 @@ async function byProvider(provider, text, lang, run, limit = LIMITS[provider], d
         try {
             const raw = await pool(provider, () => withRetries(() => call(core), 2));
             result = fixMarkup(core, decodeEntities(core, raw));
+            // Far longer than its part: the model translated the whole message it was given to read. Once more without it.
+            if (provider === 'model' && run.context && letterCount(result) > letterCount(core) * 2 + 200) {
+                tlog('warn', `${label}модель перевела больше своей части — повторяю без контекста`);
+                result = fixMarkup(core, decodeEntities(core, await pool(provider, () => withRetries(() => call(core, null), 2))));
+            }
             if (provider !== 'model') tlog('info', `${label}${provider}: ${core.length} → ${result.length} зн. за ${seconds(Date.now() - started)}`);
         } catch (error) {
             if (!error.cut) {
@@ -539,9 +552,10 @@ async function byProvider(provider, text, lang, run, limit = LIMITS[provider], d
 /**
  * The translator for one run. With «Авто» free providers are tried in turn and the one
  * that worked goes first for the rest of the run; a chosen provider is used alone.
- * `label` starts every journal line of this run (for example «#12 »).
+ * `label` starts every journal line of this run (for example «#12 »). `onPreview(text)` is called
+ * as parts get translated, with the message so far (translated parts over the original).
  */
-export function translator(engine, lang, signal = null, tracker = null, { plan = true, label = '' } = {}) {
+export function translator(engine, lang, signal = null, tracker = null, { plan = true, label = '', onPreview = null } = {}) {
     let order = engine === 'auto' || engine === 'free' ? [...AUTO] : [engine];
     // A provider that failed twice in a row is skipped for the rest of the run,
     // so a blocked translator costs seconds, not minutes.
@@ -577,9 +591,15 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
     // Line by line: lines in the target language, lines without letters (borders, numbers) and
     // table borders stay exactly as they are, so status blocks and tables keep their shape.
     // Neighbouring lines that need translating go together, for context. All groups are sent at once.
-    const translatePiece = (run, piece) => {
-        if (!piece.trim()) return piece;
-        const out = [];
+    // Every piece becomes a slot: its original text and its translation once it is there.
+    const translatePiece = (run, piece, add) => {
+        if (!piece.trim()) return add(piece, piece);
+        let first = true;
+        const push = (orig, work) => {
+            if (!first) add('\n', '\n');
+            first = false;
+            add(orig, work);
+        };
         let group = [];
         const flush = () => {
             if (!group.length) return;
@@ -591,7 +611,7 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
             group = [];
             if (body.length) {
                 const source = body.join('\n');
-                out.push(translateRun(run, source).catch((error) => {
+                push(source, translateRun(run, source).catch((error) => {
                     // One stubborn piece does not cost the whole reply: it stays in the original.
                     if (!error.untranslated) throw error;
                     run.partial++;
@@ -599,7 +619,7 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
                     return source;
                 }));
             }
-            out.push(...blanks);
+            for (const blank of blanks) push(blank, blank);
         };
         for (const line of piece.split('\n')) {
             if (!line.trim() && group.length) {
@@ -607,12 +627,12 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
                 group.push(line);
             } else if (!needsTranslation(line, lang)) {
                 flush();
-                out.push(line);
+                push(line, line);
             } else if (TABLE_ROW.test(line)) {
                 // A table row: only the text of the cells, the | stay where they are.
                 flush();
                 const cells = line.split('|');
-                out.push(Promise.all(cells.map(async (cell) => {
+                push(line, Promise.all(cells.map(async (cell) => {
                     if (!needsTranslation(cell, lang)) return cell;
                     const [, lead, core, tail] = cell.match(/^(\s*)([\s\S]*?)(\s*)$/);
                     return lead + (await translateRun(run, core)).replace(/\|/g, '/').replace(/\n/g, ' ') + tail;
@@ -622,7 +642,6 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
             }
         }
         flush();
-        return Promise.all(out).then(done => done.join('\n'));
     };
     const translate = async (text) => {
         // What will be sent, for the progress bar: the lines that need translating.
@@ -632,33 +651,70 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
         const onOuter = () => inner.abort();
         if (signal?.aborted) inner.abort();
         else signal?.addEventListener('abort', onOuter, { once: true });
-        const run = { signal: inner.signal, outer: signal, tracker, pool, label, partial: 0 };
+        const run = { signal: inner.signal, outer: signal, tracker, pool, label, partial: 0, context: null };
+        // The message as it is so far: translated slots in their places, the rest still in the original.
+        const slots = [];
+        let closed = false;
+        let previewTimer = null;
+        const preview = () => {
+            if (!onPreview || closed || previewTimer) return;
+            previewTimer = setTimeout(() => {
+                previewTimer = null;
+                if (closed) return;
+                try {
+                    onPreview(slots.map(x => x.value ?? x.orig).join(''));
+                } catch {
+                    // the message is gone from the screen
+                }
+            }, 120);
+        };
+        const add = (orig, work) => {
+            const one = { orig, value: typeof work === 'string' ? work : null };
+            one.promise = typeof work === 'string' ? Promise.resolve(work) : work.then((value) => {
+                one.value = value;
+                preview();
+                return value;
+            });
+            slots.push(one);
+        };
         try {
             if (engine === 'model') {
-                // The model gets the whole message — markup, blocks and all — and keeps it;
-                // a long one in parts at once.
+                // The model gets the whole message — markup, blocks and all — and keeps it. A long one
+                // goes in parts at once; shown as it goes, in smaller parts, so the beginning comes soon.
+                // Each part then gets the whole message to read, for names, genders and who speaks.
                 if (!text.split('\n').some(line => needsTranslation(line, lang))) return text;
-                try {
-                    return await translateRun(run, text, text.length > MODEL_WHOLE ? MODEL_PART : undefined);
-                } catch (error) {
-                    if (error.untranslated) {
-                        tlog('warn', `${label}модель вернула текст без перевода — оставлен оригинал`);
-                        translate.partial = 1;
-                        return text;
+                const parts = onPreview && text.length > MODEL_GRADUAL_MIN ? splitParts(text, gradualPart(text.length)) : [text];
+                if (parts.length > 1) run.context = text;
+                for (const part of parts) {
+                    if (!part.trim() || !part.split('\n').some(line => needsTranslation(line, lang))) {
+                        add(part, part);
+                        continue;
                     }
-                    throw error;
+                    const limit = parts.length === 1 && text.length > MODEL_WHOLE ? MODEL_PART : undefined;
+                    add(part, translateRun(run, part, limit).catch((error) => {
+                        if (!error.untranslated) throw error;
+                        tlog('warn', `${label}модель вернула текст без перевода — оставлен оригинал${parts.length > 1 ? ' этой части' : ''}`);
+                        run.partial++;
+                        return part;
+                    }));
+                }
+            } else {
+                // split() with a group keeps the kept pieces in the list.
+                for (const piece of text.split(KEEP)) {
+                    if (piece === undefined) continue;
+                    if (KEEP_ALL.test(piece)) add(piece, piece);
+                    else translatePiece(run, piece, add);
                 }
             }
-            // split() with a group keeps the kept pieces in the list.
-            const pieces = text.split(KEEP).filter(piece => piece !== undefined)
-                .map(piece => (KEEP_ALL.test(piece) ? piece : translatePiece(run, piece)));
-            return (await Promise.all(pieces)).join('');
+            return (await Promise.all(slots.map(x => x.promise))).join('');
         } catch (error) {
             inner.abort();
             // «Стоп» pressed: the error says so, whatever request noticed it first.
             if (signal?.aborted && !error.stopped) throw Object.assign(new Error('Остановлено'), { fatal: true, stopped: true });
             throw error;
         } finally {
+            closed = true;
+            clearTimeout(previewTimer);
             signal?.removeEventListener('abort', onOuter);
             translate.partial = (translate.partial || 0) + run.partial;
         }
@@ -857,7 +913,9 @@ async function displayForm(raw, message, id) {
  * on one that is not drawn; that one shows its translation when it is scrolled to.
  */
 function showMessage(id, message) {
-    if (!document.querySelector(`#chat .mes[mesid="${id}"]`)) return;
+    const node = document.querySelector(`#chat .mes[mesid="${id}"]`);
+    if (!node) return;
+    node.classList.remove('kt-partial');
     try {
         ctx().updateMessageBlock(id, message);
     } catch (error) {
@@ -865,6 +923,42 @@ function showMessage(id, message) {
         return;
     }
     if (message?.extra?.display_text) checkShown(id, message);
+}
+
+/**
+ * A translation in progress, drawn in the message but not saved: the parts done so far over the
+ * original, the rest still in the original. A thin line at the side shows it is being translated.
+ */
+function showPreview(id, message, text) {
+    const node = document.querySelector(`#chat .mes[mesid="${id}"]`);
+    const box = node?.querySelector('.mes_text');
+    if (!box) return false;
+    try {
+        box.innerHTML = ctx().messageFormatting(text, message.name, message.is_system, message.is_user, id, {}, false);
+        node.classList.add('kt-partial');
+        return true;
+    } catch (error) {
+        console.debug('[korrektor] could not draw the translation so far', id, error);
+        return false;
+    }
+}
+
+/** The preview is over: the message is drawn from what is saved (the translation, or the original again). */
+function endPreview(id, message) {
+    const node = document.querySelector(`#chat .mes[mesid="${id}"]`);
+    if (!node?.classList.contains('kt-partial')) return;
+    node.classList.remove('kt-partial');
+    showMessage(id, message);
+}
+
+/** The onPreview of one message's translation, if «по частям» is on. */
+function previewer(id, message, gradual) {
+    if (!gradual) return null;
+    const mes = message.mes;
+    // Not over a message that was edited, swiped or is no longer in this chat.
+    return (text) => {
+        if (ctx().chat?.[id] === message && message.mes === mes) showPreview(id, message, text);
+    };
 }
 
 /**
@@ -967,7 +1061,8 @@ export async function translateChat(options, onProgress = () => { }) {
             try {
                 const source = await prepare(message, id);
                 tlog('info', `${label}${wasCut ? 'перевод был обрезан, перевожу заново' : 'начинаю'} · ${ENGINE_NAMES[options.engine] || options.engine} → ${options.lang} · ${source.length} зн.`);
-                const run = translator(options.engine, options.lang, controller.signal, tracker, { label });
+                const gradual = options.gradual ?? settings().gradual;
+                const run = translator(options.engine, options.lang, controller.signal, tracker, { label, onPreview: previewer(id, message, gradual) });
                 const text = await run(source);
                 if (text === source && run.partial) throw Object.assign(new Error('переводчик вернул текст без перевода'), { untranslated: true });
                 if (text === source) {
@@ -988,12 +1083,14 @@ export async function translateChat(options, onProgress = () => { }) {
                 if (error.stopped) {
                     state.stopped = true;
                     tlog('info', `${label}остановлено`);
+                    endPreview(id, message);
                     break;
                 }
                 tlog('error', `${label}не переведено: ${error.message}`);
                 state.failed.push(id);
                 lastError = error;
                 streak++;
+                endPreview(id, message);
                 // Three messages in a row failed with every translator: it is not one bad message.
                 if (streak >= 3) {
                     state.error = options.engine === 'model' ? `Модель не отвечает: ${error.message}`
@@ -1006,6 +1103,8 @@ export async function translateChat(options, onProgress = () => { }) {
                     break;
                 }
             }
+            // Drawn from what is saved: the finished translation, or the original after a failure.
+            endPreview(id, message);
             state.current = 0;
             tick();
             if (state.done && state.done % 10 === 0) await ctx().saveChat();
@@ -1124,7 +1223,7 @@ async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) 
             tracker = new Tracker(s.engine);
             engine = s.engine;
             try {
-                const run = translator(s.engine, s.lang, controller.signal, tracker, { label });
+                const run = translator(s.engine, s.lang, controller.signal, tracker, { label, onPreview: previewer(id, message, s.gradual) });
                 text = await run(source);
                 partial = run.partial || 0;
             } catch (error) {
@@ -1134,7 +1233,7 @@ async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) 
                 toastr.warning(`Модель для перевода не сработала (${error.message}). Перевожу бесплатным переводчиком — выберите другую модель или свой ключ в «Перевод»`, 'Корректор', { timeOut: 9000 });
                 tracker = new Tracker('auto');
                 engine = 'auto';
-                const run = translator('auto', s.lang, controller.signal, tracker, { label });
+                const run = translator('auto', s.lang, controller.signal, tracker, { label, onPreview: previewer(id, message, s.gradual) });
                 text = await run(source);
                 partial = run.partial || 0;
             }
@@ -1173,6 +1272,8 @@ async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) 
     } finally {
         messageQueue.delete(id);
         onScreen.finish(outcome);
+        // A part shown and then stopped or failed: the message goes back to what is saved.
+        endPreview(id, message);
     }
 }
 
@@ -1499,6 +1600,9 @@ export function openTranslate(preset = {}) {
     drawModelRow();
     const again = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.again, onchange: (e) => { s.again = e.target.checked; } }), el('span', { text: 'Заново (уже переведённые тоже)' }));
+    const gradualBox = el('label', { class: 'checkbox_label' },
+        el('input', { type: 'checkbox', checked: s.gradual, onchange: (e) => { s.gradual = e.target.checked; save(); } }),
+        el('span', { text: 'Показывать перевод по частям, пока он идёт: готовые куски сразу встают на место оригинала' }));
 
     const body = el('div', { class: 'kg-translate' },
         el('div', { class: 'kg-label', text: 'На какой язык' }), lang,
@@ -1508,7 +1612,7 @@ export function openTranslate(preset = {}) {
         el('select', { class: 'text_pole', onchange: (e) => { s.engine = e.target.value; save(); drawModelRow(); } },
             ENGINES.map(([key, label]) => el('option', { value: key, selected: key === s.engine, text: label }))),
         modelRow,
-        el('div', { class: 'kg-checks' }, mine, again, autoBox),
+        el('div', { class: 'kg-checks' }, mine, again, autoBox, gradualBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn, journalBtn),

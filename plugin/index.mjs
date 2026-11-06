@@ -456,7 +456,8 @@ export async function init(router) {
         // «Стоп» in the tavern closes the request: the provider's request is cut off too.
         const controller = new AbortController();
         res.on('close', () => { if (!res.writableEnded) controller.abort(); });
-        const out = await translateText(key ? null : await llmFor(user), text, lang, { key, signal: controller.signal });
+        const context = typeof req.body?.context === 'string' ? req.body.context : '';
+        const out = await translateText(key ? null : await llmFor(user), text, lang, { key, signal: controller.signal, context });
         if (key && out.text) {
             // Spending with the translator's key goes to the same screen as Korrektor's other calls.
             const used = out.usage?.input || out.usage?.output ? out.usage : { input: Math.ceil(text.length / 3), output: Math.ceil(out.text.length / 3) };

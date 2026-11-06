@@ -319,3 +319,62 @@ test('llm: translation thinks as little as the model allows; a cut answer is not
     assert.equal(wasCut({ stop_reason: 'max_tokens' }), true);
     assert.equal(wasCut({ choices: [{ finish_reason: 'stop' }] }), false);
 });
+
+test('translate: shown as it goes — finished parts take the place of the original, the rest waits in the original', async () => {
+    const { translator } = await import('../st-extension/translate.js');
+    fakeTavern();
+    const bodies = [];
+    let n = 0;
+    globalThis.fetch = async (url, init) => {
+        const body = JSON.parse(init.body);
+        bodies.push(body);
+        // Parts answer at different times: the later ones take longer.
+        await new Promise(r => setTimeout(r, 40 + 150 * n++));
+        return { ok: true, status: 200, json: async () => ({ text: body.text.replace(/[A-Za-z]+/g, 'слово'), model: 'm' }) };
+    };
+    const paragraph = 'The knight walks into the tavern, looks around and orders some ale for his tired friends.';
+    const reply = Array.from({ length: 30 }, (_, i) => `${paragraph} (${i})`).join('\n\n');
+    const previews = [];
+    const out = await translator('model', 'ru', null, null, { onPreview: (text) => previews.push(text) })(reply);
+    assert.ok(!/knight/.test(out));
+    assert.ok(previews.length >= 1, 'parts were shown before the end');
+    const first = previews[0];
+    assert.ok(/слово/.test(first) && /knight/.test(first), 'a preview has translated parts and the original of the rest');
+    for (const p of previews) assert.equal(p.split('\n\n').length, reply.split('\n\n').length, 'paragraphs keep their places in every preview');
+    assert.ok(bodies.length > 1 && bodies.length <= 6 && bodies.every(b => b.text.length <= 1100), `smaller parts: ${bodies.map(b => b.text.length)}`);
+    assert.ok(bodies.every(b => b.context === reply), 'each part gets the whole message to read');
+    // Without showing as it goes: one request, no context.
+    bodies.length = 0;
+    n = 0;
+    await translator('model', 'ru')(reply);
+    assert.equal(bodies.length, 1);
+    assert.equal(bodies[0].context, undefined);
+});
+
+test('translate: a part of a long message is translated with the whole message to read', async () => {
+    const calls = [];
+    const llm = { settings: { models: {} }, complete: async (args) => { calls.push(args); return { text: 'Часть' }; } };
+    await translateText(llm, 'Part two.', 'ru', { context: 'Part one.\n\nPart two.' });
+    assert.match(calls[0].system, /СООБЩЕНИЕ ЦЕЛИКОМ\nPart one\.\n\nPart two\.\nСООБЩЕНИЕ ЦЕЛИКОМ/);
+    assert.match(calls[0].system, /переведи только текст пользователя/);
+    await translateText(llm, 'Part two.', 'ru');
+    assert.doesNotMatch(calls[1].system, /ЦЕЛИКОМ/);
+});
+
+test('translate: free translators show their finished pieces as they go too', async () => {
+    const { translator } = await import('../st-extension/translate.js');
+    fakeTavern();
+    let n = 0;
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        await new Promise(r => setTimeout(r, 30 + 200 * n++));
+        return { ok: true, status: 200, text: async () => text.replace(/[A-Za-z]+/g, 'слово') };
+    };
+    // Lines already in Russian between them: separate pieces.
+    const post = 'The knight walks in.\nЛира молчит.\nHe orders ale.\nЛира кивает.\nThen he sits down.';
+    const previews = [];
+    const out = await translator('google', 'ru', null, null, { onPreview: (t) => previews.push(t) })(post);
+    assert.equal(out, 'слово слово слово слово.\nЛира молчит.\nслово слово слово.\nЛира кивает.\nслово слово слово слово.');
+    assert.ok(previews.some(p => /слово/.test(p) && /[A-Za-z]{4}/.test(p)), 'a preview mixes finished and waiting pieces');
+    assert.ok(previews.every(p => p.split('\n').length === 5));
+});

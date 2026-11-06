@@ -14,6 +14,7 @@ const NAMES = {
 };
 
 export const MAX_TRANSLATE_CHARS = 12000;
+const MAX_CONTEXT_CHARS = 12000;
 
 export function languageName(code) {
     return NAMES[code] || code;
@@ -31,7 +32,7 @@ function translateEffort(llm) {
  * translate-key.mjs) the request goes straight to that provider; otherwise through SillyTavern.
  * Returns { text, cut, model, via, ms }: cut = the answer hit the length limit, so its end is missing.
  */
-export async function translateText(llm, text, lang, { key = null, signal = null } = {}) {
+export async function translateText(llm, text, lang, { key = null, signal = null, context = '' } = {}) {
     const source = String(text ?? '');
     if (!source.trim()) return { text: '', cut: false, model: '', via: '', ms: 0 };
     if (source.length > MAX_TRANSLATE_CHARS) throw httpError(413, 'Сообщение слишком длинное для перевода моделью');
@@ -46,16 +47,21 @@ export async function translateText(llm, text, lang, { key = null, signal = null
         'Если текст уже на нужном языке, верни его без изменений.',
         'Ответь только переводом, без кавычек вокруг и без комментариев.',
     ].join(' ');
+    // One part of a long message: the whole message comes along to read (who speaks, names, genders, tense).
+    const whole = String(context || '').slice(0, MAX_CONTEXT_CHARS);
+    const prompt = whole && whole.trim() !== source.trim()
+        ? `${system}\n\nТекст пользователя — часть длинного сообщения. Ниже всё сообщение целиком, только чтобы понимать, кто говорит, имена, пол и время. Не переводи его и не включай в ответ: переведи только текст пользователя.\n<<<СООБЩЕНИЕ ЦЕЛИКОМ\n${whole}\nСООБЩЕНИЕ ЦЕЛИКОМ>>>`
+        : system;
     // Room for the whole translation, and for the thinking of reasoning models.
     const maxTokens = Math.min(16000, 2000 + source.length * 2);
     const started = Date.now();
     let reply;
     let via;
     if (key) {
-        reply = await completeWithKey(key, { system, user: source, maxTokens, signal, strip: false });
+        reply = await completeWithKey(key, { system: prompt, user: source, maxTokens, signal, strip: false });
         via = 'key';
     } else {
-        reply = await llm.complete({ task: 'translate', system, user: source, maxTokens, effort: translateEffort(llm), strip: false });
+        reply = await llm.complete({ task: 'translate', system: prompt, user: source, maxTokens, effort: translateEffort(llm), strip: false });
         via = 'tavern';
     }
     // The model's own thinking is cut out, unless the message itself has such tags.

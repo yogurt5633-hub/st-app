@@ -69,3 +69,6 @@ html.korrektor-app .kt-bar { background: var(--ka-raised); }
 .kt-journal { max-height: 46vh; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.78em; line-height: 1.35; background: rgba(127, 127, 127, 0.1); border-radius: 8px; padding: 8px; margin: 0; user-select: text; -webkit-user-select: text; }
 body.korrektor-translates .mes .mes_translate { display: none !important; }
 html.korrektor-app .kt-journal { background: var(--ka-raised); color: var(--ka-text); }
+/* A message whose translation is still coming in: translated parts over the original, a thin line at the side. */
+.mes.kt-partial .mes_text { box-shadow: -7px 0 0 -4px var(--SmartThemeQuoteColor, #e3a54a); transition: box-shadow 0.2s; }
+html.korrektor-app .mes.kt-partial .mes_text { box-shadow: -7px 0 0 -4px var(--ka-accent); }
