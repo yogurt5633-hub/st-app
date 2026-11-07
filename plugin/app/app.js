@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.24';
+const APP_VERSION = '0.4.25';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -1286,6 +1286,31 @@ function translateKeyBlock() {
     return box;
 }
 
+/** The translator's instructions and glossary: saved when the field is left. */
+function translateGuideBlock(s) {
+    const t = s.translation || { instructions: '', glossary: '' };
+    const area = (value, rows, placeholder, label) => {
+        const node = h('textarea', { class: 'input', rows, placeholder, 'aria-label': label, style: 'width:100%;height:auto;padding:10px 12px;resize:vertical' });
+        node.value = value || '';
+        return node;
+    };
+    const instructions = area(t.instructions, 4, 'Например: обращение на «ты»; Ихан — парень; мат не смягчать; названия навыков в [скобках] не переводить', 'Указания переводчику');
+    const glossary = area(t.glossary, 6, 'Hunter Association = Ассоциация охотников\nGate = Врата\nIhan =', 'Глоссарий');
+    instructions.setAttribute('maxlength', '4000');
+    glossary.setAttribute('maxlength', '20000');
+    glossary.setAttribute('autocapitalize', 'off');
+    glossary.setAttribute('spellcheck', 'false');
+    instructions.addEventListener('change', () => save({ translation: { instructions: instructions.value } }));
+    glossary.addEventListener('change', () => save({ translation: { glossary: glossary.value } }));
+    return h('div', { class: 'field' },
+        h('span', { class: 'label', text: 'Указания переводчику' }),
+        instructions,
+        h('span', { class: 'hint', text: 'Их понимает перевод моделью Корректора (и свой ключ): как обращаться, кто какого пола, стиль, что не переводить' }),
+        h('span', { class: 'label', text: 'Глоссарий: по одному на строку, «оригинал = перевод»', style: 'margin-top:10px' }),
+        glossary,
+        h('span', { class: 'hint', text: 'Модель склоняет слова сама и видит только те, что есть в тексте. Бесплатным переводчикам слова подставляются готовыми. «Ihan =» — оставить как есть, строка с # — заметка' }));
+}
+
 async function renderSettings(reload = true) {
     const view = $('#view');
     if (reload || !state.settings) {
@@ -1407,7 +1432,8 @@ async function renderSettings(reload = true) {
                 tierBlock('scan', 'Дешёвая, для фоновой проверки'),
                 tierBlock('heavy', 'Сильная, для сложных правок'),
                 tierBlock('translate', 'Для перевода сообщений в чате (пусто — модель из «Какая модель для какой задачи»)'),
-                translateKeyBlock())),
+                translateKeyBlock(),
+                translateGuideBlock(s))),
 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Какая модель для какой задачи' }),

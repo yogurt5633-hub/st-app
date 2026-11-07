@@ -433,3 +433,47 @@ test('plugin: a streamed answer is read as it comes — OpenAI style, Claude sty
     assert.deepEqual(read(gemini), { text: 'Да', cut: true });
     assert.equal(streamDelta({ error: { message: 'bad' } }).error, 'bad');
 });
+
+test('translate: the person\'s instructions and the glossary words that occur go into the model\'s prompt', async () => {
+    const { parseGlossary, guidePrompt } = await import('../plugin/lib/translate.mjs');
+    const glossary = '# names\nHunter Association = Ассоциация охотников\nGuro-gu -> Гуро-гу\nIhan =\nLantern → Фонарь\nnot an entry';
+    assert.deepEqual(parseGlossary(glossary), [
+        { from: 'Hunter Association', to: 'Ассоциация охотников' },
+        { from: 'Guro-gu', to: 'Гуро-гу' },
+        { from: 'Ihan', to: '' },
+        { from: 'Lantern', to: 'Фонарь' },
+    ]);
+    const calls = [];
+    const llm = { settings: { models: {} }, complete: async (args) => { calls.push(args); return { text: 'Перевод' }; } };
+    await translateText(llm, 'Ihan reported to the hunter association in Guro-gu.', 'ru', { guide: { instructions: 'Обращение на «ты».', glossary } });
+    const system = calls[0].system;
+    assert.match(system, /Указания пользователя[^\n]*\nОбращение на «ты»\./);
+    assert.match(system, /Hunter Association → Ассоциация охотников/);
+    assert.match(system, /Guro-gu → Гуро-гу/);
+    assert.match(system, /Ihan → оставить как есть/);
+    assert.doesNotMatch(system, /Lantern/, 'words not in the text are left out');
+    assert.equal(guidePrompt({}, 'text'), '');
+});
+
+test('translate: free translators get the glossary words already put in', async () => {
+    const { translator, applyGlossary } = await import('../st-extension/translate.js');
+    assert.equal(applyGlossary('Ihan met the Hunter Association. hunter association!', 'Hunter Association = Ассоциация охотников\nIhan ='), 'Ihan met the Ассоциация охотников. Ассоциация охотников!');
+    assert.equal(applyGlossary('Gates and Gate', 'Gate = Врата'), 'Gates and Врата', 'whole words only');
+    fakeTavern();
+    const sent = [];
+    globalThis.fetch = async (url, init) => {
+        const { text } = JSON.parse(init.body);
+        sent.push(text);
+        return { ok: true, status: 200, text: async () => text.replace(/[A-Za-z]+/g, 'слово') };
+    };
+    // The glossary comes from Korrektor's settings, loaded with the model choice.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (String(url).endsWith('/settings')
+        ? { ok: true, status: 200, json: async () => ({ models: {}, translation: { instructions: '', glossary: 'Hunter Association = Ассоциация охотников' } }) }
+        : realFetch(url, init));
+    const mod = await import('../st-extension/translate.js');
+    await mod.loadModelChoice();
+    const out = await translator('google', 'ru')('He joined the Hunter Association today.');
+    assert.ok(sent.some(t => t.includes('Ассоциация охотников')), `sent: ${sent}`);
+    assert.match(out, /Ассоциация охотников/);
+});

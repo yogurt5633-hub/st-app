@@ -72,3 +72,5 @@ html.korrektor-app .kt-journal { background: var(--ka-raised); color: var(--ka-t
 /* A message whose translation is still coming in: translated parts over the original, a thin line at the side. */
 .mes.kt-partial .mes_text { box-shadow: -7px 0 0 -4px var(--SmartThemeQuoteColor, #e3a54a); transition: box-shadow 0.2s; }
 html.korrektor-app .mes.kt-partial .mes_text { box-shadow: -7px 0 0 -4px var(--ka-accent); }
+/* The translator's instructions and glossary. */
+.kg-translate textarea.kt-area { width: 100%; min-height: 96px; resize: vertical; font: inherit; line-height: 1.4; margin-bottom: 4px; }

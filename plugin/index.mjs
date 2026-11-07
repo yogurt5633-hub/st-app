@@ -468,8 +468,10 @@ export async function init(router) {
         res.on('close', () => { if (!res.writableEnded) controller.abort(); });
         const context = typeof req.body?.context === 'string' ? req.body.context : '';
         const llm = key ? null : await llmFor(user);
-        if (req.body?.stream) return streamTranslation(res, user, llm, text, lang, { key, signal: controller.signal, context });
-        const out = await translateText(llm, text, lang, { key, signal: controller.signal, context });
+        // The person's instructions and glossary for the translator.
+        const guide = (await user.store.getSettings()).translation;
+        if (req.body?.stream) return streamTranslation(res, user, llm, text, lang, { key, signal: controller.signal, context, guide });
+        const out = await translateText(llm, text, lang, { key, signal: controller.signal, context, guide });
         if (key && out.text) {
             // Spending with the translator's key goes to the same screen as Korrektor's other calls.
             const used = out.usage?.input || out.usage?.output ? out.usage : { input: Math.ceil(text.length / 3), output: Math.ceil(out.text.length / 3) };

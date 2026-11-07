@@ -34,7 +34,8 @@ final class ModelBar {
             + "if(window.korrektorTranslate&&window.korrektorTranslate.settings){var ks=window.korrektorTranslate.settings();"
             + "var km=window.korrektorTranslate.translateModel?window.korrektorTranslate.translateModel():{};"
             + "out.ours={auto:!!ks.auto,engine:ks.engine,lang:ks.lang,engines:window.korrektorTranslate.engines||[],model:km.model||'',modelSource:km.source||'',"
-            + "key:km.key&&km.key.active?(km.key.label+' · '+km.key.model):'',keySheet:!!window.korrektorTranslate.keySheet};}"
+            + "key:km.key&&km.key.active?(km.key.label+' · '+km.key.model):'',keySheet:!!window.korrektorTranslate.keySheet,"
+            + "guide:km.guide||'',guideSheet:!!window.korrektorTranslate.guide};}"
             + "if(out.api==='openai'){var source=$('#chat_completion_source').val();"
             + "var map={makersuite:'model_google_select',vertexai:'model_vertexai_select',custom:'model_custom_select'};"
             + "var id=map[source]||('model_'+source+'_select');var sel=document.getElementById(id);"
@@ -208,6 +209,10 @@ final class ModelBar {
             if (oursState.optBoolean("keySheet")) {
                 sheet.choice("Свой ключ для перевода", key.isEmpty() ? "не задан" : key, v -> { sheet.dismiss(); run("window.korrektorTranslate.keySheet()"); });
                 sheet.choice("Журнал перевода", "что происходило, скопировать", v -> { sheet.dismiss(); run("window.korrektorTranslate.log()"); });
+            }
+            if (oursState.optBoolean("guideSheet")) {
+                String guide = oursState.optString("guide");
+                sheet.choice("Указания и глоссарий", guide.isEmpty() ? "задать" : guide, v -> { sheet.dismiss(); run("window.korrektorTranslate.guide()"); });
             }
             sheet.note("Одно сообщение — кнопка с языком в меню сообщения (⋯)");
         }

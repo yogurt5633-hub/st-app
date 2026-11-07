@@ -76,6 +76,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
     },
     // Kinds of findings the user asked not to show any more.
     muted: [],
+    // Translation by the model: the person's own instructions and a glossary («оригинал = перевод» per line).
+    translation: {
+        instructions: '',
+        glossary: '',
+    },
     summary: {
         // 'memory' = Summarize extension, 'note' = Author's Note, 'lorebook' = chat lorebook entry
         target: 'memory',

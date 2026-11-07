@@ -22,7 +22,7 @@ const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
 const KEY_API = '/api/plugins/korrektor/translate/key';
 // The companion's version, for the journal (the same as in manifest.json).
-const COMPANION_VERSION = '0.4.24';
+const COMPANION_VERSION = '0.4.25';
 
 // ---------- journal ----------
 // What the translation did: requests, retries, cut answers, errors. Kept in this browser
@@ -320,6 +320,40 @@ export function fixMarkup(source, out) {
     }).join('\n');
 }
 
+// ---------- glossary ----------
+
+const GLOSSARY_SPLIT = /\s*(?:=>|->|→|=|—|–)\s*/;
+
+/** «Shadow Whisper = Шёпот Тени» per line (also →, ->, —); # starts a comment; «Name =» = leave as it is. */
+export function parseGlossary(text) {
+    const out = [];
+    for (const raw of String(text || '').split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const match = line.match(GLOSSARY_SPLIT);
+        if (!match) continue;
+        const from = line.slice(0, match.index).trim();
+        const to = line.slice(match.index + match[0].length).trim();
+        if (from) out.push({ from, to });
+    }
+    return out.slice(0, 500);
+}
+
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Free translators take no instructions: the glossary's words are put into the text before it is
+ * sent (whole words, any case), so they come back as they are. Longer terms first.
+ */
+export function applyGlossary(text, glossary) {
+    let out = String(text);
+    const terms = parseGlossary(glossary).filter(t => t.to).sort((a, b) => b.from.length - a.from.length);
+    for (const { from, to } of terms) {
+        out = out.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(from)}(?![\\p{L}\\p{N}])`, 'giu'), to);
+    }
+    return out;
+}
+
 // ---------- providers ----------
 
 /**
@@ -608,7 +642,7 @@ const PROBLEMS = { untranslated: 'вернул текст без перевод�
  */
 async function byProvider(provider, text, lang, run, limit = LIMITS[provider], depth = 0, onStream = null) {
     const { signal, tracker, pool, label } = run;
-    const call = provider === 'model' ? (part, context = run.context, stream = null) => viaModel(part, lang, signal, label, context, stream) : (part) => free(provider, part, lang, signal);
+    const call = provider === 'model' ? (part, context = run.context, stream = null) => viaModel(part, lang, signal, label, context, stream) : (part) => free(provider, run.glossary ? applyGlossary(part, run.glossary) : part, lang, signal);
     let pieces = provider === 'model' ? splitParts(text, limit) : chunkText(text, limit);
     // One big block without blank lines: cut at lines and sentences instead.
     if (pieces.length === 1 && text.length > limit) pieces = chunkText(text, limit);
@@ -765,7 +799,7 @@ export function translator(engine, lang, signal = null, tracker = null, { plan =
         const onOuter = () => inner.abort();
         if (signal?.aborted) inner.abort();
         else signal?.addEventListener('abort', onOuter, { once: true });
-        const run = { signal: inner.signal, outer: signal, tracker, pool, label, partial: 0, context: null };
+        const run = { signal: inner.signal, outer: signal, tracker, pool, label, partial: 0, context: null, glossary: engine === 'model' ? '' : guideState.glossary };
         // The message as it is so far: translated slots in their places, the rest still in the original.
         const slots = [];
         let closed = false;
@@ -1241,6 +1275,8 @@ export async function translateChat(options, onProgress = () => { }) {
 
 const SETTINGS_API = '/api/plugins/korrektor/settings';
 let modelChoice = { source: '', model: '' };
+// The person's instructions and glossary for the translator (kept in Korrektor's settings).
+let guideState = { instructions: '', glossary: '' };
 // The translator's own key, as the plugin shows it (never the key itself).
 let keyState = null;
 
@@ -1251,10 +1287,13 @@ async function pluginJson(url, init = {}) {
     return data;
 }
 
-async function loadModelChoice() {
+/** The model choice, the instructions and the glossary, from Korrektor's settings. */
+export async function loadModelChoice() {
     try {
-        const m = (await pluginJson(SETTINGS_API)).models || {};
+        const all = await pluginJson(SETTINGS_API);
+        const m = all.models || {};
         modelChoice = { source: m.translateSource || '', model: m.translate || '' };
+        if (all.translation) guideState = { instructions: all.translation.instructions || '', glossary: all.translation.glossary || '' };
     } catch {
         // plugin not reachable: the choice stays as it was
     }
@@ -1581,6 +1620,55 @@ export async function openKeySheet() {
     sheet('Свой ключ для перевода', body);
 }
 
+function guideLine() {
+    const terms = parseGlossary(guideState.glossary).length;
+    return `${guideState.instructions.trim() ? 'Указания есть' : 'Указаний нет'} · в глоссарии ${terms} ${terms % 10 === 1 && terms % 100 !== 11 ? 'слово' : [2, 3, 4].includes(terms % 10) && ![12, 13, 14].includes(terms % 100) ? 'слова' : 'слов'}`;
+}
+
+/** The person's instructions to the translator and the glossary, kept in Korrektor's settings. */
+export async function openGuideSheet() {
+    await loadModelChoice();
+    const instructions = el('textarea', {
+        class: 'text_pole kt-area', rows: '5',
+        placeholder: 'Например: обращение на «ты»; Ихан — парень, говорит грубо и коротко; мат не смягчать; названия навыков в [скобках] не переводить',
+    });
+    instructions.value = guideState.instructions;
+    const glossary = el('textarea', {
+        class: 'text_pole kt-area', rows: '8', autocapitalize: 'off', spellcheck: 'false',
+        placeholder: 'Hunter Association = Ассоциация охотников\nGate = Врата\nGuro-gu = Гуро-гу\nIhan =',
+    });
+    glossary.value = guideState.glossary;
+    const count = el('div', { class: 'kg-hint' });
+    const recount = () => {
+        const n = parseGlossary(glossary.value).length;
+        count.textContent = n ? `Записей в глоссарии: ${n}` : 'Глоссарий пуст';
+    };
+    glossary.addEventListener('input', recount);
+    recount();
+    const status = el('div', { class: 'kg-progress' });
+    const saveBtn = el('button', {
+        type: 'button', class: 'menu_button kg-main', text: 'Сохранить', onclick: async () => {
+            const next = { instructions: instructions.value.slice(0, 4000), glossary: glossary.value.slice(0, 20000) };
+            try {
+                await pluginJson(SETTINGS_API, { method: 'POST', body: JSON.stringify({ translation: next }) });
+                guideState = next;
+                status.textContent = 'Сохранено: действует со следующего перевода. Уже переведённое — «Перевод» → «Заново»';
+                tlog('info', `указания и глоссарий сохранены: ${guideLine()}`);
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        },
+    });
+    const body = el('div', { class: 'kg-translate' },
+        el('div', { class: 'kg-label', text: 'Указания переводчику' }), instructions,
+        el('p', { class: 'kg-hint', text: 'Их понимает «Модель Корректора» (и свой ключ для перевода): как обращаться, кто какого пола, какой стиль, что не переводить. Бесплатные переводчики указаний не понимают.' }),
+        el('div', { class: 'kg-label', text: 'Глоссарий — по одному на строку: оригинал = перевод' }), glossary, count,
+        el('p', { class: 'kg-hint', text: 'Модель склоняет слова глоссария сама и видит только те, что есть в переводимом тексте. Бесплатным переводчикам слова подставляются готовыми, без склонения. «Ihan =» с пустой правой частью — оставить как есть. Строка с # — заметка для себя.' }),
+        el('div', { class: 'kg-actions' }, saveBtn, el('button', { type: 'button', class: 'menu_button', text: 'Назад', onclick: () => openTranslate() })),
+        status);
+    sheet('Указания и глоссарий', body);
+}
+
 /** The journal: what the translation did, to read or copy and send. */
 export function openJournal() {
     const pre = el('pre', { class: 'kt-journal' });
@@ -1726,6 +1814,14 @@ export function openTranslate(preset = {}) {
         ].filter(Boolean));
     };
     drawModelRow();
+    // The person's instructions and glossary: how many, and where to change them.
+    const guideRow = el('div', { class: 'kg-model' });
+    const drawGuideRow = () => guideRow.replaceChildren(
+        el('div', { class: 'kg-label', text: 'Указания и глоссарий переводчика' }),
+        el('div', { class: 'kg-progress', text: guideLine() }),
+        el('div', { class: 'kg-actions' }, el('button', { type: 'button', class: 'menu_button', text: 'Изменить', onclick: openGuideSheet })));
+    drawGuideRow();
+    loadModelChoice().then(drawGuideRow);
     const again = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.again, onchange: (e) => { s.again = e.target.checked; } }), el('span', { text: 'Заново (уже переведённые тоже)' }));
     const gradualBox = el('label', { class: 'checkbox_label' },
@@ -1740,6 +1836,7 @@ export function openTranslate(preset = {}) {
         el('select', { class: 'text_pole', onchange: (e) => { s.engine = e.target.value; save(); drawModelRow(); } },
             ENGINES.map(([key, label]) => el('option', { value: key, selected: key === s.engine, text: label }))),
         modelRow,
+        guideRow,
         el('div', { class: 'kg-checks' }, mine, again, autoBox, gradualBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
@@ -1783,10 +1880,11 @@ export function initTranslate() {
         setAuto,
         setModel,
         keySheet: openKeySheet,
+        guide: openGuideSheet,
         log: openJournal,
         check: checkChat,
         journal: journalText,
-        translateModel: () => ({ ...modelChoice, key: keyState ? { active: Boolean(keyState.active), label: keyState.label || '', model: keyState.model || '' } : null }),
+        translateModel: () => ({ ...modelChoice, key: keyState ? { active: Boolean(keyState.active), label: keyState.label || '', model: keyState.model || '' } : null, guide: guideLine() }),
         engines: ENGINES,
     };
     const timer = setInterval(() => { if (addMenuItem()) clearInterval(timer); }, 1000);
