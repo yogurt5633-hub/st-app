@@ -32,7 +32,7 @@ final class Termux {
     private static final String BOOT = VARS
             + "if [ ! -d \"$SRC/.git\" ]; then command -v git >/dev/null || { echo 'В Termux нет git: нажмите «Установить SillyTavern» или выполните pkg install git'; exit 1; }; "
             + "git clone -q --branch tavernka-gpt " + REPO + " \"$SRC\" 2>&1 | tee -a \"$LOG\"; fi; ";
-    // ~/korrektor-src is the app's own copy of the code: it always follows main exactly.
+    // The test APK keeps its managed source copy on tavernka-gpt.
     // A slow or blocked GitHub must not hang the start: 90 seconds at most, and the reason is shown.
     private static final String PULL = "T=; command -v timeout >/dev/null && T='timeout 90'; "
             + "{ $T git -C \"$SRC\" fetch -q --depth 1 origin tavernka-gpt && git -C \"$SRC\" reset -q --hard origin/tavernka-gpt "

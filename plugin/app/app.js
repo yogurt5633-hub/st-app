@@ -1312,7 +1312,7 @@ function translateGuideBlock(s) {
         h('span', { class: 'hint', text: 'Модель склоняет слова сама и видит только те, что есть в тексте. Бесплатным переводчикам слова подставляются готовыми. «Ihan =» — оставить как есть, строка с # — заметка' }));
 }
 
-const expandedSettings = new Set(['Подключение']);
+const expandedSettings = new Set();
 
 async function renderSettings(reload = true) {
     const view = $('#view');
