@@ -1,3 +1,4 @@
+import { reviewExtensions } from './lib/extension-review.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +37,9 @@ import { catalogStatus, uninstallItem } from './lib/catalog-status.mjs';
 import { markTouched } from './lib/touched.mjs';
 import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
 import { readJson, writeJson } from './lib/util.mjs';
+
+const OPTIMIZATION_PAUSED = true;
+const PAUSE_MESSAGE = 'Оптимизация чатов временно отключена из-за нестабильной работы и расхода токенов';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(HERE, 'app');
@@ -190,6 +194,7 @@ function syncJob(user, { background = false } = {}) {
 }
 
 function scanJob(user, { chatIds = null, useModel = true, background = false } = {}) {
+    if (OPTIMIZATION_PAUSED) throw httpError(409, PAUSE_MESSAGE);
     const existing = runningJob(user.ctx.handle, 'scan');
     if (existing) return existing;
     return startJob(user.ctx.handle, 'scan', async (log) => {
@@ -212,6 +217,8 @@ function prepareJob(user, id) {
     const existing = runningJob(user.ctx.handle, 'prepare', meta => meta.id === id);
     if (existing) return existing;
     return startJob(user.ctx.handle, 'prepare', async () => {
+        const item = (await user.store.getProposals()).find(p => p.id === id);
+        if (OPTIMIZATION_PAUSED && item && !['request', 'manual', 'rewrite'].includes(item.kind)) throw httpError(409, PAUSE_MESSAGE);
         const llm = await llmFor(user);
         const deps = { llm, settings: await user.store.getSettings(), stSettings: await readStSettings(user.ctx) };
         return prepareProposal(user.ctx, user.store, id, FIXERS, deps);
@@ -232,7 +239,7 @@ async function tick() {
         }
         try {
             const settings = await user.store.getSettings();
-            if (!settings.scan.auto || !remarksOn(settings)) continue;
+            if (OPTIMIZATION_PAUSED || !settings.scan.auto || !remarksOn(settings)) continue;
             const interval = Math.max(5, Number(settings.scan.intervalMinutes) || 20) * 60000;
             if (Date.now() - user.lastAuto < interval) continue;
             user.lastAuto = Date.now();
@@ -281,7 +288,8 @@ export async function init(router) {
             translateKey: { active: translateKey.active, label: translateKey.label, model: translateKey.model },
             open: proposals.filter(p => OPEN_STATUSES.includes(p.status)).length,
             // false: remarks are switched off — no checks, no findings.
-            remarks: remarksOn(settings),
+            remarks: !OPTIMIZATION_PAUSED && remarksOn(settings),
+            optimizationPaused: OPTIMIZATION_PAUSED,
             lastScan: state.lastScan ?? null,
             scanning: publicJob(runningJob(user.ctx.handle, 'scan')),
             connectionCheck: user.connectionCheck ?? null,
@@ -299,13 +307,19 @@ export async function init(router) {
         return { source, items: await llm.listModels(source) };
     }));
 
+    router.get('/extensions/review', route(async (req, user) => reviewExtensions([
+        user.ctx.dirs.extensions || path.join(user.ctx.dirs.root, 'extensions'),
+        path.join(process.cwd(), 'public', 'scripts', 'extensions', 'third-party'),
+    ])));
+
     router.get('/settings', route(async (req, user) => user.store.getSettings()));
     router.post('/settings', route(async (req, user) => user.store.saveSettings(req.body || {})));
 
-    router.get('/proposals', route(async (req, user) => ({ items: visibleProposals(await listProposals(user.store, { status: req.query.status }), await user.store.getSettings()) })));
+    router.get('/proposals', route(async (req, user) => ({ items: visibleProposals(await listProposals(user.store, { status: req.query.status }), OPTIMIZATION_PAUSED ? { scan: { enabled: false } } : await user.store.getSettings()) })));
     // Remarks on or off at all, with one switch.
     router.post('/remarks', route(async (req, user) => {
         const on = req.body?.enabled !== false;
+        if (on && OPTIMIZATION_PAUSED) throw httpError(409, PAUSE_MESSAGE);
         const settings = await user.store.saveSettings({ scan: { enabled: on } });
         return { remarks: remarksOn(settings) };
     }));
@@ -314,7 +328,11 @@ export async function init(router) {
         if (!item) throw httpError(404, 'Предложение не найдено');
         return item;
     }));
-    router.post('/proposals/:id/apply', route(async (req, user) => applyProposal(user.ctx, user.store, req.params.id, req.body?.overrides)));
+    router.post('/proposals/:id/apply', route(async (req, user) => {
+        const item = (await user.store.getProposals()).find(p => p.id === req.params.id);
+        if (OPTIMIZATION_PAUSED && item && !['request', 'manual', 'rewrite'].includes(item.kind)) throw httpError(409, PAUSE_MESSAGE);
+        return applyProposal(user.ctx, user.store, req.params.id, req.body?.overrides);
+    }));
     router.post('/proposals/:id/reject', route(async (req, user) => {
         const proposal = await rejectProposal(user.store, req.params.id);
         const learned = await noteRejection(user.store, proposal?.kind);

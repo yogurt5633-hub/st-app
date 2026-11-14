@@ -23,7 +23,7 @@ import org.json.JSONObject;
  */
 final class Updater {
     static final String RELEASES = "https://api.github.com/repos/yogurt5633-hub/st-app/releases/latest";
-    static final String PLUGIN_PACKAGE = "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/plugin/package.json";
+    static final String PLUGIN_PACKAGE = "https://raw.githubusercontent.com/yogurt5633-hub/st-app/tavernka-gpt/plugin/package.json";
 
     private Updater() {
     }
@@ -91,6 +91,7 @@ final class Updater {
                 String title = json.optString("name", "").replaceFirst("^[^0-9]*", "");
                 app.put("latest", title.isEmpty() ? tag : title);
                 app.put("latestCode", code);
+                app.put("notes", json.optString("body"));
                 app.put("url", apk);
                 app.put("available", code > current && !apk.isEmpty());
                 prefs.setText("apkUrl", apk);
@@ -108,10 +109,12 @@ final class Updater {
             korrektor.put("latest", latest);
             korrektor.put("current", installed);
             korrektor.put("available", !latest.isEmpty() && !installed.isEmpty() && compare(latest, installed) > 0);
-            korrektor.put("stRunning", status.status > 0);
+            korrektor.put("stRunning", status.ok());
+            if (!pkg.ok()) korrektor.put("error", "Не удалось проверить новую версию плагина");
+            else if (!status.ok()) korrektor.put("error", "Нет связи с плагином в SillyTavern");
             out.put("korrektor", korrektor);
             prefs.setText("korrektorLatest", latest);
-            prefs.setNumber("lastCheck", System.currentTimeMillis());
+            if (release.ok() && pkg.ok()) prefs.setNumber("lastCheck", System.currentTimeMillis());
         } catch (Exception e) {
             try {
                 out.put("error", e.getMessage());
@@ -119,6 +122,7 @@ final class Updater {
                 // nothing
             }
         }
+        prefs.setText("updateResult", out.toString());
         return out;
     }
 

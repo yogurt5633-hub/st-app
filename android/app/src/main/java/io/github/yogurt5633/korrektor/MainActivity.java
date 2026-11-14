@@ -166,7 +166,7 @@ public class MainActivity extends Activity {
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
         addTab(bar, HOME, "Главная", R.drawable.ic_tab_home);
         addTab(bar, TAVERN, "Таверна", R.drawable.ic_tab_tavern);
-        addTab(bar, KORREKTOR, "Корректор", R.drawable.ic_tab_korrektor);
+        addTab(bar, KORREKTOR, "Каталог", R.drawable.ic_tab_korrektor);
         addTab(bar, SITES, "Сайты", R.drawable.ic_tab_sites);
         setSitesVisible(prefs.flag(Prefs.SHOW_SITES, true));
 
@@ -220,19 +220,55 @@ public class MainActivity extends Activity {
      * Looks for new versions of the app and of Korrektor. Without force, not more
      * often than every 20 minutes (GitHub limits anonymous requests).
      */
+    private boolean updateCheckRunning;
+
     void checkUpdates(boolean force) {
+        if (updateCheckRunning) return;
         if (!force && System.currentTimeMillis() - prefs.number("lastCheck") < 20 * 60_000) {
-            showUpdateBar();
-            return;
+            try { updates = new JSONObject(prefs.text("updateResult")); } catch (Exception ignored) { }
+            if (updates != null) {
+                showUpdateBar();
+                sendToHome("updates", updates);
+                return;
+            }
         }
+        updateCheckRunning = true;
         new Thread(() -> {
             JSONObject found = Updater.check(this, prefs);
             runOnUiThread(() -> {
+                updateCheckRunning = false;
                 updates = found;
                 showUpdateBar();
+                announceUpdate(found);
                 sendToHome("updates", found);
             });
         }).start();
+    }
+
+    private void announceUpdate(JSONObject found) {
+        JSONObject app = found.optJSONObject("app");
+        if (!visible || isFinishing() || app == null || !app.optBoolean("available")) return;
+        long code = app.optLong("latestCode");
+        if (prefs.number("announcedApp") == code) return;
+        prefs.setNumber("announcedApp", code);
+        String notes = app.optString("notes", "Описание изменений пока не опубликовано");
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle("Доступна версия " + app.optString("latest"))
+                .setMessage("Обновление приложения готово к установке")
+                .setPositiveButton("Обновить", (d, which) -> {
+                    String error = Updater.downloadAndInstall(this, prefs, () -> toast("Скачиваю обновление"));
+                    if (error != null) toast(error);
+                })
+                .setNegativeButton("Позже", (d, which) -> dismissUpdate())
+                .setNeutralButton("Что изменилось ▾", null)
+                .create();
+        dialog.setOnShowListener(d -> dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+            boolean expanded = Boolean.TRUE.equals(v.getTag());
+            dialog.setMessage(expanded ? "Обновление приложения готово к установке" : notes);
+            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setText(expanded ? "Что изменилось ▾" : "Свернуть ▴");
+            v.setTag(!expanded);
+        }));
+        dialog.show();
     }
 
     private void showUpdateBar() {
@@ -323,7 +359,8 @@ public class MainActivity extends Activity {
         view.setPadding(0, dp(8), 0, dp(6));
         view.setOnClickListener(v -> {
             if (HOME.equals(name)) homeChosen = true;
-            showTab(name);
+            if (KORREKTOR.equals(name)) openKorrektor("#tools/catalog");
+            else showTab(name);
         });
         tabs.put(name, view);
         bar.addView(view, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
@@ -375,6 +412,13 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView v, String url) {
                 if (pageTab) v.evaluateJavascript(FilesBridge.HOOK, null);
                 authTries = 0;
+                if (v == home) {
+                    notifyHome();
+                    if (updates == null) {
+                        try { updates = new JSONObject(prefs.text("updateResult")); } catch (Exception ignored) { }
+                    }
+                    if (updates != null) sendToHome("updates", updates);
+                }
                 if (v == korrektor) {
                     passTheme();
                     if (pendingImport != null && stUp) deliverImport();
@@ -1451,6 +1495,12 @@ public class MainActivity extends Activity {
         homeChosen = HOME.equals(tab);
         if (!HOME.equals(tab) && !stUp) pendingTab = tab;
         showTab(tab);
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW && sites != null) sites.releaseHidden();
     }
 
     @Override

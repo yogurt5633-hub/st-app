@@ -71,7 +71,7 @@ test('translate: a piece that comes back half in English is split and translated
         const { text } = JSON.parse(init.body);
         calls.push([url, text.length]);
         // Like the free Google endpoint with long text: only the first part comes back translated.
-        const out = text.length > 600 ? `ПЕРЕВОД ${text.slice(0, 100)}${text.slice(100)}` : text.replace(/[A-Za-z]+/g, 'слово');
+        const out = text.length > 600 ? `ПЕРЕВОД ${text.slice(0, 100)}${text.slice(100)}` : text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово');
         return { ok: true, status: 200, text: async () => out };
     };
     const long = Array.from({ length: 12 }, (_, i) => `Line ${i}: the knight walks into the tavern and orders some ale.`).join('\n');
@@ -102,7 +102,7 @@ test('translate: status blocks, tables and lines already in Russian keep their s
         const { text } = JSON.parse(init.body);
         sent.push(text);
         // Like a free translator: words translated, newlines and pipes not respected, quotes as entities.
-        const out = text.replace(/[A-Za-z]+/g, 'слово').replace(/\|/g, ' ').replace(/"/g, '&quot;');
+        const out = text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово').replace(/\|/g, ' ').replace(/"/g, '&quot;');
         return { ok: true, status: 200, text: async () => out };
     };
     const post = [
@@ -183,7 +183,7 @@ test('translate: a free translator that drops the end of a piece: the piece is s
         const { text } = JSON.parse(init.body);
         calls.push(text.length);
         // Like Google with longer text: only the first third comes back.
-        const words = text.replace(/[A-Za-z]+/g, 'слово');
+        const words = text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово');
         const out = text.length > 500 ? words.slice(0, Math.floor(words.length / 3)) : words;
         return { ok: true, status: 200, text: async () => out };
     };
@@ -210,7 +210,7 @@ test('translate: a model answer cut at the length limit is translated again in p
         most = Math.max(most, active);
         await new Promise(r => setTimeout(r, 20));
         active--;
-        const words = text.replace(/[A-Za-z]+/g, 'слово');
+        const words = text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово');
         // The whole text is too long for the model's limit: its answer stops halfway.
         if (text.length > 2500) return { ok: true, status: 200, json: async () => ({ text: words.slice(0, 900), cut: true, model: 'm' }) };
         return { ok: true, status: 200, json: async () => ({ text: words, model: 'm' }) };
@@ -331,7 +331,7 @@ test('translate: shown as it goes — finished parts take the place of the origi
         // Parts answer at different times: the later ones take longer.
         await new Promise(r => setTimeout(r, 40 + 150 * n++));
         // An older plugin: one answer, not a stream.
-        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ text: body.text.replace(/[A-Za-z]+/g, 'слово'), model: 'm' }) };
+        return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ text: body.text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово'), model: 'm' }) };
     };
     const paragraph = 'The knight walks into the tavern, looks around and orders some ale for his tired friends.';
     const reply = Array.from({ length: 30 }, (_, i) => `${paragraph} (${i})`).join('\n\n');
@@ -369,7 +369,7 @@ test('translate: free translators show their finished pieces as they go too', as
     globalThis.fetch = async (url, init) => {
         const { text } = JSON.parse(init.body);
         await new Promise(r => setTimeout(r, 30 + 200 * n++));
-        return { ok: true, status: 200, text: async () => text.replace(/[A-Za-z]+/g, 'слово') };
+        return { ok: true, status: 200, text: async () => text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово') };
     };
     // Lines already in Russian between them: separate pieces.
     const post = 'The knight walks in.\nЛира молчит.\nHe orders ale.\nЛира кивает.\nThen he sits down.';
@@ -387,7 +387,7 @@ test('translate: read as the model writes it — the words appear over the origi
     globalThis.fetch = async (url, init) => {
         const body = JSON.parse(init.body);
         bodies.push(body);
-        const words = body.text.replace(/[A-Za-z]+/g, 'слово');
+        const words = body.text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово');
         const encoder = new TextEncoder();
         // The plugin's stream: the translation in small pieces, then the end.
         const stream = new ReadableStream({
@@ -455,7 +455,7 @@ test('translate: the person\'s instructions and the glossary words that occur go
     assert.equal(guidePrompt({}, 'text'), '');
 });
 
-test('translate: free translators get the glossary words already put in', async () => {
+test('translate: glossary survives a free provider through protected markers', async () => {
     const { translator, applyGlossary } = await import('../st-extension/translate.js');
     assert.equal(applyGlossary('Ihan met the Hunter Association. hunter association!', 'Hunter Association = Ассоциация охотников\nIhan ='), 'Ihan met the Ассоциация охотников. Ассоциация охотников!');
     assert.equal(applyGlossary('Gates and Gate', 'Gate = Врата'), 'Gates and Врата', 'whole words only');
@@ -464,7 +464,7 @@ test('translate: free translators get the glossary words already put in', async 
     globalThis.fetch = async (url, init) => {
         const { text } = JSON.parse(init.body);
         sent.push(text);
-        return { ok: true, status: 200, text: async () => text.replace(/[A-Za-z]+/g, 'слово') };
+        return { ok: true, status: 200, text: async () => text.replace(/TAVERNKATERM\d+END|[A-Za-z]+/g, word => word.startsWith('TAVERNKATERM') ? word : 'слово') };
     };
     // The glossary comes from Korrektor's settings, loaded with the model choice.
     const realFetch = globalThis.fetch;
@@ -474,7 +474,7 @@ test('translate: free translators get the glossary words already put in', async 
     const mod = await import('../st-extension/translate.js');
     await mod.loadModelChoice();
     const out = await translator('google', 'ru')('He joined the Hunter Association today.');
-    assert.ok(sent.some(t => t.includes('Ассоциация охотников')), `sent: ${sent}`);
+    assert.ok(sent.some(t => t.includes('TAVERNKATERM0END')), `sent: ${sent}`);
     assert.match(out, /Ассоциация охотников/);
 });
 
@@ -489,4 +489,13 @@ test('glossary: preserve original spelling for blank translations and match punc
     const { applyGlossary } = await import('../st-extension/translate.js');
     assert.equal(applyGlossary('IHAN met ihan.', 'Ihan ='), 'IHAN met ihan.');
     assert.equal(applyGlossary('A+B and Gate Keeper, not Gates.', 'A+B = Союз\nGate = Врата\nGate Keeper = Хранитель'), 'Союз and Хранитель, not Gates.');
+});
+
+ test('glossary protection detects lost markers and restores literal values', async () => {
+    const { protectGlossary, suggestTerms } = await import('../st-extension/translate.js');
+    const value = protectGlossary('Ihan met Anna.', 'Ihan = $&\nAnna = Анна');
+    assert.equal(value.restore(value.text), '$& met Анна.');
+    assert.throws(() => value.restore('Имена исчезли'), /потерял термин/);
+    assert.deepEqual(suggestTerms('Ihan arrived. Ihan smiled.', 'Ihan = Ихан'), []);
+    assert.equal(suggestTerms('Ihan arrived. Ihan smiled.')[0].text, 'Ihan');
 });

@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.25';
+const APP_VERSION = '0.4.26';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -363,7 +363,7 @@ function currentRoute() {
 async function renderRoute() {
     const route = currentRoute();
     const sheet = $('#sheet');
-    const tabName = route.name === 'proposal' ? 'feed' : ['chat', 'compress'].includes(route.name) ? 'chats' : ['tool', 'card'].includes(route.name) ? 'tools' : route.name;
+    const tabName = route.name === 'tool' && route.id.startsWith('catalog') ? 'catalog' : route.name === 'proposal' ? 'feed' : ['chat', 'compress'].includes(route.name) ? 'chats' : ['tool', 'card'].includes(route.name) ? 'tools' : route.name;
     for (const tab of document.querySelectorAll('.tab')) {
         if (tab.dataset.tab === tabName) tab.setAttribute('aria-current', 'page');
         else tab.removeAttribute('aria-current');
@@ -380,17 +380,18 @@ async function renderRoute() {
     const freshView = oldView.cloneNode(false);
     oldView.replaceWith(freshView);
     document.body.style.overflow = '';
-    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
+    const toolTitles = { connection: 'Подключение к модели', sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
     $('#page-title').textContent = titles[route.name];
     if (route.name === 'tools') return tools.renderTools();
     if (route.name === 'card') return tools.renderCardHealth(route.id);
     if (route.name === 'tool') {
+        if (route.id === 'connection') { put($('#view'), tools.renderKeyCheck()); return; }
         if (route.id === 'spend') return tools.renderSpend();
         if (route.id === 'sync') return tools.renderSync();
         if (route.id === 'cards') return tools.renderCardsHealth();
         if (route.id === 'backup') return tools.renderBackup();
-        if (route.id === 'import') return tools.renderImport(state.importUrl || '');
+        if (route.id === 'import') { put($('#view'), h('p', { text: 'Импорт по ссылке временно отключён' })); return; }
         if (route.id === 'catalog') return tools.renderCatalog();
         if (route.id === 'catalog-suggest') return tools.renderCatalogSuggest();
         if (route.id === 'catalog-author') return tools.renderCatalogAuthor();
@@ -532,9 +533,9 @@ function renderFeed() {
         put(view,
             h('div', { class: 'empty' },
                 tools.mascot('sleep', 150),
-                h('h2', { text: 'Замечания выключены' }),
+                h('h2', { text: state.status?.optimizationPaused ? 'Оптимизация временно отключена' : 'Замечания выключены' }),
                 h('p', { text: 'Корректор не проверяет чаты, лорбуки и карточки и не присылает находки. Перевод, каталог, расходы, резервные копии и «Попросить Корректора» работают' }),
-                h('p', {}, h('button', { class: 'btn secondary', type: 'button', style: 'margin-top:16px', onclick: () => setRemarks(true), text: 'Включить замечания' }))),
+                state.status?.optimizationPaused ? h('p', { text: 'Проверки приостановлены из-за нестабильной работы и расхода токенов' }) : h('p', {}, h('button', { class: 'btn secondary', type: 'button', style: 'margin-top:16px', onclick: () => setRemarks(true), text: 'Включить замечания' }))),
             all.length ? h('div', { class: 'list' }, all.map(renderCard)) : null);
         return;
     }
@@ -1311,6 +1312,8 @@ function translateGuideBlock(s) {
         h('span', { class: 'hint', text: 'Модель склоняет слова сама и видит только те, что есть в тексте. Бесплатным переводчикам слова подставляются готовыми. «Ihan =» — оставить как есть, строка с # — заметка' }));
 }
 
+const expandedSettings = new Set(['Подключение']);
+
 async function renderSettings(reload = true) {
     const view = $('#view');
     if (reload || !state.settings) {
@@ -1420,7 +1423,7 @@ async function renderSettings(reload = true) {
             h('div', { class: 'rows' },
                 h('div', { class: 'field' },
                     h('span', { class: 'label', text: 'Тема' }),
-                    seg([['', 'Как в системе'], ['dark', 'Тёмная'], ['light', 'Светлая']], storageGet('korrektor.theme') || '', (v) => { window.korrektorTheme(v, storageGet('korrektor.accent')); renderSettings(false); })),
+                    seg([['', 'Как в системе'], ['black', 'Чёрная'], ['white', 'Белая'], ['brown', 'Коричневая'], ['dark', 'Тёмная'], ['light', 'Светлая']], storageGet('korrektor.theme') || '', (v) => { window.korrektorTheme(v, storageGet('korrektor.accent')); renderSettings(false); })),
                 h('div', { class: 'field' },
                     h('span', { class: 'label', text: 'Цвет акцента' }),
                     seg(tools.ACCENTS, storageGet('korrektor.accent') || 'amber', (v) => { window.korrektorTheme(storageGet('korrektor.theme'), v); renderSettings(false); })))),
@@ -1495,6 +1498,20 @@ async function renderSettings(reload = true) {
         h('p', { class: 'small muted', style: 'margin:24px 0 0', text: `Приложение ${APP_VERSION} · плагин ${state.status?.version ?? '?'} · пользователь ${state.status?.user ?? ''}` }),
         state.status?.pluginDir ? h('p', { class: 'small muted mono', style: 'margin:4px 0 0;overflow-wrap:anywhere', text: `Плагин загружен из ${state.status.pluginDir}` }) : null,
     );
+    for (const section of view.querySelectorAll(':scope > .section')) {
+        const heading = section.querySelector(':scope > h2');
+        if (!heading) continue;
+        const title = heading.textContent;
+        if (state.status?.optimizationPaused && ['Проверка', 'Что проверять', 'Пороги', 'Резюме и факты'].includes(title)) { section.remove(); continue; }
+        const details = h('details', { class: 'settings-group', open: expandedSettings.has(title) }, h('summary', { text: title }));
+        heading.remove();
+        details.append(...section.childNodes);
+        details.addEventListener('toggle', () => {
+            if (details.open) expandedSettings.add(title);
+            else expandedSettings.delete(title);
+        });
+        section.replaceWith(details);
+    }
 }
 
 // ---------- misc ----------

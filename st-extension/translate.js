@@ -355,6 +355,102 @@ export function applyGlossary(text, glossary) {
         match => values.get(match.toLowerCase()) || match);
 }
 
+/** Keep glossary entries intact even when a free translator rewrites names. */
+export function protectGlossary(text, glossary) {
+    const terms = parseGlossary(glossary).sort((a, b) => b.from.length - a.from.length);
+    const replacements = [];
+    if (!terms.length) return { text, restore: value => value };
+    let prefix = 'TAVERNKATERM';
+    while (text.includes(prefix)) prefix += 'X';
+    const values = new Map(terms.map(term => [term.from.toLowerCase(), term.to]));
+    const pattern = terms.map(term => escapeRegex(term.from)).join('|');
+    const protectedText = text.replace(new RegExp(`(?<![\p{L}\p{N}])(?:${pattern})(?![\p{L}\p{N}])`, 'giu'), match => {
+        const marker = `${prefix}${replacements.length}END`;
+        replacements.push({ marker, value: values.get(match.toLowerCase()) || match });
+        return marker;
+    });
+    return {
+        text: protectedText,
+        restore(value) {
+            let restored = value;
+            for (const item of replacements) {
+                const pattern = new RegExp(escapeRegex(item.marker), 'gi');
+                if (!pattern.test(restored)) throw new Error('Переводчик потерял термин глоссария. Попробуйте другой переводчик');
+                restored = restored.replace(pattern, () => item.value);
+            }
+            return restored;
+        },
+    };
+}
+
+/** Local suggestions from recurring capitalized names and quoted terms. */
+export function suggestTerms(text, glossary = '') {
+    const known = new Set(parseGlossary(glossary).map(term => term.from.toLowerCase()));
+    const stop = new Set(['the', 'this', 'that', 'what', 'when', 'where', 'there', 'then', 'she', 'he', 'you', 'they', 'but', 'and', 'with', 'his', 'her', 'это', 'она', 'они', 'его', 'что', 'как', 'когда', 'если']);
+    const counts = new Map();
+    const words = String(text).slice(-100000).match(/\b[A-Z][a-z]{2,}(?:[-'][A-Z]?[a-z]+)?(?: [A-Z][a-z]{2,}){0,2}\b|[А-ЯЁ][а-яё]{2,}(?: [А-ЯЁ][а-яё]{2,}){0,2}/gu) || [];
+    for (const word of words) {
+        const key = word.toLowerCase();
+        if (known.has(key) || stop.has(key)) continue;
+        const old = counts.get(key);
+        counts.set(key, { text: old?.text || word, count: (old?.count || 0) + 1 });
+    }
+    return [...counts.values()].filter(item => item.count >= 2).sort((a, b) => b.count - a.count).slice(0, 20);
+}
+
+function detectionKey() {
+    const context = ctx();
+    return String(context.getCurrentChatId?.() || '') + ':' + String(context.characterId ?? context.groupId ?? '');
+}
+
+function detectionEnabled() {
+    const config = storage('korrektor.terms', {});
+    const until = config.chats?.[detectionKey()] || 0;
+    return config.enabled !== false && until !== -1 && until <= Date.now();
+}
+
+function detectionControls(glossary, recount) {
+    const controls = el('div', { class: 'kg-translate' });
+    const candidates = el('div', { class: 'kg-actions' });
+    const update = () => {
+        candidates.replaceChildren();
+        if (!detectionEnabled()) return;
+        const source = (ctx().chat || []).slice(-80).map(message => message.mes || '').join('\n');
+        for (const item of suggestTerms(source, glossary.value)) {
+            candidates.append(el('button', { type: 'button', class: 'menu_button', text: item.text, onclick: () => {
+                glossary.value += (glossary.value.trim() ? '\n' : '') + item.text + ' =';
+                recount();
+                update();
+            } }));
+        }
+        if (!candidates.children.length) candidates.append(el('p', { class: 'kg-hint', text: 'Новых повторяющихся имён и терминов пока нет' }));
+    };
+    const mode = el('select', { class: 'text_pole', 'aria-label': 'Автодетект имён и терминов', onchange: () => {
+        const config = storage('korrektor.terms', {});
+        config.chats = config.chats || {};
+        if (mode.value === 'all') config.enabled = false;
+        else {
+            config.enabled = true;
+            config.chats[detectionKey()] = mode.value === 'chat' ? -1 : mode.value === 'hour' ? Date.now() + 3600000 : 0;
+        }
+        store('korrektor.terms', config);
+        update();
+    } }, [['on', 'Включён'], ['hour', 'Пауза на час в этом чате'], ['chat', 'Выключен в этом чате'], ['all', 'Выключен во всех чатах']].map(([value, text]) => el('option', { value, text })));
+    const config = storage('korrektor.terms', {});
+    const until = config.chats?.[detectionKey()] || 0;
+    mode.value = config.enabled === false ? 'all' : until === -1 ? 'chat' : until > Date.now() ? 'hour' : 'on';
+    controls.append(el('div', { class: 'kg-label', text: 'Автодетект имён и терминов' }), mode,
+        el('p', { class: 'kg-hint', text: 'Предложения вычисляются на этом устройстве по повторяющимся словам. Нажмите имя, укажите перевод и сохраните глоссарий' }), candidates);
+    update();
+    return controls;
+}
+
+async function freeWithGlossary(provider, text, lang, signal, glossary) {
+    const protectedText = protectGlossary(text, glossary);
+    const translated = await free(provider, protectedText.text, lang, signal);
+    return protectedText.restore(translated);
+}
+
 // ---------- providers ----------
 
 /**
@@ -643,7 +739,7 @@ const PROBLEMS = { untranslated: 'вернул текст без перевод�
  */
 async function byProvider(provider, text, lang, run, limit = LIMITS[provider], depth = 0, onStream = null) {
     const { signal, tracker, pool, label } = run;
-    const call = provider === 'model' ? (part, context = run.context, stream = null) => viaModel(part, lang, signal, label, context, stream) : (part) => free(provider, run.glossary ? applyGlossary(part, run.glossary) : part, lang, signal);
+    const call = provider === 'model' ? (part, context = run.context, stream = null) => viaModel(part, lang, signal, label, context, stream) : (part) => freeWithGlossary(provider, part, lang, signal, run.glossary);
     let pieces = provider === 'model' ? splitParts(text, limit) : chunkText(text, limit);
     // One big block without blank lines: cut at lines and sentences instead.
     if (pieces.length === 1 && text.length > limit) pieces = chunkText(text, limit);
@@ -1648,8 +1744,8 @@ export async function openGuideSheet() {
     const body = el('div', { class: 'kg-translate' },
         el('div', { class: 'kg-label', text: 'Указания переводчику' }), instructions,
         el('p', { class: 'kg-hint', text: 'Их понимает «Модель Корректора» (и свой ключ для перевода): как обращаться, кто какого пола, какой стиль, что не переводить. Бесплатные переводчики указаний не понимают.' }),
-        el('div', { class: 'kg-label', text: 'Глоссарий — по одному на строку: оригинал = перевод' }), glossary, count,
-        el('p', { class: 'kg-hint', text: 'Модель склоняет слова глоссария сама и видит только те, что есть в переводимом тексте. Бесплатным переводчикам слова подставляются готовыми, без склонения. «Ihan =» с пустой правой частью — оставить как есть. Строка с # — заметка для себя.' }),
+        el('div', { class: 'kg-label', text: 'Глоссарий — по одному на строку: оригинал = перевод' }), glossary, count, detectionControls(glossary, recount),
+        el('p', { class: 'kg-hint', text: 'Модель склоняет слова глоссария сама и видит только те, что есть в переводимом тексте. В бесплатном переводе термины защищаются от изменения и восстанавливаются после ответа, без склонения. «Ihan =» с пустой правой частью — оставить как есть. Строка с # — заметка для себя.' }),
         el('div', { class: 'kg-actions' }, saveBtn, el('button', { type: 'button', class: 'menu_button', text: 'Назад', onclick: () => openTranslate() })),
         status);
     sheet('Указания и глоссарий', body);

@@ -151,7 +151,7 @@ final class ControlBridge {
                 url = "https://github.com/yogurt5633-hub/st-app";
                 break;
             case "guide":
-                url = "https://github.com/yogurt5633-hub/st-app/blob/main/docs/GUIDE.md";
+                url = "https://github.com/yogurt5633-hub/st-app/blob/tavernka-gpt/docs/GUIDE.md";
                 break;
             default:
                 return;
@@ -222,7 +222,7 @@ final class ControlBridge {
     /** dark | light | system, and the accent colour. */
     @JavascriptInterface
     public void setTheme(String theme, String accent) {
-        String t = "light".equals(theme) || "system".equals(theme) ? theme : "dark";
+        String t = theme != null && theme.matches("light|dark|black|white|brown|system") ? theme : "dark";
         String a = accent != null && accent.matches("amber|rose|mint|sky|lavender") ? accent : "amber";
         activity.prefs.setText(Prefs.THEME, t);
         activity.prefs.setText(Prefs.ACCENT, a);

@@ -115,6 +115,36 @@ button { overflow-wrap: anywhere; }
     *, *::before, *::after { transition: none !important; animation: none !important; }
     .btn:active, .tile:active { transform: none; }
 }
+
+/* Theme variants requested for long reading sessions. */
+html[data-theme="black"] {
+    --bg-deep:#000000; --bg:#000000; --card:#101010; --raised:#1e1e1e;
+    --text:#ededed; --text-2:#b3b3b3; --text-3:#a1a1a1;
+    --line:rgba(237,237,237,.08); --line-strong:rgba(237,237,237,.16);
+    --primary:#ededed; --on-primary:#101010; color-scheme:dark;
+}
+html[data-theme="white"] {
+    --bg-deep:#f4f4f5; --bg:#fafafa; --card:#ffffff; --raised:#f0f0f1;
+    --text:#171717; --text-2:#525252; --text-3:#666666;
+    --line:rgba(23,23,23,.08); --line-strong:rgba(23,23,23,.16);
+    --accent:#8a5200; --primary:#171717; --on-primary:#ffffff; color-scheme:light;
+}
+html[data-theme="brown"] {
+    --bg-deep:#181412; --bg:#211b17; --card:#2a231e; --raised:#352c25;
+    --text:#f1e8dd; --text-2:#c5b6a6; --text-3:#b6a694;
+    --line:rgba(241,232,221,.08); --line-strong:rgba(241,232,221,.16);
+    --primary:#f1e8dd; --on-primary:#211b17; color-scheme:dark;
+}
+
+.settings-group { margin-top:12px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+.settings-group summary { padding:16px; min-height:56px; cursor:pointer; font-weight:500; }
+.settings-content { padding:0 12px 12px; }
+.settings-content > h2:first-child { display:none; }
+.settings-content .box { background:var(--bg); }
+html[data-theme="white"][data-accent="rose"] { --accent:#a8325a; }
+html[data-theme="white"][data-accent="mint"] { --accent:#0f7a55; }
+html[data-theme="white"][data-accent="sky"] { --accent:#1d5f9e; }
+html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
 </style>
 </head>
 <body>
@@ -134,7 +164,15 @@ button { overflow-wrap: anywhere; }
     var onbStep = 0;          // welcome screens: which one is shown
     var siteList = [];        // provider sites of the "Sites" tab
     var siteEdit = null;      // index being edited, or 'new'
+    var expanded = {};
     var root = document.getElementById('root');
+
+    function fold(key, title, content) {
+        var node = h('details', { class: 'settings-group', open: !!expanded[key] },
+            h('summary', { text: title }), h('div', { class: 'settings-content' }, content));
+        node.addEventListener('toggle', function () { expanded[key] = node.open; });
+        return node;
+    }
 
     function h(tag, props) {
         var el = document.createElement(tag);
@@ -331,13 +369,14 @@ button { overflow-wrap: anywhere; }
             h('div', { class: 'line' },
                 h('div', {}, h('div', { text: 'Приложение' }), h('div', { class: 'small muted', text: 'версия ' + (s.appVersion || '?') + (appInfo.latest ? ' · последняя ' + appInfo.latest : '') })),
                 appInfo.available ? h('button', { class: 'btn primary small', type: 'button', onclick: function () { app.installApp(); }, text: 'Обновить' })
-                    : h('span', { class: 'small muted', text: appInfo.error ? appInfo.error : updates ? 'актуальная' : '' })),
+                    : h('span', { class: 'small muted', text: appInfo.error || u.error || (appInfo.latest ? 'актуальная' : '') })),
+            appInfo.notes ? h('details', { class: 'release-notes' }, h('summary', { text: 'Что изменилось' }), h('p', { style: 'white-space:pre-wrap', text: appInfo.notes })) : null,
             appInfo.available && !s.canInstall ? h('p', { class: 'hint', text: 'Android спросит разрешение устанавливать приложения: включите его для Корректора и вернитесь' }) : null);
         var kRow = h('div', { class: 'row' },
             h('div', { class: 'line' },
                 h('div', {}, h('div', { text: 'Корректор в SillyTavern' }), h('div', { class: 'small muted', text: (kInfo.current ? 'версия ' + kInfo.current : s.stUp ? 'версия неизвестна' : 'SillyTavern не запущен') + (kInfo.latest ? ' · последняя ' + kInfo.latest : '') })),
                 h('button', { class: 'btn ' + (kInfo.available ? 'primary' : 'secondary') + ' small', type: 'button', onclick: function () { app.action('update-korrektor'); }, text: kInfo.available ? 'Обновить' : 'Переустановить' })),
-            h('p', { class: 'hint', text: 'Скачает новую версию в ~/korrektor-src, поставит её и перезапустит SillyTavern' }));
+            h('p', { class: 'hint', text: kInfo.error || 'Обновит плагин и перезапустит SillyTavern' }));
         var stRow = h('div', { class: 'row' },
             h('div', { class: 'line' },
                 h('div', {}, h('div', { text: 'SillyTavern' }), h('div', { class: 'small muted', text: 'git pull в папке таверны' })),
@@ -483,14 +522,14 @@ button { overflow-wrap: anywhere; }
             tiles.push(h('button', { class: 'tile', type: 'button', onclick: function () { app.openKorrektor('#feed'); } },
                 h('span', { class: 'k', text: 'Замечания' }),
                 h('span', { class: 'v', text: off ? 'выкл' : open === null ? '…' : open ? String(open) : 'нет' }),
-                h('span', { class: 's', text: off ? 'включить — в Корректоре' : open ? 'ждут решения' : 'всё спокойно' })));
+                h('span', { class: 's', text: off ? (status.optimizationPaused ? 'проверки приостановлены' : 'включить — в Корректоре') : open ? 'ждут решения' : 'всё спокойно' })));
             var today = d.today ? d.today.roleplay + d.today.korrektor : null;
             tiles.push(h('button', { class: 'tile', type: 'button', onclick: function () { app.openKorrektor('#tools/spend'); } },
                 h('span', { class: 'k', text: 'Сегодня' }),
                 h('span', { class: 'v', text: today === null ? '…' : fmt(today) }),
                 h('span', { class: 's', text: d.today && d.today.cost ? '≈$' + d.today.cost.toFixed(2) : 'токенов' })));
             var check = status.connectionCheck;
-            tiles.push(h('button', { class: 'tile wide', type: 'button', onclick: function () { app.openKorrektor('#tools'); } },
+            tiles.push(h('button', { class: 'tile wide', type: 'button', onclick: function () { app.openKorrektor('#tools/connection'); } },
                 h('span', { class: 'k', text: 'Подключение к модели' }),
                 h('span', { class: 'v' + (check && check.ok === true ? ' pos' : check && check.ok === false ? ' neg' : ''), text: !check ? 'не проверялось' : check.ok === true ? 'ключ работает' : check.ok === false ? 'есть проблема' : 'не ясно' }),
                 h('span', { class: 's', text: check ? (check.model || check.message) : 'Нажмите, чтобы проверить ключ' })));
@@ -518,7 +557,7 @@ button { overflow-wrap: anywhere; }
             h('h2', { text: 'Оформление' }),
             h('div', { class: 'box' },
                 h('div', { class: 'row' }, h('span', { text: 'Тема' }),
-                    seg([['dark', 'Тёмная'], ['light', 'Светлая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
+                    seg([['black', 'Чёрная'], ['white', 'Белая'], ['brown', 'Коричневая'], ['dark', 'Тёмная'], ['light', 'Светлая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
                 h('div', { class: 'row' }, h('span', { text: 'Цвет акцента' }),
                     seg([['amber', 'Янтарь', '#e3a54a'], ['rose', 'Роза', '#e58aa0'], ['mint', 'Мята', '#5fc9a0'], ['sky', 'Небо', '#6aaee8'], ['lavender', 'Лаванда', '#a99be8']], s.accent, function (v) { app.setTheme(s.theme, v); })),
                 toggle('Модель и пресет над таверной', 'В строке над таверной: модель и пресет Chat Completion меняются одним нажатием. Обновить страницу, перевод, фоны и аватар там есть всегда', s.showModelBar, function (v) { app.setFlag('showModelBar', v); })),
@@ -568,13 +607,13 @@ button { overflow-wrap: anywhere; }
             lead = 'SillyTavern на телефоне: общайтесь с персонажами, переводите сообщения и собирайте материалы для своих историй';
         } else if (onbStep === 1) {
             art = 'write'; title = 'Что я делаю';
-            lead = 'Читаю чаты, лорбуки и карточки и предлагаю правки';
+            lead = 'Перевод, материалы для историй и резервные копии';
             body = h('ul', {},
-                h('li', { text: 'Нахожу противоречия, повторы и переполненный контекст и показываю правку «было / станет»' }),
-                h('li', { text: 'Ничего не меняю без вашего «Применить». Перед каждой правкой делаю копию, всё можно откатить' }),
-                h('li', { text: 'Показываю, куда уходят токены и деньги, и помогаю сжать чат' }),
+                h('li', { text: 'Переводите отдельные сообщения кнопкой в чате и задавайте написание имён в глоссарии' }),
+                h('li', { text: 'Находите карточки, лорбуки и пресеты в каталоге' }),
+                h('li', { text: 'Показываю расход токенов и денег' }),
                 h('li', { text: 'Делаю резервную копию всего: чатов, карточек, лорбуков, настроек' }),
-                h('li', { text: 'Ключи остаются в SillyTavern: я их не вижу' }));
+                h('li', { text: 'Оптимизация чатов временно приостановлена' }));
         } else if (onbStep === 2) {
             art = 'key'; title = 'Связь с Termux';
             lead = 'SillyTavern работает в Termux, а я запускаю и обновляю её оттуда. Это настраивается один раз';
@@ -607,7 +646,7 @@ button { overflow-wrap: anywhere; }
             body = h('ul', {},
                 h('li', { text: '«Главная» — сводка, запуск таверны, обновления и настройки' }),
                 h('li', { text: '«Таверна» — сама SillyTavern, в ней можно ролить' }),
-                h('li', { text: '«Корректор» — замечания, расходы, резервные копии и каталог' }),
+                h('li', { text: '«Каталог» — материалы для историй; в меню «Ещё» находятся расходы, копии и настройки' }),
                 h('li', { text: '«Сайты» — провайдеры ИИ: ключи, модели, баланс' }));
             primary = 'Начать';
             action = finish;
@@ -653,14 +692,12 @@ button { overflow-wrap: anywhere; }
         root.replaceChildren.apply(root, [].concat(
             dashboardSection(),
             tavernSection(),
-            state.onPc ? [] : (setupSection() || []),
-            pcSection(),
-            updatesSection(),
-            sitesSection(),
-            appearanceSection(),
-            keepSection(),
-            notifySection(),
-            helpSection(),
+            fold('connection', 'Подключение и запуск', [].concat(state.onPc ? [] : (setupSection() || []), pcSection())),
+            fold('updates', 'Обновления', updatesSection()),
+            fold('appearance', 'Оформление', appearanceSection()),
+            fold('sites', 'Сайты провайдеров', sitesSection()),
+            fold('background', 'Работа в фоне', [].concat(keepSection(), notifySection())),
+            fold('help', 'Помощь', helpSection()),
             onboarding() || [],
             h('p', { class: 'hint', style: 'margin-top:24px' }, 'Журналы в Termux: ~/.korrektor-ctl.log и ~/.korrektor-st.log · ',
                 h('a', { href: '#', onclick: function (e) { e.preventDefault(); app.openLink('project'); }, text: 'проект на GitHub' }))
@@ -669,7 +706,7 @@ button { overflow-wrap: anywhere; }
 
     function applyLook() {
         var el = document.documentElement;
-        el.dataset.theme = state.resolvedTheme === 'light' ? 'light' : 'dark';
+        el.dataset.theme = ['light', 'dark', 'black', 'white', 'brown'].indexOf(state.resolvedTheme) >= 0 ? state.resolvedTheme : 'dark';
         if (state.accent && state.accent !== 'amber') el.dataset.accent = state.accent;
         else delete el.dataset.accent;
     }
@@ -722,7 +759,7 @@ button { overflow-wrap: anywhere; }
         if (type === 'focus' && data && data.section) {
             refresh(true);
             var target = document.getElementById(data.section);
-            if (target) target.scrollIntoView({ block: 'start' });
+            if (target) { var group = target.closest('details'); if (group) group.open = true; target.scrollIntoView({ block: 'start' }); }
             return;
         }
         if (type === 'logs') {

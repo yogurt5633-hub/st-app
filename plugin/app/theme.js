@@ -2,7 +2,7 @@
 try {
     var savedTheme = localStorage.getItem('korrektor.theme');
     var savedAccent = localStorage.getItem('korrektor.accent');
-    if (savedTheme === 'light' || savedTheme === 'dark') document.documentElement.dataset.theme = savedTheme;
+    if (['light', 'dark', 'black', 'white', 'brown'].includes(savedTheme)) document.documentElement.dataset.theme = savedTheme;
     if (savedAccent && savedAccent !== 'amber') document.documentElement.dataset.accent = savedAccent;
 } catch (e) {
     // storage off: the system theme is used

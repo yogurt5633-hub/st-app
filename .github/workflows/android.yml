@@ -2,9 +2,12 @@ name: Android APK
 
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main, 'claude/**', tavernka-gpt]
     paths:
       - 'android/**'
+      - 'plugin/**'
+      - 'st-extension/**'
+      - 'tests/**'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -20,6 +23,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Test web and translation changes
+        if: github.ref == 'refs/heads/tavernka-gpt'
+        run: |
+          npm ci
+          npm test
+          npx playwright install --with-deps chromium
+          npm run test:browser
+
+      - uses: actions/upload-artifact@v4
+        if: always() && github.ref == 'refs/heads/tavernka-gpt'
+        with:
+          name: screen-review
+          path: /tmp/tavernka-review/screens
 
       - uses: actions/setup-java@v4
         with:
@@ -58,6 +75,7 @@ jobs:
         run: |
           CODE=$((100 + GITHUB_RUN_NUMBER))
           NAME="1.0.${GITHUB_RUN_NUMBER}"
+          if [ "$GITHUB_REF" = "refs/heads/tavernka-gpt" ]; then NAME="$NAME-tavernka"; fi
           echo "APP_CODE=$CODE" >> "$GITHUB_ENV"
           echo "APP_NAME=$NAME" >> "$GITHUB_ENV"
           chmod +x gradlew

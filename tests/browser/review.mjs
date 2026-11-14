@@ -33,7 +33,7 @@ const server=http.createServer(async(req,res)=>{
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const origin=`http://127.0.0.1:${server.address().port}`;
-const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',args:['--no-sandbox']});
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||chromium.executablePath(),args:['--no-sandbox']});
 const errors=[];
 const observe=page=>page.on('pageerror',e=>errors.push(e.message));
 async function decoded(page){await page.locator('img').evaluateAll(async imgs=>{await Promise.all(imgs.map(i=>i.decode()));});}
@@ -41,7 +41,7 @@ async function noOverflow(page,selector='body'){
  assert.equal(await page.locator(selector).evaluate(e=>e.scrollWidth>innerWidth+1),false,`horizontal overflow: ${selector}`);
 }
 try{
- for(const theme of ['dark','light'])for(const width of [320,390]){
+ for(const theme of ['dark','light','black','white','brown'])for(const width of [320,390]){
   const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:theme,reducedMotion:'reduce'});
   const page=await context.newPage();observe(page);
   await page.addInitScript(({theme})=>{
@@ -64,6 +64,10 @@ try{
   assert.equal(await page.locator('.onb').count(),0);
   assert.equal(await page.locator('.hello .mascot').count(),0);
   await noOverflow(page);
+  assert.equal(await page.locator('.settings-group[open]').count(),0);
+  await page.getByText('Оформление',{exact:true}).first().click();
+  assert.equal(await page.locator('.settings-group[open]').count(),1);
+  if(width===390)await page.screenshot({path:`${output}/home-${theme}.png`,fullPage:true});
   await page.evaluate(()=>document.body.style.fontSize='24px');await noOverflow(page);
   await context.close();
  }
@@ -116,5 +120,5 @@ try{
  assert.equal(await chat.locator('.mes_text').textContent(),'Hello world.');
  await chat.close();
  assert.deepEqual(errors,[]);
- console.log('PASS: 4 mobile/theme combinations, all onboarding steps, enlarged text, API error, offline cache, manual translation, original restoration, keyboard action, no automatic requests.');
+ console.log('PASS: 10 mobile/theme combinations, all onboarding steps, enlarged text, API error, offline cache, manual translation, original restoration, keyboard action, no automatic requests.');
 }finally{await browser.close();await new Promise(r=>server.close(r));}

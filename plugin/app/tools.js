@@ -65,7 +65,7 @@ export function renderTools() {
             row('#tools/spend', 'Расходы', 'Сколько токенов и денег ушло: ролёвка и проверки'),
             row('#tools/cards', 'Здоровье карточек', 'Оценка каждой карточки и что поправить'),
             row('#tools/backup', 'Резервная копия', 'Чаты, карточки, лорбуки и настройки в одном файле'),
-            row('#tools/import', 'Импорт по ссылке', 'Карточка или лорбук с Chub, JanitorAI и других сайтов'),
+            row('#history', 'История', 'Применённые изменения и восстановление'),
             row('#tools/catalog', 'Каталог', 'Пресеты, лорбуки и карточки от авторов'),
             row('#tools/muted', 'Скрытые замечания', 'Виды замечаний, которые вы попросили не показывать')),
         renderKeyCheck());
@@ -75,7 +75,7 @@ export function renderTools() {
 
 export function renderKeyCheck() {
     const { h, state } = ui;
-    const last = state.status?.connectionCheck;
+    let last = state.status?.connectionCheck;
     const box = h('div', { class: 'section key-check' });
     const draw = (result, busy = false) => {
         const tone = result?.ok === true ? 'pos' : result?.ok === false ? 'neg' : '';
@@ -94,6 +94,7 @@ export function renderKeyCheck() {
         draw(last, true);
         try {
             const result = await ui.api('/connection-check', { method: 'POST', body: { test }, timeout: 120000 });
+            last = result;
             if (state.status) state.status.connectionCheck = result;
             draw(result);
         } catch (error) {
@@ -299,37 +300,8 @@ export async function renderBackup() {
 
 // ---------- import by link ----------
 
-export async function importFromUrl(url, status) {
-    const set = (text) => { if (status) status.textContent = text; };
-    const value = String(url || '').trim();
-    if (!/^https?:\/\//i.test(value)) throw new Error('Нужна ссылка, которая начинается с https://');
-    set('Скачиваю через SillyTavern…');
-    const token = await ui.csrfToken();
-    const res = await fetch('/api/content/importURL', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token }, body: JSON.stringify({ url: value }) });
-    if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(res.status === 404 ? 'SillyTavern не нашёл файл по этой ссылке' : `SillyTavern не смог скачать: ${text.slice(0, 200) || res.status}`);
-    }
-    const type = res.headers.get('X-Custom-Content-Type') || 'character';
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const name = decodeURIComponent((disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i) || [])[1] || (type === 'lorebook' ? 'lorebook.json' : 'character.png'));
-    const blob = await res.blob();
-    const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
-    const form = new FormData();
-    form.append('avatar', file);
-    set('Добавляю в SillyTavern…');
-    let target;
-    if (type === 'lorebook') {
-        target = '/api/worldinfo/import';
-    } else {
-        target = '/api/characters/import';
-        form.append('file_type', (name.split('.').pop() || 'png').toLowerCase());
-    }
-    const imported = await fetch(target, { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': token }, body: form });
-    const data = await imported.json().catch(() => ({}));
-    if (!imported.ok || data.error) throw new Error('SillyTavern не принял файл: возможно, это не карточка и не лорбук');
-    await ui.api('/refresh', { method: 'POST', body: { type: type === 'lorebook' ? 'world' : 'card' } }).catch(() => { });
-    return { type, name: data.file_name || data.name || name.replace(/\.[^.]+$/, '') };
+export async function importFromUrl() {
+    throw new Error('Импорт по ссылке временно отключён');
 }
 
 export function renderImport(prefill = '') {
@@ -363,6 +335,23 @@ export function renderImport(prefill = '') {
             h('p', { class: 'small muted', style: 'margin:8px 0 0', text: 'Скачивает сам SillyTavern, поэтому подходят те же сайты, что в его импорте: Chub, JanitorAI, RisuRealm, Pygmalion, AICharacterCards и прямые ссылки на PNG или JSON. В приложении можно просто «Поделиться» ссылкой с Корректором' })),
         result_box);
     if (prefill) go();
+}
+
+async function renderExtensions(container) {
+    const { h, put } = ui;
+    put(container, h('p', { class: 'muted', text: 'Проверяю установленные расширения' }));
+    try {
+        const result = await ui.api('/extensions/review', { timeout: 60000 });
+        if (!container.isConnected) return;
+        put(container,
+            h('p', { class: 'small muted', text: 'Локальная проверка отмечает выполнение кода из строк, системные команды и загрузку кода с других сайтов. Такие находки требуют просмотра. Проверка не гарантирует отсутствие вредоносного кода' }),
+            result.items.length ? result.items.map(item => h('article', { class: 'card' },
+                h('h2', { class: 'card-title', text: item.name }),
+                h('p', { class: 'small', text: `${item.files} файлов проверено${item.complete ? '' : ' · проверка неполная'}` }),
+                item.findings.length ? h('ul', {}, item.findings.map(finding => h('li', { text: `${finding.label} — ${finding.file}, строка ${finding.line}` })))
+                    : h('p', { class: 'muted', text: 'Совпадений с правилами проверки не найдено' })))
+                : h('p', { text: 'Сторонние расширения пока не установлены' }));
+    } catch (error) { put(container, h('p', { text: error.message })); }
 }
 
 // ---------- catalog ----------
@@ -538,12 +527,13 @@ export async function renderCatalog() {
         && (!pickFilter.text || [i.name, i.description, i.author, ...i.tags, ...i.models].join(' ').toLowerCase().includes(pickFilter.text));
     const list = h('div', { class: 'list catalog-list' });
     const drawList = () => {
+        if (filter === 'extension') { const panel = h('div'); put(list, panel); renderExtensions(panel); return; }
         const items = data.items.filter(matches);
         put(list, items.length ? items.map(item => catalogEntry(item, actionsFor(item))) : h('div', { class: 'empty' }, mascot('books', 150),
             h('h2', { text: data.items.length ? 'Ничего не нашлось' : 'Каталог пока пуст' }),
             h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять' })));
     };
-    const filters = h('div', { class: 'filters' }, [['all', 'Все'], ['preset', 'Пресеты'], ['lorebook', 'Лорбуки'], ['card', 'Карточки']].map(([v, text]) =>
+    const filters = h('div', { class: 'filters' }, [['all', 'Все'], ['preset', 'Пресеты'], ['lorebook', 'Лорбуки'], ['card', 'Карточки'], ['extension', 'Расширения']].map(([v, text]) =>
         h('button', {
             class: 'filter', type: 'button', 'aria-pressed': String(filter === v), onclick: (e) => {
                 if (filter === v) return;
@@ -1353,6 +1343,10 @@ export function compressButton(info) {
 }
 
 export async function renderCompress(chatId) {
+    if (ui.state.status?.optimizationPaused) {
+        ui.put(ui.$('#view'), ui.h('h2', { text: 'Оптимизация временно отключена' }), ui.h('p', { text: 'Сжатие чатов приостановлено из-за нестабильной работы и расхода токенов' }));
+        return;
+    }
     const { h, fmt, plural, state } = ui;
     ui.openSheet('Сжать чат', h('p', { class: 'muted', text: 'Собираю, что можно сократить' }));
     let info;
@@ -1471,7 +1465,7 @@ export const ACCENTS = [['amber', 'Янтарь'], ['rose', 'Роза'], ['mint'
 
 export function applyTheme(theme, accent) {
     const root = document.documentElement;
-    if (theme === 'light' || theme === 'dark') root.dataset.theme = theme;
+    if (['light', 'dark', 'black', 'white', 'brown'].includes(theme)) root.dataset.theme = theme;
     else delete root.dataset.theme;
     if (accent && accent !== 'amber') root.dataset.accent = accent;
     else delete root.dataset.accent;

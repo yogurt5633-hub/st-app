@@ -60,8 +60,14 @@ final class SitesTab {
         line.setBackgroundColor(palette.line);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
-        web = makeWeb();
-        root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+    }
+
+    void releaseHidden() {
+        if (web == null || root.getVisibility() == View.VISIBLE) return;
+        root.removeView(web);
+        web.destroy();
+        web = null;
+        selected = -1;
     }
 
     private WebView makeWeb() {
@@ -115,7 +121,7 @@ final class SitesTab {
         this.palette = palette;
         root.setBackgroundColor(palette.bg);
         line.setBackgroundColor(palette.line);
-        web.setBackgroundColor(palette.bg);
+        if (web != null) web.setBackgroundColor(palette.bg);
         rebuild();
     }
 
@@ -173,8 +179,9 @@ final class SitesTab {
             if (item == null) continue;
             chips.addView(chip(item.optString("name"), i == selected, false, v -> open(index)));
         }
+        if (list.length() > 0) chips.addView(chip("Обновить", false, true, v -> { if (web != null) web.reload(); }));
         if (list.length() > 0) chips.addView(chip("В браузере", false, true, v -> {
-            String url = web.getUrl();
+            String url = web == null ? null : web.getUrl();
             if (url != null && url.startsWith("http")) openOutside(url);
         }));
         chips.addView(chip(list.length() == 0 ? "Добавить сайт" : "Изменить список", false, true, v -> activity.showSitesSettings()));
@@ -182,6 +189,10 @@ final class SitesTab {
 
     /** Shows the tab; loads the last used site the first time. */
     void onShown() {
+        if (web == null) {
+            web = makeWeb();
+            root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        }
         if (selected < 0) {
             int last = (int) activity.prefs.number("siteIndex");
             JSONArray list = sites();
