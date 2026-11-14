@@ -1,0 +1,24 @@
+name: Restore stable release
+on:
+  push:
+    branches: [tavernka-gpt]
+    paths: ['.github/workflows/restore-stable.yml']
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Withdraw accidental release and restore previous stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="yogurt5633-hub/st-app"
+          test "$(gh api "repos/$REPO/git/ref/heads/main" --jq .object.sha)" = "b1f112058f0a4285044e0a464e2ccd112ab217f7"
+          test "$(gh api "repos/$REPO/git/ref/tags/app-150" --jq .object.sha)" = "7c706391d0d95bb82b0a89db07fb824d2f25cb6c"
+          test "$(gh api "repos/$REPO/releases/445362434" --jq .tag_name)" = "app-150"
+          gh api --method PATCH "repos/$REPO/releases/445362434" -F draft=true -f make_latest=false --jq '{tag_name,draft}'
+          STABLE_ID="$(gh api "repos/$REPO/releases/tags/app-148" --jq .id)"
+          gh api --method PATCH "repos/$REPO/releases/$STABLE_ID" -f make_latest=true --jq '{tag_name,draft}'
+          test "$(gh api "repos/$REPO/releases/latest" --jq .tag_name)" = "app-148"
