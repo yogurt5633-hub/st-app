@@ -10,7 +10,7 @@
 //    shorter than it should be (the end cut off) is split further or given to the next translator;
 //  - a range (last 20 / 50 / all), progress, a Stop button, failed messages can be retried,
 //    translations that came out cut off are done again;
-//  - one message from its menu (the language button), and optionally every new reply once it is written;
+//  - one message from its action bar, or a manually selected range;
 //  - a journal of what happened, to copy and send when something goes wrong.
 // The translation goes to message.extra.display_text — the same place SillyTavern's
 // translator uses: the original text stays, and "Show original" brings it back.
@@ -349,10 +349,10 @@ export function applyGlossary(text, glossary) {
     const terms = parseGlossary(glossary).sort((a, b) => b.from.length - a.from.length);
     if (!terms.length) return String(text);
     // One pass prevents a replacement from becoming input for another glossary entry.
-    const values = new Map(terms.map(t => [t.from.toLowerCase(), t.to || t.from]));
+    const values = new Map(terms.map(t => [t.from.toLowerCase(), t.to]));
     const pattern = terms.map(t => escapeRegex(t.from)).join('|');
     return String(text).replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'giu'),
-        match => values.get(match.toLowerCase()) ?? match);
+        match => values.get(match.toLowerCase()) || match);
 }
 
 // ---------- providers ----------
@@ -1346,9 +1346,9 @@ const messageQueue = new Set();
 
 /**
  * Translates one message with the chosen translator, shows the progress panel, saves the chat.
- * why: 'auto' (a new reply), 'button' (from the message's menu). Returns true when translated.
+ * Called only on an explicit user action. Returns true when translated.
  */
-async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) {
+async function translateMessage(id, { what = 'ответ', why = 'button' } = {}) {
     const s = settings();
     const c = ctx();
     const message = c.chat?.[id];
@@ -1366,8 +1366,7 @@ async function translateMessage(id, { what = 'ответ', why = 'auto' } = {}) 
     let outcome = '';
     const started = Date.now();
     try {
-        // SillyTavern cuts the thinking out of a new reply a moment after it appears: wait for that.
-        if (why === 'auto') await sleep(600);
+        // Prepare the current message and retry once if its source changes during translation.
         let text = null;
         let source = '';
         let engine = s.engine;
@@ -1445,20 +1444,6 @@ function slowHint(engine, ms) {
     toastr.info(`Перевод моделью ${model} занял ${Math.round(ms / 1000)} с. Быстрее — дать переводу быструю модель (Haiku, Flash, mini): «Перевод» → «Модель для перевода» или «Свой ключ для перевода»`, 'Корректор', { timeOut: 12000 });
 }
 
-/** A new reply (or the greeting of a new chat), if «Переводить новые ответы» is on. */
-async function translateNew(messageId, how = 'rendered') {
-    if (!settings().auto) return;
-    const id = Number(messageId);
-    const chat = ctx().chat || [];
-    const message = chat[id];
-    if (!message || message.is_user || message.is_system) return;
-    // Swiping back to a version translated earlier: its translation is still there.
-    if (how === 'swiped' && message.extra?.display_text && !translationCut(message)) return;
-    // The first message of a chat is the greeting: translated as soon as a new chat opens.
-    const what = chat.findIndex(m => !m.is_system) === id ? 'приветствие' : 'ответ';
-    await translateMessage(id, { what, why: 'auto' });
-}
-
 /** The language button in a message's menu: translate it, or — when it is translated — again or back to the original. */
 async function onMessageButton(id) {
     const message = ctx().chat?.[id];
@@ -1489,8 +1474,8 @@ async function onMessageButton(id) {
 export function setAuto(on, options = {}) {
     const s = { ...settings(), ...options, auto: false };
     saveSettings(s);
-    if (s.auto) quietStAuto();
-    tlog('info', `новые ответы: ${s.auto ? `переводить (${ENGINE_NAMES[s.engine] || s.engine} → ${s.lang})` : 'не переводить'}`);
+    quietStAuto();
+    tlog('info', 'новые ответы: перевод по кнопке');
     return s;
 }
 
@@ -1839,7 +1824,7 @@ export function openTranslate(preset = {}) {
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn, journalBtn),
-        el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}Одно сообщение — кнопка с языком в меню сообщения (⋯). «Модель Корректора» лучше держит ролевой стиль, но тратит немного денег; ей можно дать свой ключ. Если переводчик возвращает кусок на английском или обрывает конец, Корректор переводит его заново по частям.` }));
+        el('p', { class: 'kg-hint', text: `Перевод только показывается: текст сообщений не меняется, модель видит оригинал. ${translated ? `Сейчас переведено: ${translated}. ` : ''}Одно сообщение — кнопка перевода в панели сообщения. «Модель Корректора» лучше держит ролевой стиль, но тратит немного денег; ей можно дать свой ключ. Если переводчик возвращает кусок на английском или обрывает конец, Корректор переводит его заново по частям.` }));
     sheet('Перевод чата', body, () => watchers.delete(watch));
 }
 
@@ -1853,24 +1838,19 @@ function addMenuItem() {
     return true;
 }
 
-/**
- * The language button in every message's menu (⋯). It takes the place of SillyTavern's own
- * «Translate message», which sends the whole message to its translator in one piece.
- */
+/** Add one native, keyboard-accessible action to each message, including the cloning template. */
 function addMessageButtons() {
-    const boxes = document.querySelectorAll('#message_template .mes_buttons, #chat .mes .mes_buttons');
-    for (const box of boxes) {
-        if (box.querySelector('.korrektor_mes_translate')) continue;
-        box.prepend(el('div', { class: 'mes_button korrektor_mes_translate fa-solid fa-language interactable', title: 'Перевести сообщение (Тавернка)', 'aria-label': 'Перевести сообщение', tabindex: '0', role: 'button' }));
-    }
-    // Native keyboard activation for the message actions supplied as divs by SillyTavern.
-    for (const button of document.querySelectorAll('.korrektor_mes_translate')) {
-        button.onkeydown = (event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                button.click();
-            }
-        };
+    const messages = document.querySelectorAll('#message_template .mes, #chat .mes');
+    for (const message of messages) {
+        const box = message.querySelector('.mes_buttons') || message.querySelector('.extraMesButtons');
+        if (!box || message.querySelector('.korrektor_mes_translate')) continue;
+        const button = el('button', {
+            type: 'button', class: 'mes_button korrektor_mes_translate interactable',
+            title: 'Перевести сообщение (Тавернка)', 'aria-label': 'Перевести сообщение',
+        });
+        // A self-contained line icon does not depend on the host's icon font version.
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h12M9 3v2M6 5c0 6 5 9 7 10M12 5c0 6-5 9-8 10M14 21l4-10 4 10M15.5 17h5"/></svg>';
+        box.prepend(button);
     }
     document.body.classList.add('korrektor-translates');
 }
@@ -1899,23 +1879,23 @@ export function initTranslate() {
     loadKey();
     sillyTavernParts();
     addMessageButtons();
+    quietStAuto();
     document.addEventListener('click', (e) => {
         const button = e.target?.closest?.('.korrektor_mes_translate');
         if (!button) return;
-        const id = Number(button.closest('.mes')?.getAttribute('mesid'));
-        if (Number.isInteger(id)) onMessageButton(id).catch((error) => tlog('error', `#${id} ${error.message}`));
+        const raw = button.closest('#chat .mes')?.getAttribute('mesid');
+        if (!raw || !/^\d+$/.test(raw)) return;
+        const id = Number(raw);
+        if (Number.isSafeInteger(id)) onMessageButton(id).catch((error) => tlog('error', `#${id} ${error.message}`));
     });
     try {
         const { eventSource, eventTypes } = ctx();
-        // After a reply (or a new swipe) is shown in full. On opening a chat SillyTavern does not send this.
-        eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, () => addMessageButtons());
-        // Swiping to another version: one translated before keeps its translation, another one is translated.
-        eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => {
-            setTimeout(addMessageButtons, 50);
-        });
-        // Messages drawn before this script ran get the language button too.
-        for (const type of [eventTypes.CHAT_CHANGED, eventTypes.MORE_MESSAGES_LOADED]) {
-            if (type) eventSource.on(type, () => setTimeout(addMessageButtons, 50));
+        // Refresh actions after messages are drawn; these events never start translation.
+        for (const type of new Set([
+            eventTypes.CHARACTER_MESSAGE_RENDERED, eventTypes.USER_MESSAGE_RENDERED,
+            eventTypes.MESSAGE_SWIPED, eventTypes.CHAT_CHANGED, eventTypes.MORE_MESSAGES_LOADED,
+        ].filter(Boolean))) {
+            eventSource.on(type, () => setTimeout(addMessageButtons, 50));
         }
     } catch {
         // older SillyTavern: only manual translation

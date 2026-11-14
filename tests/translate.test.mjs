@@ -484,3 +484,9 @@ test('glossary replacements are simultaneous and literal', async () => {
     assert.equal(applyGlossary('Coin!', 'Coin = $&'), '$&!');
     assert.equal(applyGlossary('Gates Gate', 'Gate = Врата'), 'Gates Врата');
 });
+
+test('glossary: preserve original spelling for blank translations and match punctuation literally', async () => {
+    const { applyGlossary } = await import('../st-extension/translate.js');
+    assert.equal(applyGlossary('IHAN met ihan.', 'Ihan ='), 'IHAN met ihan.');
+    assert.equal(applyGlossary('A+B and Gate Keeper, not Gates.', 'A+B = Союз\nGate = Врата\nGate Keeper = Хранитель'), 'Союз and Хранитель, not Gates.');
+});

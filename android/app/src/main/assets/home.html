@@ -8,7 +8,7 @@
 :root {
     --bg-deep: #12110f; --bg: #161513; --card: #1c1a18; --raised: #262421;
     --line: rgba(239, 233, 222, 0.08); --line-strong: rgba(239, 233, 222, 0.14);
-    --text: #efe9de; --text-2: #aaa398; --text-3: #8a847a;
+    --text: #efe9de; --text-2: #aaa398; --text-3: #aaa398;
     --accent: #e3a54a; --primary: #efe9de; --on-primary: #161513;
     --pos: #4cc38a; --neg: #e5484d;
     --mono: "Roboto Mono", ui-monospace, monospace;
@@ -17,7 +17,7 @@
 html[data-theme="light"] {
     --bg-deep: #efe9df; --bg: #f7f4ee; --card: #fdfbf7; --raised: #efe9df;
     --line: rgba(31, 27, 22, 0.08); --line-strong: rgba(31, 27, 22, 0.14);
-    --text: #1f1b16; --text-2: #5e554a; --text-3: #7b7266;
+    --text: #1f1b16; --text-2: #5e554a; --text-3: #6c6358;
     --accent: #8a5200; --primary: #1f1b16; --on-primary: #fdfbf7;
     --pos: #16a34a; --neg: #dc2626;
 }
@@ -48,18 +48,18 @@ h2 { margin: 24px 0 8px; font-size: 14px; line-height: 20px; font-weight: 500; c
 .dot.wait { background: var(--accent); }
 .message { margin: 8px 0 0; color: var(--text-2); font-size: 14px; line-height: 20px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.btn { height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid transparent; font: inherit; font-weight: 500; cursor: pointer; transition: background-color 150ms var(--ease), opacity 150ms var(--ease); }
+.btn { min-height: 48px; padding: 12px 16px; border-radius: 10px; border: 1px solid transparent; font: inherit; font-weight: 500; cursor: pointer; transition: background-color 150ms var(--ease), opacity 150ms var(--ease); }
 .btn:active { transform: scale(0.98); }
 .btn[disabled] { opacity: 0.5; }
 .btn.primary { background: var(--primary); color: var(--on-primary); }
 .btn.secondary { background: var(--raised); color: var(--text); border-color: var(--line); }
-.btn.small { height: 36px; padding: 0 12px; font-size: 14px; }
+.btn.small { min-height: 48px; padding: 0 12px; font-size: 14px; }
 .btn.quiet { background: transparent; color: var(--text-2); }
 .step { display: grid; grid-template-columns: 24px 1fr; gap: 8px; }
 .num { font-family: var(--mono); font-size: 12px; color: var(--text-3); padding-top: 2px; }
 .done .num { color: var(--pos); }
 code { display: block; margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: var(--bg-deep); font-family: var(--mono); font-size: 12px; line-height: 18px; color: var(--text-2); overflow-wrap: anywhere; }
-input[type="text"] { width: 100%; height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg-deep); color: var(--text); font-family: var(--mono); font-size: 13px; }
+input[type="text"] { width: 100%; min-height: 48px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--bg-deep); color: var(--text); font-family: var(--mono); font-size: 13px; }
 .switch { position: relative; width: 44px; height: 26px; flex: none; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; }
 .switch span { position: absolute; inset: 0; border-radius: 13px; background: var(--raised); border: 1px solid var(--line-strong); pointer-events: none; transition: background-color 150ms var(--ease); }
@@ -74,7 +74,7 @@ a { color: var(--accent); }
 .mascot { display: block; flex: none; object-fit: contain; }
 .small.ok { color: var(--accent); }
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-.tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; text-align: left; color: var(--text); font: inherit; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; min-width: 0; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: left; color: var(--text); font: inherit; min-height: 84px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; min-width: 0; }
 .tile:active { transform: scale(0.98); }
 .tile.wide { grid-column: span 2; }
 .tile .k { font-size: 12px; line-height: 16px; color: var(--text-3); }
@@ -82,28 +82,39 @@ a { color: var(--accent); }
 .tile .s { font-size: 13px; line-height: 18px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile .v.pos { color: var(--pos); }
 .tile .v.neg { color: var(--neg); }
-.seg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.seg button { height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); font: inherit; font-size: 14px; }
+.seg { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.seg button { min-height: 48px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line-strong); background: transparent; color: var(--text-2); font: inherit; font-size: 14px; }
 .seg button[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: transparent; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 5px; margin-right: 6px; vertical-align: 0; }
 /* welcome screens */
 .onb { position: fixed; inset: 0; z-index: 50; background: var(--bg); overflow: auto; }
-.onb-in { min-height: 100%; display: flex; flex-direction: column; padding: 16px 20px 24px; max-width: 520px; margin: 0 auto; }
-.onb-skip { align-self: flex-end; background: none; border: 0; color: var(--text-3); font: inherit; font-size: 14px; padding: 8px; }
-.onb-art { align-self: center; margin: 8px 0; }
-.onb .title { font-size: 24px; line-height: 32px; margin: 8px 0; font-weight: 600; color: var(--text); text-align: center; }
+.onb-in { min-height: 100%; display: flex; flex-direction: column; padding: 16px 24px max(24px, env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; }
+.onb-skip { align-self: flex-end; background: none; border: 0; color: var(--text-3); font: inherit; font-size: 14px; min-height: 48px; padding: 12px; }
+.onb-art { align-self: center; margin: 0 0 24px; padding: 16px; border-radius: 16px; background: #f7f4ee; }
+.onb-content { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 0; }
+.onb .title { font-size: 32px; line-height: 40px; margin: 0 0 12px; font-weight: 500; color: var(--text); text-align: center; }
 .onb .lead { color: var(--text-2); text-align: center; margin: 0 0 12px; }
 .onb ul { margin: 8px 0; padding-left: 20px; color: var(--text-2); }
-.onb li { margin: 6px 0; }
+.onb li { margin: 8px 0; }
 .onb .box { margin-top: 8px; }
-.onb-dots { display: flex; gap: 6px; justify-content: center; margin: 20px 0 12px; }
-.onb-dots span { width: 6px; height: 6px; border-radius: 3px; background: var(--line-strong); transition: width 150ms var(--ease); }
-.onb-dots span.on { background: var(--accent); width: 18px; }
-.onb-foot { margin-top: auto; display: flex; gap: 8px; }
+.onb-progress { margin: 0 0 16px; color: var(--text-3); font-size: 13px; text-align: center; font-variant-numeric: tabular-nums; }
+.onb-foot { margin-top: 0; display: flex; gap: 8px; }
 .onb-foot .btn { flex: 1; }
 .error { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: #f0a0a2; overflow-wrap: anywhere; }
 pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto; border-radius: 8px; background: var(--bg-deep); font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .field + .field { margin-top: 12px; }
+/* Mobile interaction and accessible focus. */
+button, input, a { touch-action: manipulation; }
+button { overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.switch { height: 48px; width: 48px; }
+.switch span { top: 11px; bottom: 11px; }
+.switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tile .v { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+    .btn:active, .tile:active { transform: none; }
+}
 </style>
 </head>
 <body>
@@ -176,7 +187,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
     }
 
     function mascot(name, size) {
-        // Dark outlines for the light theme, light outlines for the dark one.
+        // One approved brand illustration; state is described in text.
         return h('img', { class: 'mascot', src: 'img/mascot.png', width: size, height: size, alt: '' });
     }
 
@@ -494,7 +505,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                 h('p', { class: 'hint', text: 'Без обновления часть экранов не откроется (расходы, проверка ключа, фоны и аватарки). Таверна перезапустится, это около минуты' }),
                 s.onPc ? h('p', { class: 'hint', text: 'На ПК: в папке с кодом Корректора выполните git pull и node scripts/install.mjs, затем перезапустите таверну' })
                     : h('div', { class: 'actions' }, h('button', { class: 'btn primary small', type: 'button', onclick: function () { app.action('update-korrektor'); }, text: 'Обновить Корректор' })))) : null,
-            h('div', { class: 'hello' }, mascot(s.stUp ? 'wave' : s.starting ? 'write' : 'sleep', 56),
+            h('div', { class: 'hello' },
                 h('div', {}, h('h1', { text: 'Главная' }), h('div', { class: 'small muted', text: (s.onPc ? 'Таверна на ПК: ' : '') + (s.stUp ? 'работает' : s.starting ? 'запускается' : s.onPc ? 'не отвечает' : 'выключена') }))),
             s.pcUrl ? h('div', { style: 'margin:-4px 0 12px' }, seg([['phone', 'Таверна на телефоне'], ['pc', 'Таверна на ПК']], s.onPc ? 'pc' : 'phone', function (v) { app.setTarget(v); })) : null,
             tiles.length ? h('div', { class: 'tiles' }, tiles) : null,
@@ -541,6 +552,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         var steps = 5;
         function finish() {
             showOnboarding = false;
+            state.onboardingDone = true;
             app.finishOnboarding();
             render();
         }
@@ -552,8 +564,8 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         var ready = s.termuxReady === true;
         var art, title, lead, body = null, primary = 'Дальше', action = next;
         if (onbStep === 0) {
-            art = 'wave'; title = 'Привет! Я Тавернка';
-            lead = 'Помогаю вести ролёвки в SillyTavern на телефоне. Таверна живёт прямо в приложении, а я присматриваю за чатами';
+            art = 'wave'; title = 'Тавернка';
+            lead = 'SillyTavern на телефоне: общайтесь с персонажами, переводите сообщения и собирайте материалы для своих историй';
         } else if (onbStep === 1) {
             art = 'write'; title = 'Что я делаю';
             lead = 'Читаю чаты, лорбуки и карточки и предлагаю правки';
@@ -590,7 +602,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
                     if (confirm('Установить SillyTavern в Termux? Откроется Termux, там будет видно, как идёт установка')) app.action('install-tavern');
                 }, text: 'Установить SillyTavern' })) : null);
         } else {
-            art = 'done'; title = 'Готово!';
+            art = 'done'; title = 'Всё готово';
             lead = 'Вот где что лежит';
             body = h('ul', {},
                 h('li', { text: '«Главная» — сводка, запуск таверны, обновления и настройки' }),
@@ -600,16 +612,15 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
             primary = 'Начать';
             action = finish;
         }
-        var dots = [];
-        for (var i = 0; i < steps; i++) dots.push(h('span', { class: i === onbStep ? 'on' : '' }));
         return h('div', { class: 'onb', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Знакомство' },
             h('div', { class: 'onb-in' },
-                onbStep < steps - 1 ? h('button', { class: 'onb-skip', type: 'button', onclick: finish, text: 'Пропустить' }) : h('span', { style: 'height:38px' }),
-                h('div', { class: 'onb-art' }, mascot(art, 150)),
+                onbStep < steps - 1 ? h('button', { class: 'onb-skip', type: 'button', onclick: finish, text: 'Пропустить' }) : h('span', { style: 'height:48px' }),
+                h('div', { class: 'onb-content' },
+                onbStep === 0 ? h('div', { class: 'onb-art' }, mascot(art, 176)) : null,
                 h('div', { class: 'title', text: title }),
                 h('p', { class: 'lead', text: lead }),
-                body,
-                h('div', { class: 'onb-dots' }, dots),
+                body),
+                h('p', { class: 'onb-progress', 'aria-live': 'polite', text: 'Шаг ' + (onbStep + 1) + ' из ' + steps }),
                 h('div', { class: 'onb-foot' },
                     onbStep > 0 ? h('button', { class: 'btn secondary', type: 'button', onclick: back, text: 'Назад' }) : null,
                     h('button', { class: 'btn primary', type: 'button', onclick: action, text: primary }))));

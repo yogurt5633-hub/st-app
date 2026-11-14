@@ -142,15 +142,13 @@ final class ModelBar {
         JSONObject oursState = state.optJSONObject("ours");
         Sheet sheet = new Sheet(activity, palette, "Перевод");
 
-        final boolean[] replies = {oursState != null ? oursState.optBoolean("auto") || "responses".equals(mode) || "both".equals(mode)
-                : "responses".equals(mode) || "both".equals(mode)};
         final boolean[] mine = {"inputs".equals(mode) || "both".equals(mode)};
-        sheet.toggle("Переводить новые ответы", oursState != null ? "Когда ответ дописан. Модель видит оригинал" : "Перевод показывается вместо текста, модель видит оригинал", replies[0], v -> replies[0] = v);
+        sheet.note("Ответы переводятся по кнопке в сообщении или через «Перевести чат»");
         sheet.toggle("Мои сообщения — на английский", "Перед отправкой, переводчиком таверны", mine[0], v -> mine[0] = v);
 
         final String[] lang = {oursState != null && !oursState.optString("lang").isEmpty() ? oursState.optString("lang") : tr.optString("lang")};
         // Most people here read Russian: offer it instead of SillyTavern's default English.
-        if ("en".equals(lang[0]) && !replies[0]) lang[0] = "ru";
+        if ("en".equals(lang[0])) lang[0] = "ru";
         JSONArray langList = tr.optJSONArray("languages");
         List<String> langNames = new ArrayList<>();
         List<String> langCodes = new ArrayList<>();
@@ -214,7 +212,7 @@ final class ModelBar {
                 String guide = oursState.optString("guide");
                 sheet.choice("Указания и глоссарий", guide.isEmpty() ? "задать" : guide, v -> { sheet.dismiss(); run("window.korrektorTranslate.guide()"); });
             }
-            sheet.note("Одно сообщение — кнопка с языком в меню сообщения (⋯)");
+            sheet.note("Одно сообщение — кнопка перевода в панели сообщения");
         }
 
         Runnable apply = () -> {
@@ -223,14 +221,14 @@ final class ModelBar {
                 String stMode = mine[0] ? "inputs" : "none";
                 run("(function(on,l,e,m){var $=window.jQuery;window.korrektorTranslate.setAuto(on,{lang:l,engine:e});"
                         + "$('#translation_target_language').val(l).trigger('change');$('#translation_auto_mode').val(m).trigger('change');})("
-                        + replies[0] + "," + JSONObject.quote(lang[0]) + "," + JSONObject.quote(engine[0]) + "," + JSONObject.quote(stMode) + ")");
+                        + false + "," + JSONObject.quote(lang[0]) + "," + JSONObject.quote(engine[0]) + "," + JSONObject.quote(stMode) + ")");
                 return;
             }
-            String next = replies[0] && mine[0] ? "both" : replies[0] ? "responses" : mine[0] ? "inputs" : "none";
+            String next = mine[0] ? "inputs" : "none";
             run("(function(m,l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');"
                     + "$('#translation_auto_mode').val(m).trigger('change');})(" + JSONObject.quote(next) + "," + JSONObject.quote(lang[0]) + ")");
         };
-        sheet.buttons("Готово", apply, ours ? "Старые сообщения" : "Перевести чат", () -> {
+        sheet.buttons("Готово", apply, "Перевести чат", () -> {
             apply.run();
             if (ours) run("window.korrektorTranslate.open({lang:" + JSONObject.quote(lang[0]) + "})");
             else run("(function(l){var $=window.jQuery;$('#translation_target_language').val(l).trigger('change');$('#translate_chat').trigger('click');})(" + JSONObject.quote(lang[0]) + ")");

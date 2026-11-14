@@ -10,29 +10,16 @@ export function setup(helpers) {
 
 const TOKEN_KINDS = ['context', 'preset_bloat', 'prompt_reasoning', 'prompt_html', 'advice', 'lore_keyed', 'lore_card_dup', 'lore_bloat', 'card_bloat'];
 
-// The mascot has two drawings: light outlines for the dark theme, dark outlines for the light one.
-const lightQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
-
-function lightTheme() {
-    const theme = document.documentElement.dataset.theme;
-    return theme ? theme === 'light' : Boolean(lightQuery?.matches);
-}
-
-function mascotSrc(name) {
-    return 'img/mascot.png';
-}
-
-/** After the theme changed: every mascot on the page gets the drawing for it. */
+// The approved illustration is shared across themes; it is not a status indicator.
 export function refreshMascots() {
     for (const img of document.querySelectorAll('img.mascot[data-mascot]')) {
-        const src = mascotSrc(img.dataset.mascot);
-        if (img.getAttribute('src') !== src) img.setAttribute('src', src);
+        if (img.getAttribute('src') !== 'img/mascot.png') img.setAttribute('src', 'img/mascot.png');
     }
 }
-lightQuery?.addEventListener?.('change', refreshMascots);
 
 export function mascot(name, size = 120, alt = '') {
-    return ui.h('img', { class: 'mascot', src: mascotSrc(name), 'data-mascot': name, width: size, height: size, alt, loading: 'lazy' });
+    if (size < 120 || !['wave', 'sleep', 'books'].includes(name)) return null;
+    return ui.h('img', { class: 'mascot', src: 'img/mascot.png', 'data-mascot': name, width: size, height: size, alt, loading: 'lazy' });
 }
 
 function back(href, title) {

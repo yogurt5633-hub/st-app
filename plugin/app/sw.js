@@ -1,6 +1,6 @@
 // Keeps the app shell offline so the icon opens even while SillyTavern is stopped.
 // API calls always go to the network.
-const VERSION = 'korrektor-0.4.25';
+const VERSION = 'korrektor-0.4.25-tavernka-2';
 const SHELL = [
     './',
     'index.html',
@@ -10,12 +10,10 @@ const SHELL = [
     'theme.js',
     'diff.js',
     'manifest.webmanifest',
-    'icons/icon.svg',
+    'icons/icon-512.png',
+    'icons/maskable-512.png',
+    'img/mascot.png',
     'icons/icon-192.png',
-    'img/sleep.png',
-    'img/confused.png',
-    'img/light/sleep.png',
-    'img/light/confused.png',
 ];
 
 self.addEventListener('install', (event) => {
