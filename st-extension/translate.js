@@ -132,7 +132,7 @@ export function settings() {
         engine: ENGINES.some(([k]) => k === engine) ? engine : 'auto',
         range: saved.range || 'last20',
         mine: saved.mine ?? true,
-        auto: Boolean(saved.auto),
+        auto: false,
         // The translation appears in the message part by part while it is made.
         gradual: saved.gradual ?? true,
         again: false,
@@ -346,12 +346,13 @@ const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * sent (whole words, any case), so they come back as they are. Longer terms first.
  */
 export function applyGlossary(text, glossary) {
-    let out = String(text);
-    const terms = parseGlossary(glossary).filter(t => t.to).sort((a, b) => b.from.length - a.from.length);
-    for (const { from, to } of terms) {
-        out = out.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(from)}(?![\\p{L}\\p{N}])`, 'giu'), to);
-    }
-    return out;
+    const terms = parseGlossary(glossary).sort((a, b) => b.from.length - a.from.length);
+    if (!terms.length) return String(text);
+    // One pass prevents a replacement from becoming input for another glossary entry.
+    const values = new Map(terms.map(t => [t.from.toLowerCase(), t.to || t.from]));
+    const pattern = terms.map(t => escapeRegex(t.from)).join('|');
+    return String(text).replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'giu'),
+        match => values.get(match.toLowerCase()) ?? match);
 }
 
 // ---------- providers ----------
@@ -1486,7 +1487,7 @@ async function onMessageButton(id) {
 }
 
 export function setAuto(on, options = {}) {
-    const s = { ...settings(), ...options, auto: Boolean(on) };
+    const s = { ...settings(), ...options, auto: false };
     saveSettings(s);
     if (s.auto) quietStAuto();
     tlog('info', `новые ответы: ${s.auto ? `переводить (${ENGINE_NAMES[s.engine] || s.engine} → ${s.lang})` : 'не переводить'}`);
@@ -1775,9 +1776,6 @@ export function openTranslate(preset = {}) {
 
     const mine = el('label', { class: 'checkbox_label' },
         el('input', { type: 'checkbox', checked: s.mine, onchange: (e) => { s.mine = e.target.checked; save(); } }), el('span', { text: 'И мои сообщения' }));
-    const autoBox = el('label', { class: 'checkbox_label' },
-        el('input', { type: 'checkbox', checked: s.auto, onchange: (e) => { s.auto = e.target.checked; save(); if (s.auto) quietStAuto(); } }),
-        el('span', { text: 'Переводить новые ответы сразу (и приветствие нового чата), этим же переводчиком' }));
     // Which model translates when «Модель Корректора» is chosen: separate from the model of the replies,
     // or a key of its own just for translation.
     const modelRow = el('div', { class: 'kg-model' });
@@ -1837,7 +1835,7 @@ export function openTranslate(preset = {}) {
             ENGINES.map(([key, label]) => el('option', { value: key, selected: key === s.engine, text: label }))),
         modelRow,
         guideRow,
-        el('div', { class: 'kg-checks' }, mine, again, autoBox, gradualBox),
+        el('div', { class: 'kg-checks' }, mine, again, gradualBox),
         el('div', { class: 'kg-actions' }, startBtn, stopBtn, retryBtn),
         bar, status,
         el('div', { class: 'kg-actions' }, originalBtn, journalBtn),
@@ -1860,10 +1858,19 @@ function addMenuItem() {
  * «Translate message», which sends the whole message to its translator in one piece.
  */
 function addMessageButtons() {
-    const boxes = document.querySelectorAll('#message_template .extraMesButtons, #chat .mes .extraMesButtons');
+    const boxes = document.querySelectorAll('#message_template .mes_buttons, #chat .mes .mes_buttons');
     for (const box of boxes) {
         if (box.querySelector('.korrektor_mes_translate')) continue;
-        box.prepend(el('div', { class: 'mes_button korrektor_mes_translate fa-solid fa-language interactable', title: 'Перевести (Корректор)', tabindex: '0', role: 'button' }));
+        box.prepend(el('div', { class: 'mes_button korrektor_mes_translate fa-solid fa-language interactable', title: 'Перевести сообщение (Тавернка)', 'aria-label': 'Перевести сообщение', tabindex: '0', role: 'button' }));
+    }
+    // Native keyboard activation for the message actions supplied as divs by SillyTavern.
+    for (const button of document.querySelectorAll('.korrektor_mes_translate')) {
+        button.onkeydown = (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                button.click();
+            }
+        };
     }
     document.body.classList.add('korrektor-translates');
 }
@@ -1901,10 +1908,10 @@ export function initTranslate() {
     try {
         const { eventSource, eventTypes } = ctx();
         // After a reply (or a new swipe) is shown in full. On opening a chat SillyTavern does not send this.
-        eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (id) => { translateNew(id).catch(() => { }); });
+        eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, () => addMessageButtons());
         // Swiping to another version: one translated before keeps its translation, another one is translated.
         eventSource.on(eventTypes.MESSAGE_SWIPED, (id) => {
-            setTimeout(() => { if (!busy()) translateNew(id, 'swiped').catch(() => { }); }, 300);
+            setTimeout(addMessageButtons, 50);
         });
         // Messages drawn before this script ran get the language button too.
         for (const type of [eventTypes.CHAT_CHANGED, eventTypes.MORE_MESSAGES_LOADED]) {

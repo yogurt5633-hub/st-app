@@ -477,3 +477,10 @@ test('translate: free translators get the glossary words already put in', async 
     assert.ok(sent.some(t => t.includes('Ассоциация охотников')), `sent: ${sent}`);
     assert.match(out, /Ассоциация охотников/);
 });
+
+test('glossary replacements are simultaneous and literal', async () => {
+    const { applyGlossary } = await import('../st-extension/translate.js');
+    assert.equal(applyGlossary('Ann met Anna and Bob.', 'Anna = Анна\nAnn = Bob\nBob = Роберт'), 'Bob met Анна and Роберт.');
+    assert.equal(applyGlossary('Coin!', 'Coin = $&'), '$&!');
+    assert.equal(applyGlossary('Gates Gate', 'Gate = Врата'), 'Gates Врата');
+});
