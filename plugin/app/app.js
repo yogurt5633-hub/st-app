@@ -1502,7 +1502,7 @@ async function renderSettings(reload = true) {
         const heading = section.querySelector(':scope > h2');
         if (!heading) continue;
         const title = heading.textContent;
-        if (state.status?.optimizationPaused && ['Проверка', 'Что проверять', 'Пороги', 'Резюме и факты'].includes(title)) { section.remove(); continue; }
+        if (state.status?.optimizationPaused && ['Проверка', 'Что искать', 'Пороги', 'Резюме и факты'].includes(title)) { section.remove(); continue; }
         const details = h('details', { class: 'settings-group', open: expandedSettings.has(title) }, h('summary', { text: title }));
         heading.remove();
         details.append(...section.childNodes);

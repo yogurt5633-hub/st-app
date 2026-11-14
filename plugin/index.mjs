@@ -41,6 +41,10 @@ import { readJson, writeJson } from './lib/util.mjs';
 const OPTIMIZATION_PAUSED = true;
 const PAUSE_MESSAGE = 'Оптимизация чатов временно отключена из-за нестабильной работы и расхода токенов';
 
+function visibleAppProposals(items, settings) {
+    return visibleProposals(items, OPTIMIZATION_PAUSED ? { scan: { enabled: false } } : settings);
+}
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(HERE, 'app');
 const VERSION = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8')).version;
@@ -275,7 +279,7 @@ export async function init(router) {
         const settings = await user.store.getSettings();
         const stSettings = await readStSettings(user.ctx);
         const state = await user.store.getState();
-        const proposals = visibleProposals(await user.store.getProposals(), settings);
+        const proposals = visibleAppProposals(await user.store.getProposals(), settings);
         const llm = new LlmClient({ auth: user.auth, settings, stSettings });
         const translateKey = publicKeyConfig(await readKeyConfig(user.store.dir));
         return {
@@ -315,7 +319,7 @@ export async function init(router) {
     router.get('/settings', route(async (req, user) => user.store.getSettings()));
     router.post('/settings', route(async (req, user) => user.store.saveSettings(req.body || {})));
 
-    router.get('/proposals', route(async (req, user) => ({ items: visibleProposals(await listProposals(user.store, { status: req.query.status }), OPTIMIZATION_PAUSED ? { scan: { enabled: false } } : await user.store.getSettings()) })));
+    router.get('/proposals', route(async (req, user) => ({ items: visibleAppProposals(await listProposals(user.store, { status: req.query.status }), await user.store.getSettings()) })));
     // Remarks on or off at all, with one switch.
     router.post('/remarks', route(async (req, user) => {
         const on = req.body?.enabled !== false;
@@ -381,7 +385,7 @@ export async function init(router) {
         const chats = (await listChats(user.ctx)).slice(0, limit);
         const state = await user.store.getState();
         const settings = await user.store.getSettings();
-        const proposals = visibleProposals(await user.store.getProposals(), settings);
+        const proposals = visibleAppProposals(await user.store.getProposals(), settings);
         const watched = new Set(settings.scan.watched || []);
         const items = [];
         for (const chat of chats) {
@@ -447,12 +451,12 @@ export async function init(router) {
         const avatar = String(req.query.avatar || '');
         const { card } = await readCard(user.ctx, avatar);
         const conn = connectionInfo(await readStSettings(user.ctx));
-        const proposals = visibleProposals(await user.store.getProposals(), await user.store.getSettings());
+        const proposals = visibleAppProposals(await user.store.getProposals(), await user.store.getSettings());
         return { name: cardName(card, avatar.replace(/\.png$/i, '')), ...cardHealth(card, avatar, { proposals, contextSize: conn.contextSize }) };
     }));
     router.get('/cards-health', route(async (req, user) => {
         const conn = connectionInfo(await readStSettings(user.ctx));
-        const proposals = visibleProposals(await user.store.getProposals(), await user.store.getSettings());
+        const proposals = visibleAppProposals(await user.store.getProposals(), await user.store.getSettings());
         const items = [];
         for (const entry of (await listCards(user.ctx)).slice(0, 300)) {
             try {

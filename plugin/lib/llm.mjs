@@ -271,6 +271,14 @@ export class LlmClient {
 
     /** Works out which API, source and model a task uses. */
     resolve(task) {
+        if (task === 'connection-check') {
+            const conn = connectionInfo(this.stSettings);
+            return {
+                api: conn.api, source: conn.api === 'text' ? conn.textType : conn.source,
+                model: conn.api === 'text' ? conn.textModel : conn.model,
+                tier: 'scan', effort: 'auto', maxTokens: 64, why: 'как в SillyTavern',
+            };
+        }
         // Translation may have a model of its own (chosen in the translation sheet or settings).
         const m = this.settings.models || {};
         if (task === 'translate' && (m.translateSource || (m.translate || '').trim())) return this.resolveTier('translate');
@@ -525,8 +533,9 @@ export class LlmClient {
             // the same way as for a missing key: settle it with a tiny request instead.
         }
         if (conn.api === 'other') return { ...out, ok: null, message: 'Этот тип API Корректор проверить не может' };
+        if (!test) return { ...out, ok: null, message: 'Провайдер не вернул список моделей. Нажмите «Пробный запрос», чтобы проверить выбранную модель; он расходует токены' };
         try {
-            await this.complete({ task: 'facts', system: 'Ответь одним словом.', user: 'Скажи «да».', maxTokens: 64 });
+            await this.complete({ task: 'connection-check', system: 'Ответь одним словом.', user: 'Скажи «да».', maxTokens: 64 });
             return { ...out, ok: true, tested: true, message: 'Пробный запрос прошёл: ключ и модель работают' };
         } catch (error) {
             return { ...out, ok: false, message: error.message };

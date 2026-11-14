@@ -42,7 +42,7 @@ async function noOverflow(page,selector='body'){
 }
 try{
  for(const theme of ['dark','light','black','white','brown'])for(const width of [320,390]){
-  const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:theme,reducedMotion:'reduce'});
+  const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:['light','white'].includes(theme)?'light':'dark',reducedMotion:'reduce'});
   const page=await context.newPage();observe(page);
   await page.addInitScript(({theme})=>{
    const state={resolvedTheme:theme,theme,accent:'amber',onboardingDone:false,stUp:false,termuxInstalled:true,termuxPermission:true,termuxReady:true,lastCheck:Date.now()};

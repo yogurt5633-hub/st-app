@@ -59,3 +59,20 @@ test('instruct off and thinking tags', () => {
     assert.equal(stripThinking('<think>долго думаю</think>\nОтвет'), 'Ответ');
     assert.equal(stripThinking('мысли без начала</think>Ответ'), 'Ответ');
 });
+
+
+test('connection check targets the model selected in SillyTavern despite plugin overrides', () => {
+    const c = client({ scanSource: 'claude', heavySource: 'claude', heavy: 'other-model' }, st({ chat_completion_source: 'custom', custom_model: 'selected-model' }));
+    const resolved = c.resolve('connection-check');
+    assert.equal(resolved.source, 'custom');
+    assert.equal(resolved.model, 'selected-model');
+    assert.equal(resolved.maxTokens, 64);
+});
+
+test('connection check asks for an explicit probe when model listing is unavailable', async () => {
+    const c = client({}, { main_api: 'textgenerationwebui', textgenerationwebui_settings: { type: 'koboldcpp' } });
+    c.complete = async () => { throw new Error('must not generate'); };
+    const result = await c.checkConnection();
+    assert.equal(result.ok, null);
+    assert.match(result.message, /Пробный запрос/);
+});
