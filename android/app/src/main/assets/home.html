@@ -103,6 +103,9 @@ a { color: var(--accent); }
 .error { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: #f0a0a2; overflow-wrap: anywhere; }
 pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto; border-radius: 8px; background: var(--bg-deep); font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .field + .field { margin-top: 12px; }
+.field .line { align-items: stretch; }
+.field input { min-width: 0; flex: 1; }
+.field .btn { flex: none; white-space: nowrap; }
 /* Mobile interaction and accessible focus. */
 button, input, a { touch-action: manipulation; }
 button { overflow-wrap: anywhere; }
@@ -281,7 +284,6 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
                     h('button', { class: 'btn quiet small', type: 'button', onclick: function () { logs = null; render(); }, text: 'Скрыть' }))),
             logs ? h('pre', { class: 'log', text: logs }) : null);
 
-        var found = s.stDir ? 'Сейчас найдена папка ' + s.stDir.replace(/^\/data\/data\/com\.termux\/files\/home/, '~') + '. ' : '';
         return [
             h('div', { class: 'box' },
                 h('div', { class: 'row' },
@@ -289,12 +291,20 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
                     s.message && s.message !== title ? h('p', { class: 'message', text: s.message }) : null,
                     s.starting && s.progress ? h('p', { class: 'hint mono', style: 'margin-top:6px;overflow-wrap:anywhere', text: s.progress }) : null,
                     h('div', { class: 'actions' }, actions)),
-                logRow,
-                s.onPc ? null : h('div', { class: 'row' },
-                    field('cmd', 'Команда запуска в Termux', s.startCmd, 'автоматически', function (v) { app.setStartCommand(v); },
-                        found + 'Пусто — Корректор сам найдёт папку SillyTavern и запустит её. Если вы запускаете таверну своей командой (например st), впишите её сюда'),
-                    field('url', 'Адрес таверны на телефоне', s.stUrl, 'http://127.0.0.1:8000', function (v) { app.setUrl(v); },
-                        'Обычно http://127.0.0.1:8000. Если в config.yaml SillyTavern другой порт, укажите его'))),
+                logRow),
+        ];
+    }
+
+    function phoneSection() {
+        var s = state;
+        var found = s.stDir ? 'Найдена папка ' + s.stDir.replace(/^\/data\/data\/com\.termux\/files\/home/, '~') + '. ' : '';
+        return [
+            h('h2', { text: 'Таверна на телефоне' }),
+            h('div', { class: 'box' }, h('div', { class: 'row' },
+                field('cmd', 'Команда запуска в Termux', s.startCmd, 'автоматически', function (v) { app.setStartCommand(v); },
+                    found + 'Оставьте пустым для автоматического запуска. Если используете свою команду, например st, впишите её сюда'),
+                field('url', 'Адрес таверны на телефоне', s.stUrl, 'http://127.0.0.1:8000', function (v) { app.setUrl(v); },
+                    'Обычно http://127.0.0.1:8000. Если в config.yaml SillyTavern другой порт, укажите его'))),
         ];
     }
 
@@ -479,7 +489,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
         return [
             h('h2', { text: 'Уведомления' }),
             h('div', { class: 'box' },
-                toggle('Новые замечания и обновления', 'Раз в час, пока работает SillyTavern. Если уведомления приходят дважды, выключите «Уведомление Android о находках» в настройках Корректора', s.notify, function (v) { app.setFlag('notify', v); }),
+                toggle('Уведомления об обновлениях', 'Проверка раз в час, пока работает SillyTavern. Мгновенная доставка пока недоступна', s.notify, function (v) { app.setFlag('notify', v); }),
                 s.notifications ? null : h('div', { class: 'row line' }, h('span', { class: 'small muted', text: 'Android сейчас не разрешает уведомления' }),
                     h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.requestNotifications(); }, text: 'Разрешить' }))),
         ];
@@ -692,7 +702,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
         root.replaceChildren.apply(root, [].concat(
             dashboardSection(),
             tavernSection(),
-            fold('connection', 'Подключение и запуск', [].concat(state.onPc ? [] : (setupSection() || []), pcSection())),
+            fold('connection', 'Подключение и запуск', [].concat(state.onPc ? [] : phoneSection().concat(setupSection() || []), pcSection())),
             fold('updates', 'Обновления', updatesSection()),
             fold('appearance', 'Оформление', appearanceSection()),
             fold('sites', 'Сайты провайдеров', sitesSection()),

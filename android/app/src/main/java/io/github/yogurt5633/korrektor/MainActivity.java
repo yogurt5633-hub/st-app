@@ -228,6 +228,7 @@ public class MainActivity extends Activity {
             try { updates = new JSONObject(prefs.text("updateResult")); } catch (Exception ignored) { }
             if (updates != null) {
                 showUpdateBar();
+                announceUpdate(updates);
                 sendToHome("updates", updates);
                 return;
             }

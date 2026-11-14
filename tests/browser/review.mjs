@@ -5,6 +5,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
+import { DEFAULT_SETTINGS } from '../../plugin/lib/store.mjs';
 const root=path.resolve(import.meta.dirname,'../..');
 const output=process.env.REVIEW_OUTPUT || '/tmp/tavernka-review/screens';
 await fs.mkdir(output,{recursive:true});
@@ -17,9 +18,10 @@ const server=http.createServer(async(req,res)=>{
   if(url.pathname.startsWith('/api/translate/')){ translations++; res.setHeader('Content-Type','text/plain');res.end('Привет, мир.');return; }
   let data={};
   if(url.pathname==='/csrf-token')data={token:'fixture'};
-  if(url.pathname.endsWith('/status'))data={version:'0.4.25',remarks:false,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
+  if(url.pathname.endsWith('/status'))data={version:'0.4.26',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
   if(url.pathname.endsWith('/proposals')||url.pathname.endsWith('/chats'))data={items:[],mode:'recent'};
-  if(url.pathname.endsWith('/settings'))data={models:{},translation:{}};
+  if(url.pathname.endsWith('/settings'))data=DEFAULT_SETTINGS;
+  if(url.pathname.endsWith('/worlds')||url.pathname.endsWith('/catalog')||url.pathname.endsWith('/extensions/review'))data={items:[]};
   res.end(JSON.stringify(data));return;
  }
  try{
@@ -65,6 +67,11 @@ try{
   assert.equal(await page.locator('.hello .mascot').count(),0);
   await noOverflow(page);
   assert.equal(await page.locator('.settings-group[open]').count(),0);
+  assert.equal(await page.getByLabel('Команда запуска в Termux',{exact:true}).isVisible(),false);
+  await page.getByText('Подключение и запуск',{exact:true}).click();
+  await page.getByLabel('Команда запуска в Termux',{exact:true}).waitFor();
+  await noOverflow(page);
+  await page.getByText('Подключение и запуск',{exact:true}).click();
   await page.getByText('Оформление',{exact:true}).first().click();
   assert.equal(await page.locator('.settings-group[open]').count(),1);
   if(width===390)await page.screenshot({path:`${output}/home-${theme}.png`,fullPage:true});
@@ -80,7 +87,21 @@ try{
 
  await page.waitForFunction(()=>navigator.serviceWorker.controller,null,{timeout:10000});
  assert.ok(await page.evaluate(async()=>Boolean(await caches.match('img/mascot.png'))),'mascot precached');
- await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Замечания выключены',{exact:true}).waitFor();await decoded(page);
+ await page.goto(`${origin}/api/plugins/korrektor/app/index.html#settings`);
+ await page.locator('.settings-group summary').first().waitFor();
+ assert.equal(await page.locator('.settings-group[open]').count(),0);
+ assert.equal(await page.locator('.settings-group summary').filter({hasText:/^(Проверка|Что искать|Пороги|Резюме и факты)$/}).count(),0);
+ await noOverflow(page);
+ await page.screenshot({path:`${output}/settings.png`,fullPage:true});
+ await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/catalog`);
+ await page.getByRole('button',{name:'Расширения',exact:true}).click();
+ await page.getByText('Сторонние расширения пока не установлены',{exact:true}).waitFor();
+ assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'catalog');
+ await noOverflow(page);
+ await page.screenshot({path:`${output}/extensions.png`,fullPage:true});
+ await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/import`);
+ await page.getByText('Импорт по ссылке временно отключён',{exact:true}).waitFor();
+ await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Оптимизация временно отключена',{exact:true}).waitFor();await decoded(page);
  await page.screenshot({path:`${output}/feed.png`});
  await context.setOffline(true);await page.reload();
  await page.getByText('Нет связи с SillyTavern',{exact:true}).waitFor();
