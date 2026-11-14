@@ -2,5 +2,5 @@
 <resources>
     <color name="bg">#161513</color>
     <color name="bg_deep">#12110f</color>
-    <color name="icon_bg">#161210</color>
+    <color name="icon_bg">#fff0d5</color>
 </resources>

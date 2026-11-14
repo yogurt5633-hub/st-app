@@ -19,7 +19,7 @@ function lightTheme() {
 }
 
 function mascotSrc(name) {
-    return `img/${lightTheme() ? 'light/' : ''}${name}.png`;
+    return 'img/mascot.png';
 }
 
 /** After the theme changed: every mascot on the page gets the drawing for it. */

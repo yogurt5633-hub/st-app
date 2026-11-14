@@ -177,7 +177,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
 
     function mascot(name, size) {
         // Dark outlines for the light theme, light outlines for the dark one.
-        return h('img', { class: 'mascot', src: 'img/' + (state.resolvedTheme === 'light' ? 'light/' : '') + name + '.png', width: size, height: size, alt: '' });
+        return h('img', { class: 'mascot', src: 'img/mascot.png', width: size, height: size, alt: '' });
     }
 
     function startTavern() {
@@ -552,7 +552,7 @@ pre.log { margin: 8px 0 0; padding: 8px 12px; max-height: 320px; overflow: auto;
         var ready = s.termuxReady === true;
         var art, title, lead, body = null, primary = 'Дальше', action = next;
         if (onbStep === 0) {
-            art = 'wave'; title = 'Привет! Я Корректор';
+            art = 'wave'; title = 'Привет! Я Тавернка';
             lead = 'Помогаю вести ролёвки в SillyTavern на телефоне. Таверна живёт прямо в приложении, а я присматриваю за чатами';
         } else if (onbStep === 1) {
             art = 'write'; title = 'Что я делаю';

@@ -1,4 +1,4 @@
-# Корректор — ИИ-ассистент для SillyTavern
+# Тавернка — помощник для SillyTavern
 
 <p align="center"><img src="docs/cover.jpg" alt="Корректор: ИИ-помощник для чатов SillyTavern"></p>
 
