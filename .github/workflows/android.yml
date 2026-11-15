@@ -8,6 +8,7 @@ on:
       - 'plugin/**'
       - 'st-extension/**'
       - 'tests/**'
+      - 'package*.json'
       - '.github/workflows/android.yml'
   workflow_dispatch:
 
@@ -24,8 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
       - name: Test web and translation changes
-        if: github.ref == 'refs/heads/tavernka-gpt'
         run: |
           npm ci
           npm test
@@ -33,7 +38,7 @@ jobs:
           npm run test:browser
 
       - uses: actions/upload-artifact@v4
-        if: always() && github.ref == 'refs/heads/tavernka-gpt'
+        if: always()
         with:
           name: screen-review
           path: /tmp/tavernka-review/screens
@@ -75,11 +80,12 @@ jobs:
         run: |
           CODE=$((100 + GITHUB_RUN_NUMBER))
           NAME="1.0.${GITHUB_RUN_NUMBER}"
-          if [ "$GITHUB_REF" = "refs/heads/tavernka-gpt" ]; then NAME="$NAME-tavernka"; fi
+          SOURCE_BRANCH=main
+          if [ "$GITHUB_REF" = "refs/heads/tavernka-gpt" ]; then NAME="$NAME-tavernka"; SOURCE_BRANCH=tavernka-gpt; fi
           echo "APP_CODE=$CODE" >> "$GITHUB_ENV"
           echo "APP_NAME=$NAME" >> "$GITHUB_ENV"
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace assembleRelease -PversionCode=$CODE -PversionName=$NAME
+          ./gradlew --no-daemon --stacktrace testReleaseUnitTest assembleRelease -PversionCode=$CODE -PversionName=$NAME -PsourceBranch=$SOURCE_BRANCH
           cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/korrektor.apk"
 
       - uses: actions/upload-artifact@v4
@@ -94,6 +100,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "app-${APP_CODE}" korrektor.apk \
-            --title "Корректор ${APP_NAME} (бета)" \
-            --notes "Приложение Корректор для Android. Установите korrektor.apk или обновите на вкладке «Ещё» в самом приложении." \
+            --title "Тавернка ${APP_NAME} (бета)" \
+            --notes-file docs/RELEASE_NOTES.md \
             --latest

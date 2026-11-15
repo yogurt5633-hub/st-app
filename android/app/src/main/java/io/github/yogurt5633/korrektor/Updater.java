@@ -23,7 +23,7 @@ import org.json.JSONObject;
  */
 final class Updater {
     static final String RELEASES = "https://api.github.com/repos/yogurt5633-hub/st-app/releases/latest";
-    static final String PLUGIN_PACKAGE = "https://raw.githubusercontent.com/yogurt5633-hub/st-app/tavernka-gpt/plugin/package.json";
+    static final String PLUGIN_PACKAGE = "https://raw.githubusercontent.com/yogurt5633-hub/st-app/" + BuildConfig.SOURCE_BRANCH + "/plugin/package.json";
 
     private Updater() {
     }
@@ -65,63 +65,87 @@ final class Updater {
         }
     }
 
-    /** Blocking: call from a background thread. Also stores what it found in prefs. */
-    static JSONObject check(Context context, Prefs prefs) {
-        JSONObject out = new JSONObject();
-        try {
-            long current = appVersionCode(context);
-            JSONObject app = new JSONObject();
-            app.put("current", appVersionName(context));
+    /** Reconcile saved release data after installing an APK, including while offline. */
+    static JSONObject normalizeCached(JSONObject out, long current, String name) throws org.json.JSONException {
+        JSONObject app = out.optJSONObject("app");
+        if (app != null) {
+            app.put("current", name);
             app.put("currentCode", current);
-            Net.Reply release = Net.get(RELEASES, 15000, false);
-            if (release.ok()) {
-                JSONObject json = new JSONObject(release.body);
-                String tag = json.optString("tag_name", "");
-                long code = tag.startsWith("app-") ? parseLong(tag.substring(4)) : 0;
-                String apk = "";
-                JSONArray assets = json.optJSONArray("assets");
-                for (int i = 0; assets != null && i < assets.length(); i++) {
-                    JSONObject asset = assets.getJSONObject(i);
-                    if (asset.optString("name").endsWith(".apk")) {
-                        apk = asset.optString("browser_download_url");
-                        break;
-                    }
-                }
-                // Release titles look like "Корректор 1.0.5": show only the version.
-                String title = json.optString("name", "").replaceFirst("^[^0-9]*", "");
-                app.put("latest", title.isEmpty() ? tag : title);
-                app.put("latestCode", code);
-                app.put("notes", json.optString("body"));
-                app.put("url", apk);
-                app.put("available", code > current && !apk.isEmpty());
-                prefs.setText("apkUrl", apk);
-                prefs.setNumber("apkCode", code);
-            } else {
-                app.put("error", release.status == 404 ? "Выпусков приложения пока нет" : "GitHub не ответил");
-            }
-            out.put("app", app);
+            app.put("available", app.optLong("latestCode") > current && !app.optString("url").isEmpty());
+        }
+        return out;
+    }
 
-            JSONObject korrektor = new JSONObject();
+    static JSONObject cached(Context context, Prefs prefs) {
+        try {
+            JSONObject out = normalizeCached(new JSONObject(prefs.text("updateResult")), appVersionCode(context), appVersionName(context));
+            if (!BuildConfig.SOURCE_BRANCH.equals(out.optString("sourceBranch"))) out.remove("korrektor");
+            return out;
+        } catch (Exception ignored) { return new JSONObject(); }
+    }
+
+    /** Blocking: call from a background thread. Failed checks keep the last known release. */
+    static synchronized JSONObject check(Context context, Prefs prefs) {
+        JSONObject out = cached(context, prefs);
+        boolean releaseOk = false;
+        boolean packageOk = false;
+        JSONObject app = out.optJSONObject("app");
+        if (app == null) app = new JSONObject();
+        try {
+            Net.Reply release = Net.get(RELEASES, 15000, false);
+            if (!release.ok()) throw new Exception(release.status == 404 ? "Выпусков приложения пока нет" : "GitHub не ответил. Показаны последние полученные данные");
+            JSONObject json = new JSONObject(release.body);
+            String tag = json.optString("tag_name", "");
+            long code = tag.startsWith("app-") ? parseLong(tag.substring(4)) : 0;
+            String apk = "";
+            JSONArray assets = json.optJSONArray("assets");
+            for (int i = 0; assets != null && i < assets.length(); i++) {
+                JSONObject asset = assets.getJSONObject(i);
+                if (asset.optString("name").endsWith(".apk")) {
+                    apk = asset.optString("browser_download_url");
+                    break;
+                }
+            }
+            if (code <= 0 || apk.isEmpty()) throw new Exception("В выпуске GitHub пока нет APK. Попробуйте проверить позже");
+            String title = json.optString("name", "").replaceFirst("^[^0-9]*", "");
+            app.put("latest", title.isEmpty() ? tag : title);
+            app.put("latestCode", code);
+            app.put("notes", json.optString("body"));
+            app.put("url", apk);
+            app.remove("error");
+            prefs.setText("apkUrl", apk);
+            prefs.setNumber("apkCode", code);
+            releaseOk = true;
+        } catch (Exception e) {
+            try { app.put("error", e.getMessage()); } catch (Exception ignored) { }
+        }
+        JSONObject korrektor = out.optJSONObject("korrektor");
+        if (korrektor == null) korrektor = new JSONObject();
+        try {
             Net.Reply pkg = Net.get(PLUGIN_PACKAGE, 15000, false);
-            String latest = pkg.ok() ? new JSONObject(pkg.body).optString("version", "") : "";
             Net.Reply status = Net.get(prefs.stUrl() + "/api/plugins/korrektor/status", 8000, true);
+            String latest = pkg.ok() ? new JSONObject(pkg.body).optString("version", "") : korrektor.optString("latest");
             String installed = status.ok() ? new JSONObject(status.body).optString("version", "") : "";
             korrektor.put("latest", latest);
             korrektor.put("current", installed);
             korrektor.put("available", !latest.isEmpty() && !installed.isEmpty() && compare(latest, installed) > 0);
             korrektor.put("stRunning", status.ok());
-            if (!pkg.ok()) korrektor.put("error", "Не удалось проверить новую версию плагина");
+            korrektor.remove("error");
+            if (!pkg.ok()) korrektor.put("error", "Не удалось проверить новую версию плагина. Показаны последние полученные данные");
             else if (!status.ok()) korrektor.put("error", "Нет связи с плагином в SillyTavern");
-            out.put("korrektor", korrektor);
             prefs.setText("korrektorLatest", latest);
-            if (release.ok() && pkg.ok()) prefs.setNumber("lastCheck", System.currentTimeMillis());
+            packageOk = pkg.ok() && !latest.isEmpty();
         } catch (Exception e) {
-            try {
-                out.put("error", e.getMessage());
-            } catch (Exception ignored) {
-                // nothing
-            }
+            try { korrektor.put("error", "Не удалось прочитать версию плагина"); korrektor.put("available", false); } catch (Exception ignored) { }
         }
+        try {
+            out.remove("error");
+            out.put("app", app);
+            out.put("korrektor", korrektor);
+            out.put("sourceBranch", BuildConfig.SOURCE_BRANCH);
+            normalizeCached(out, appVersionCode(context), appVersionName(context));
+            if (releaseOk && packageOk) prefs.setNumber("lastCheck", System.currentTimeMillis());
+        } catch (Exception ignored) { }
         prefs.setText("updateResult", out.toString());
         return out;
     }

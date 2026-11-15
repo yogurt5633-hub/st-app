@@ -76,3 +76,10 @@ test('connection check asks for an explicit probe when model listing is unavaila
     assert.equal(result.ok, null);
     assert.match(result.message, /Пробный запрос/);
 });
+
+test('connection check reports a missing selected model without making a request', async () => {
+    const c = client({}, st({ chat_completion_source: 'custom', custom_model: '' }));
+    const result = await c.checkConnection();
+    assert.equal(result.ok, false);
+    assert.match(result.message, /не выбрана модель/);
+});

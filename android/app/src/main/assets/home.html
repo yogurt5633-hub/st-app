@@ -19,7 +19,7 @@ html[data-theme="light"] {
     --line: rgba(31, 27, 22, 0.08); --line-strong: rgba(31, 27, 22, 0.14);
     --text: #1f1b16; --text-2: #5e554a; --text-3: #6c6358;
     --accent: #8a5200; --primary: #1f1b16; --on-primary: #fdfbf7;
-    --pos: #16a34a; --neg: #dc2626;
+    --pos: #15803d; --neg: #dc2626;
 }
 html[data-accent="rose"] { --accent: #e58aa0; }
 html[data-accent="mint"] { --accent: #5fc9a0; }
@@ -130,7 +130,7 @@ html[data-theme="white"] {
     --bg-deep:#f4f4f5; --bg:#fafafa; --card:#ffffff; --raised:#f0f0f1;
     --text:#171717; --text-2:#525252; --text-3:#666666;
     --line:rgba(23,23,23,.08); --line-strong:rgba(23,23,23,.16);
-    --accent:#8a5200; --primary:#171717; --on-primary:#ffffff; color-scheme:light;
+    --pos:#15803d; --neg:#b91c1c; --accent:#8a5200; --primary:#171717; --on-primary:#ffffff; color-scheme:light;
 }
 html[data-theme="brown"] {
     --bg-deep:#181412; --bg:#211b17; --card:#2a231e; --raised:#352c25;
@@ -148,6 +148,19 @@ html[data-theme="white"][data-accent="rose"] { --accent:#a8325a; }
 html[data-theme="white"][data-accent="mint"] { --accent:#0f7a55; }
 html[data-theme="white"][data-accent="sky"] { --accent:#1d5f9e; }
 html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
+
+/* A quiet, optional companion. Motion runs only after an explicit interaction. */
+.companion { margin: 0 0 16px; border-bottom: 1px solid var(--line); }
+.companion summary { display:flex; gap:16px; align-items:center; min-height:96px; cursor:pointer; list-style:none; padding:8px 0; }
+.companion summary::-webkit-details-marker { display:none; }
+.companion .mascot { width:80px; height:80px; object-fit:contain; background:#fff0d5; border-radius:16px; padding:4px; }
+.companion-title { display:block; font-weight:500; }
+.companion-body { padding:0 0 16px; }
+.companion-message { margin:0 0 12px; color:var(--text-2); min-height:44px; }
+.companion summary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; border-radius:8px; }
+.companion.petted .mascot { animation:companion-nod 420ms ease-out; }
+@keyframes companion-nod { 35% { transform:rotate(-7deg) translateY(-3px); } 70% { transform:rotate(4deg); } }
+@media (prefers-reduced-motion:reduce) { .companion.petted .mascot { animation:none; } }
 </style>
 </head>
 <body>
@@ -230,6 +243,46 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
     function mascot(name, size) {
         // One approved brand illustration; state is described in text.
         return h('img', { class: 'mascot', src: 'img/mascot.png', width: size, height: size, alt: '' });
+    }
+
+    var companionOpen = false;
+    var companionTip = 0;
+    var companionPets = 0;
+    function companionVisible() {
+        try { return localStorage.getItem('tavernka.companion') !== 'hidden'; } catch (e) { return true; }
+    }
+    function companionSection() {
+        if (!companionVisible()) return null;
+        var tips = [
+            { text: 'Для перевода одного сообщения нажми кнопку перевода рядом с ним. Оригинал можно вернуть в том же меню.', label: 'Открыть таверну', action: function () { app.showTab('tavern'); } },
+            { text: 'Имена меняются при переводе? Добавь их в глоссарий: «Ihan = Ихан». Пустая правая часть сохранит исходное написание.', label: 'Настройки глоссария', action: function () { app.openKorrektor('#settings'); } },
+            { text: 'Перед большими изменениями сохрани резервную копию чатов, карточек и настроек.', label: 'Резервные копии', action: function () { app.openKorrektor('#tools/backup'); } },
+            { text: 'Карточки, лорбуки и пресеты собраны в каталоге. Во вкладке «Расширения» можно проверить установленные дополнения.', label: 'Открыть каталог', action: function () { app.openKorrektor('#tools/catalog'); } }
+        ];
+        var message = h('p', { class:'companion-message', 'aria-live':'polite' });
+        var action = h('button', { class:'btn secondary small', type:'button' });
+        var showTip = function () {
+            var tip = state.stUp ? tips[companionTip % tips.length] : { text:'Сначала запусти SillyTavern. Если настраиваешь её впервые, я покажу пошаговый гайд.', label:'Открыть гайд', action:function () { app.openLink('guide'); } };
+            message.textContent = tip.text;
+            action.textContent = tip.label;
+            action.onclick = tip.action;
+        };
+        var node = h('details', { class:'companion', open:companionOpen },
+            h('summary', { 'aria-label':'Тавернка: подсказки и реакции' }, mascot('wave',80),
+                h('span', {}, h('span', { class:'companion-title', text:'Тавернка рядом' }), h('span', { class:'small muted', text:'Нажми — подскажу' }))),
+            h('div', { class:'companion-body' }, message,
+                h('div', { class:'actions' }, action,
+                    h('button', { class:'btn quiet small', type:'button', text:'Ещё совет', onclick:function () { companionTip++; showTip(); } }),
+                    h('button', { class:'btn quiet small', type:'button', text:'Погладить', onclick:function () {
+                        var replies = ['Мур. Устроилась рядом — можно продолжать историю.', 'Спасибо за ласку. Пусть следующая сцена будет уютной.', 'Перо на месте, настроение отличное.'];
+                        message.textContent = replies[companionPets++ % replies.length];
+                        node.classList.remove('petted');
+                        void node.offsetWidth;
+                        node.classList.add('petted');
+                    } }))));
+        node.addEventListener('toggle', function () { companionOpen = node.open; });
+        showTip();
+        return node;
     }
 
     function startTavern() {
@@ -489,7 +542,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
         return [
             h('h2', { text: 'Уведомления' }),
             h('div', { class: 'box' },
-                toggle('Уведомления об обновлениях', 'Проверка раз в час, пока работает SillyTavern. Мгновенная доставка пока недоступна', s.notify, function (v) { app.setFlag('notify', v); }),
+                toggle('Уведомления об обновлениях', 'Проверка примерно раз в час, когда Android разрешает работу в фоне. При открытии приложения — дополнительная проверка', s.notify, function (v) { app.setFlag('notify', v); }),
                 s.notifications ? null : h('div', { class: 'row line' }, h('span', { class: 'small muted', text: 'Android сейчас не разрешает уведомления' }),
                     h('button', { class: 'btn secondary small', type: 'button', onclick: function () { app.requestNotifications(); }, text: 'Разрешить' }))),
         ];
@@ -566,6 +619,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
         return [
             h('h2', { text: 'Оформление' }),
             h('div', { class: 'box' },
+                toggle('Маскот на главной', 'Подсказки и реакции по нажатию', companionVisible(), function (v) { try { localStorage.setItem('tavernka.companion', v ? 'visible' : 'hidden'); } catch (e) {} render(); }),
                 h('div', { class: 'row' }, h('span', { text: 'Тема' }),
                     seg([['black', 'Чёрная'], ['white', 'Белая'], ['brown', 'Коричневая'], ['dark', 'Тёмная'], ['light', 'Светлая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
                 h('div', { class: 'row' }, h('span', { text: 'Цвет акцента' }),
@@ -701,6 +755,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
         applyLook();
         root.replaceChildren.apply(root, [].concat(
             dashboardSection(),
+            companionSection(),
             tavernSection(),
             fold('connection', 'Подключение и запуск', [].concat(state.onPc ? [] : phoneSection().concat(setupSection() || []), pcSection())),
             fold('updates', 'Обновления', updatesSection()),

@@ -499,3 +499,10 @@ test('glossary: preserve original spelling for blank translations and match punc
     assert.deepEqual(suggestTerms('Ihan arrived. Ihan smiled.', 'Ihan = Ихан'), []);
     assert.equal(suggestTerms('Ihan arrived. Ihan smiled.')[0].text, 'Ihan');
 });
+
+test('glossary restores marker-like translations in one pass and rejects duplicated terms', async () => {
+    const { protectGlossary } = await import('../st-extension/translate.js');
+    const protectedText = protectGlossary('Ann met Bob.', 'Ann = TAVERNKATERM1END\nBob = Роберт');
+    assert.equal(protectedText.restore(protectedText.text), 'TAVERNKATERM1END met Роберт.');
+    assert.throws(() => protectedText.restore(protectedText.text + ' TAVERNKATERM0END'), /повторил термин/);
+});

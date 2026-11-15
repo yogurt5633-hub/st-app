@@ -12,12 +12,12 @@ import org.json.JSONObject;
 /**
  * Runs about once an hour in the background:
  *  - if SillyTavern is up, tells about new cards in Korrektor's feed;
- *  - once a day, checks for new versions of the app and of Korrektor.
+ *  - about once an hour, checks for new versions of the app and of Korrektor.
  */
 public class CheckJob extends JobService {
     private static final int JOB_ID = 1;
     private static final int WIDGET_JOB_ID = 2;
-    private static final long DAY = 24L * 60 * 60 * 1000;
+    private static final long UPDATE_INTERVAL = 60L * 60 * 1000;
 
     static void schedule(Context context) {
         JobScheduler scheduler = context.getSystemService(JobScheduler.class);
@@ -83,13 +83,19 @@ public class CheckJob extends JobService {
             }
         }
 
-        if (System.currentTimeMillis() - prefs.number("lastCheck") > DAY) {
+        if (System.currentTimeMillis() - prefs.number("lastCheck") > UPDATE_INTERVAL) {
             JSONObject found = Updater.check(context, prefs);
             boolean app = found.optJSONObject("app") != null && found.optJSONObject("app").optBoolean("available");
             boolean korrektor = found.optJSONObject("korrektor") != null && found.optJSONObject("korrektor").optBoolean("available");
-            if (app || korrektor) {
+            long appCode = app ? found.optJSONObject("app").optLong("latestCode") : 0;
+            String pluginVersion = korrektor ? found.optJSONObject("korrektor").optString("latest") : "";
+            boolean freshApp = app && appCode != prefs.number("notifiedApp");
+            boolean freshPlugin = korrektor && !pluginVersion.equals(prefs.text("notifiedPlugin"));
+            if (freshApp || freshPlugin) {
                 String what = app && korrektor ? "приложения и Корректора" : app ? "приложения" : "Корректора";
-                Notifier.show(context, 11, "Есть обновление", "Новая версия " + what + ". Обновить можно на вкладке «Ещё»", "home");
+                Notifier.show(context, 11, "Есть обновление", "Новая версия " + what + ". Откройте «Главная → Обновления»", "home");
+                if (app) prefs.setNumber("notifiedApp", appCode);
+                if (korrektor) prefs.setText("notifiedPlugin", pluginVersion);
             }
         }
     }

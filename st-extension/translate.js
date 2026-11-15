@@ -22,7 +22,7 @@ const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
 const KEY_API = '/api/plugins/korrektor/translate/key';
 // The companion's version, for the journal (the same as in manifest.json).
-const COMPANION_VERSION = '0.4.25';
+const COMPANION_VERSION = '0.4.27';
 
 // ---------- journal ----------
 // What the translation did: requests, retries, cut answers, errors. Kept in this browser
@@ -372,12 +372,18 @@ export function protectGlossary(text, glossary) {
     return {
         text: protectedText,
         restore(value) {
-            let restored = value;
-            for (const item of replacements) {
-                const pattern = new RegExp(escapeRegex(item.marker), 'gi');
-                if (!pattern.test(restored)) throw new Error('Переводчик потерял термин глоссария. Попробуйте другой переводчик');
-                restored = restored.replace(pattern, () => item.value);
-            }
+            if (!replacements.length) return value;
+            const values = new Map(replacements.map(item => [item.marker.toLowerCase(), item.value]));
+            const seen = new Set();
+            // Restore in one pass: a glossary value may itself look like another marker.
+            const pattern = new RegExp(replacements.map(item => escapeRegex(item.marker)).join('|'), 'gi');
+            const restored = value.replace(pattern, marker => {
+                const key = marker.toLowerCase();
+                if (seen.has(key)) throw new Error('Переводчик повторил термин глоссария. Попробуйте другой переводчик');
+                seen.add(key);
+                return values.get(key);
+            });
+            if (seen.size !== replacements.length) throw new Error('Переводчик потерял термин глоссария. Попробуйте другой переводчик');
             return restored;
         },
     };

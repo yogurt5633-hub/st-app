@@ -151,7 +151,7 @@ final class ControlBridge {
                 url = "https://github.com/yogurt5633-hub/st-app";
                 break;
             case "guide":
-                url = "https://github.com/yogurt5633-hub/st-app/blob/tavernka-gpt/docs/GUIDE.md";
+                url = "https://github.com/yogurt5633-hub/st-app/blob/" + BuildConfig.SOURCE_BRANCH + "/docs/GUIDE.md";
                 break;
             default:
                 return;

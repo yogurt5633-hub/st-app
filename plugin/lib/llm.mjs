@@ -514,8 +514,11 @@ export class LlmClient {
         const conn = connectionInfo(this.stSettings);
         const out = { api: conn.api, source: conn.source || conn.textType, model: conn.model || conn.textModel || '', ok: null, models: 0, message: '' };
         if (!this.available) return { ...out, ok: false, message: 'Нет связи с сессией SillyTavern: откройте приложение заново' };
+        if (conn.api === 'chat' && !conn.model) return { ...out, ok: false, message: 'В SillyTavern не выбрана модель' };
         if (conn.api === 'chat' && conn.source && !test) {
-            const res = await postToSillyTavern(this.auth, STATUS_PATH, { chat_completion_source: conn.source, ...connectionBody(this.stSettings, conn.source) });
+            let res;
+            try { res = await postToSillyTavern(this.auth, STATUS_PATH, { chat_completion_source: conn.source, ...connectionBody(this.stSettings, conn.source) }); }
+            catch { return { ...out, ok: false, message: 'SillyTavern не ответил. Проверьте, что он запущен, и повторите проверку' }; }
             let data = null;
             try {
                 data = JSON.parse(res.text);
@@ -524,9 +527,9 @@ export class LlmClient {
             }
             const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.data?.data) ? data.data.data : Array.isArray(data) ? data : [];
             const reason = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.message === 'string' ? data.message : '';
-            if (list.length && !data?.error) return { ...out, ok: true, models: list.length, message: `Ключ работает, доступно моделей: ${list.length}` };
+            if (res.status < 400 && list.length && !data?.error) return { ...out, ok: true, models: list.length, message: `Ключ работает, доступно моделей: ${list.length}` };
             // A clear refusal from the provider.
-            if (reason || res.status === 401 || res.status === 403 || res.status >= 500) {
+            if (reason || data?.error || res.status >= 400) {
                 return { ...out, ok: false, message: reason ? `Провайдер ответил: ${reason}` : 'Провайдер не принял ключ или не отвечает' };
             }
             // SillyTavern cannot list models for some providers (Claude among them) and answers

@@ -25,3 +25,14 @@ test('extension review skips symlinks and marks incomplete coverage', async () =
         assert.equal(report.items[0].findings.length, 1);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
+
+test('extension review identifies skipped extension links and deduplicates roots', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tavernka-extensions-'));
+    try {
+        await fs.symlink('/does-not-exist', path.join(root, 'linked-extension'));
+        const report = await reviewExtensions([root, root + '/']);
+        assert.equal(report.items.length, 1);
+        assert.equal(report.items[0].complete, false);
+        assert.equal(report.items[0].files, 0);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

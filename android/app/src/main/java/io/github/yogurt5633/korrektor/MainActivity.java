@@ -184,7 +184,7 @@ public class MainActivity extends Activity {
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                checkUpdates(false);
+                if (visible) checkUpdates(false);
                 handler.postDelayed(this, 30 * 60_000);
             }
         }, 30 * 60_000);
@@ -225,8 +225,8 @@ public class MainActivity extends Activity {
     void checkUpdates(boolean force) {
         if (updateCheckRunning) return;
         if (!force && System.currentTimeMillis() - prefs.number("lastCheck") < 20 * 60_000) {
-            try { updates = new JSONObject(prefs.text("updateResult")); } catch (Exception ignored) { }
-            if (updates != null) {
+            updates = Updater.cached(this, prefs);
+            if (updates.optJSONObject("app") != null && updates.optJSONObject("korrektor") != null) {
                 showUpdateBar();
                 announceUpdate(updates);
                 sendToHome("updates", updates);
@@ -238,6 +238,7 @@ public class MainActivity extends Activity {
             JSONObject found = Updater.check(this, prefs);
             runOnUiThread(() -> {
                 updateCheckRunning = false;
+                if (isFinishing() || isDestroyed()) return;
                 updates = found;
                 showUpdateBar();
                 announceUpdate(found);
@@ -416,7 +417,7 @@ public class MainActivity extends Activity {
                 if (v == home) {
                     notifyHome();
                     if (updates == null) {
-                        try { updates = new JSONObject(prefs.text("updateResult")); } catch (Exception ignored) { }
+                        updates = Updater.cached(MainActivity.this, prefs);
                     }
                     if (updates != null) sendToHome("updates", updates);
                 }

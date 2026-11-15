@@ -21,23 +21,25 @@ export function reviewSource(source, file) {
 /** Read local files only. Symlinks and large/generated dependency trees are skipped. */
 export async function reviewExtensions(roots) {
     const items = [];
-    for (const root of roots) {
+    for (const root of new Set(roots.map(root => path.resolve(root)))) {
         let extensions;
         try { extensions = await fs.readdir(root, { withFileTypes: true }); }
         catch (error) { if (error.code === 'ENOENT') continue; throw error; }
         for (const entry of extensions) {
-            if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+            if (entry.name.startsWith('.')) continue;
+            if (entry.isSymbolicLink()) { items.push({ name: entry.name, files: 0, findings: [], complete: false }); continue; }
+            if (!entry.isDirectory()) continue;
             const item = { name: entry.name, files: 0, findings: [], complete: true };
             const base = path.join(root, entry.name);
             let bytes = 0;
             async function walk(dir, depth) {
                 if (depth > 6) { item.complete = false; return; }
                 for (const file of await fs.readdir(dir, { withFileTypes: true })) {
-                    if (file.name.startsWith('.') || file.name === 'node_modules') continue;
+                    if (file.name.startsWith('.') || file.name === 'node_modules') { item.complete = false; continue; }
                     const full = path.join(dir, file.name);
                     if (file.isDirectory()) { await walk(full, depth + 1); continue; }
                     if (!file.isFile()) { item.complete = false; continue; }
-                    if (!/\.(?:js|mjs|cjs|html)$/i.test(file.name)) continue;
+                    if (!/\.(?:js|mjs|cjs|jsx|ts|tsx|html)$/i.test(file.name)) continue;
                     const stat = await fs.stat(full);
                     if (stat.size > 2000000 || bytes + stat.size > 10000000 || item.files >= 500) { item.complete = false; continue; }
                     bytes += stat.size;

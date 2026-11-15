@@ -5,6 +5,8 @@ plugins {
 // Version comes from the CI build number; local builds get 1 / 1.0.0-dev.
 def code = (project.findProperty('versionCode') ?: '1') as int
 def name = (project.findProperty('versionName') ?: '1.0.0-dev') as String
+def sourceBranch = (project.findProperty('sourceBranch') ?: 'main') as String
+if (!(sourceBranch in ['main', 'tavernka-gpt'])) throw new GradleException('Unknown source branch')
 
 android {
     namespace 'io.github.yogurt5633.korrektor'
@@ -16,7 +18,10 @@ android {
         targetSdk 34
         versionCode code
         versionName name
+        buildConfigField 'String', 'SOURCE_BRANCH', '"' + sourceBranch + '"'
     }
+
+    buildFeatures { buildConfig true }
 
     // Updates install over the old app only if every APK is signed with the same private key.
     // That key is never stored in the repository: CI takes it from GitHub secrets
@@ -49,4 +54,9 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
 }

@@ -18,7 +18,7 @@ const server=http.createServer(async(req,res)=>{
   if(url.pathname.startsWith('/api/translate/')){ translations++; res.setHeader('Content-Type','text/plain');res.end('Привет, мир.');return; }
   let data={};
   if(url.pathname==='/csrf-token')data={token:'fixture'};
-  if(url.pathname.endsWith('/status'))data={version:'0.4.26',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
+  if(url.pathname.endsWith('/status'))data={version:'0.4.27',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
   if(url.pathname.endsWith('/proposals')||url.pathname.endsWith('/chats'))data={items:[],mode:'recent'};
   if(url.pathname.endsWith('/settings'))data=DEFAULT_SETTINGS;
   if(url.pathname.endsWith('/worlds')||url.pathname.endsWith('/catalog')||url.pathname.endsWith('/extensions/review'))data={items:[]};
@@ -75,6 +75,15 @@ try{
   await page.getByText('Оформление',{exact:true}).first().click();
   assert.equal(await page.locator('.settings-group[open]').count(),1);
   if(width===390)await page.screenshot({path:`${output}/home-${theme}.png`,fullPage:true});
+  await page.getByLabel('Тавернка: подсказки и реакции').click();
+  await page.getByRole('button',{name:'Погладить',exact:true}).click();
+  assert.match(await page.locator('.companion-message').textContent(),/Мур/);
+  assert.equal(await page.locator('.companion .mascot').evaluate(e=>getComputedStyle(e).animationName),'none');
+  await page.evaluate(()=>{window.bridgeState.stUp=true;window.onNative('state');});
+  await page.getByRole('button',{name:'Ещё совет',exact:true}).click();
+  await page.getByRole('button',{name:'Настройки глоссария',exact:true}).waitFor();
+  await noOverflow(page);
+  if(width===390)await page.screenshot({path:`${output}/companion-${theme}.png`,fullPage:true});
   await page.evaluate(()=>document.body.style.fontSize='24px');await noOverflow(page);
   await context.close();
  }
@@ -103,6 +112,9 @@ try{
  await page.getByText('Импорт по ссылке временно отключён',{exact:true}).waitFor();
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Оптимизация временно отключена',{exact:true}).waitFor();await decoded(page);
  await page.screenshot({path:`${output}/feed.png`});
+ await page.getByRole('button',{name:'Совет Тавернки',exact:true}).click();
+ await page.locator('#sheet').getByRole('link',{name:'Каталог',exact:true}).waitFor();
+ await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);
  await context.setOffline(true);await page.reload();
  await page.getByText('Нет связи с SillyTavern',{exact:true}).waitFor();
  assert.equal(await page.locator('#view .mascot').count(),0);

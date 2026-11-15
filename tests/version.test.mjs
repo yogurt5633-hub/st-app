@@ -9,5 +9,6 @@ test('app, plugin, service worker and companion carry the same version', () => {
     const app = read('plugin/app/app.js').match(/const APP_VERSION = '([^']+)'/)[1];
     const sw = read('plugin/app/sw.js').match(/korrektor-([0-9.]+)/)[1];
     const ext = JSON.parse(read('st-extension/manifest.json')).version;
-    assert.deepEqual([app, sw, ext], [plugin, plugin, plugin]);
+    const companion = read('st-extension/translate.js').match(/const COMPANION_VERSION = '([^']+)'/)[1];
+    assert.deepEqual([app, sw, ext, companion], [plugin, plugin, plugin, plugin]);
 });

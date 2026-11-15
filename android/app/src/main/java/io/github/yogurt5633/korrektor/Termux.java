@@ -31,11 +31,11 @@ final class Termux {
     // Make sure ~/korrektor-src exists (clone on first use).
     private static final String BOOT = VARS
             + "if [ ! -d \"$SRC/.git\" ]; then command -v git >/dev/null || { echo 'В Termux нет git: нажмите «Установить SillyTavern» или выполните pkg install git'; exit 1; }; "
-            + "git clone -q --branch tavernka-gpt " + REPO + " \"$SRC\" 2>&1 | tee -a \"$LOG\"; fi; ";
-    // The test APK keeps its managed source copy on tavernka-gpt.
+            + "git clone -q --branch " + BuildConfig.SOURCE_BRANCH + " " + REPO + " \"$SRC\" 2>&1 | tee -a \"$LOG\"; fi; ";
+    // Stable APKs follow main; test APKs follow their explicit source channel.
     // A slow or blocked GitHub must not hang the start: 90 seconds at most, and the reason is shown.
     private static final String PULL = "T=; command -v timeout >/dev/null && T='timeout 90'; "
-            + "{ $T git -C \"$SRC\" fetch -q --depth 1 origin tavernka-gpt && git -C \"$SRC\" reset -q --hard origin/tavernka-gpt "
+            + "{ $T git -C \"$SRC\" fetch -q --depth 1 origin +refs/heads/" + BuildConfig.SOURCE_BRANCH + ":refs/remotes/origin/" + BuildConfig.SOURCE_BRANCH + " && git -C \"$SRC\" reset -q --hard origin/" + BuildConfig.SOURCE_BRANCH + " "
             + "|| echo 'Не удалось скачать обновление с GitHub (нет интернета или GitHub недоступен): ставлю то, что уже скачано'; } 2>&1 | tee -a \"$LOG\"; ";
     private static final String ENSURE = "grep -q 'korrektor-ctl.seen' \"$SRC/scripts/korrektor-ctl.sh\" 2>/dev/null || " + PULL;
     // The very first thing a command does: the app sees that Termux really started it.
@@ -97,7 +97,7 @@ final class Termux {
                 return VARS
                         + "echo '== Корректор: установка SillyTavern'; "
                         + "command -v git >/dev/null || { apt-get update && apt-get -y install git; } || { echo 'Не удалось поставить git'; exit 1; }; "
-                        + "[ -d \"$SRC/.git\" ] || git clone -q --branch tavernka-gpt " + REPO + " \"$SRC\" || exit 1; "
+                        + "[ -d \"$SRC/.git\" ] || git clone -q --branch " + BuildConfig.SOURCE_BRANCH + " " + REPO + " \"$SRC\" || exit 1; "
                         + PULL
                         + "exec bash \"$SRC/scripts/install-st.sh\"";
             case "status":

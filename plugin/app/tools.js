@@ -19,7 +19,14 @@ export function refreshMascots() {
 
 export function mascot(name, size = 120, alt = '') {
     if (size < 120 || !['wave', 'sleep', 'books'].includes(name)) return null;
-    return ui.h('img', { class: 'mascot', src: 'img/mascot.png', 'data-mascot': name, width: size, height: size, alt, loading: 'lazy' });
+    const { h } = ui;
+    return h('button', { class: 'mascot-button', type: 'button', 'aria-label': 'Совет Тавернки', onclick: () => {
+        ui.openSheet('Совет Тавернки', h('div', {},
+            h('p', { text: name === 'books' ? 'Пусто? Попробуй другую вкладку каталога или сбрось фильтры. Проверка расширений доступна отдельно от списка материалов.' : 'Оптимизация пока отдыхает. Перевод сообщений, каталог и резервные копии работают.' }),
+            h('div', { class: 'card-actions' },
+                h('a', { class: 'btn secondary', href: '#tools/catalog', text: 'Каталог' }),
+                h('a', { class: 'btn secondary', href: '#tools/backup', text: 'Резервные копии' }))));
+    } }, h('img', { class: 'mascot', src: 'img/mascot.png', 'data-mascot': name, width: size, height: size, alt, loading: 'lazy' }));
 }
 
 function back(href, title) {
@@ -88,7 +95,8 @@ export function renderKeyCheck() {
                     result?.model ? h('p', { class: 'small muted', style: 'margin:4px 0 0', text: `${result.source || ''} · ${result.model}${result.at ? ` · ${ui.when(result.at)}` : ''}` }) : null)),
             h('div', { class: 'card-actions' },
                 h('button', { class: 'btn secondary small', type: 'button', disabled: busy, onclick: () => run(false), text: 'Проверить' }),
-                result?.ok === null ? h('button', { class: 'btn secondary small', type: 'button', disabled: busy, onclick: () => run(true), text: 'Пробный запрос' }) : null));
+                result ? h('button', { class: 'btn secondary small', type: 'button', disabled: busy, onclick: () => run(true), text: 'Пробный запрос' }) : null),
+            result ? h('p', { class: 'small muted', text: 'Пробный запрос проверяет выбранную модель и расходует немного токенов' }) : null);
     };
     const run = async (test) => {
         draw(last, true);
@@ -350,8 +358,9 @@ async function renderExtensions(container) {
                 h('p', { class: 'small', text: `${item.files} файлов проверено${item.complete ? '' : ' · проверка неполная'}` }),
                 item.findings.length ? h('ul', {}, item.findings.map(finding => h('li', { text: `${finding.label} — ${finding.file}, строка ${finding.line}` })))
                     : h('p', { class: 'muted', text: 'Совпадений с правилами проверки не найдено' })))
-                : h('p', { text: 'Сторонние расширения пока не установлены' }));
-    } catch (error) { put(container, h('p', { text: error.message })); }
+                : h('p', { text: 'Сторонние расширения пока не установлены' }),
+            h('button', { class: 'btn secondary', type: 'button', text: 'Проверить снова', onclick: () => renderExtensions(container) }));
+    } catch (error) { if (container.isConnected) put(container, h('p', { text: error.message }), h('button', { class: 'btn secondary', type: 'button', text: 'Повторить проверку', onclick: () => renderExtensions(container) })); }
 }
 
 // ---------- catalog ----------
@@ -453,8 +462,8 @@ export async function renderCatalog() {
     const { h, put, $ } = ui;
     const view = $('#view');
     let filter = ui.storageGet('korrektor.catalogFilter') || 'all';
-    if (!catalogData) put(view, back('#tools', 'Ещё'), h('p', { class: 'muted', text: 'Загружаю каталог' }));
-    const data = await loadCatalogData();
+    const needsLoad = !catalogData || Date.now() - catalogAt >= 5 * 60000;
+    const data = catalogData || { items: [] };
     if (location.hash !== '#tools/catalog') return;
 
     // What is already in this tavern: { [id]: { file, where } }. Checked after the list is shown.
@@ -526,8 +535,15 @@ export async function renderCatalog() {
         && (!pickFilter.censor || (pickFilter.censor === 'no' ? i.uncensored === true : i.uncensored === false))
         && (!pickFilter.text || [i.name, i.description, i.author, ...i.tags, ...i.models].join(' ').toLowerCase().includes(pickFilter.text));
     const list = h('div', { class: 'list catalog-list' });
+    let extensionPanel;
     const drawList = () => {
-        if (filter === 'extension') { const panel = h('div'); put(list, panel); renderExtensions(panel); return; }
+        if (filterBar) filterBar.hidden = filter === 'extension';
+        if (filter === 'extension') {
+            if (!extensionPanel) { extensionPanel = h('div'); renderExtensions(extensionPanel); }
+            put(list, extensionPanel);
+            return;
+        }
+        if (!catalogData) { put(list, h('p', { class: 'muted', text: 'Загружаю каталог' })); return; }
         const items = data.items.filter(matches);
         put(list, items.length ? items.map(item => catalogEntry(item, actionsFor(item))) : h('div', { class: 'empty' }, mascot('books', 150),
             h('h2', { text: data.items.length ? 'Ничего не нашлось' : 'Каталог пока пуст' }),
@@ -539,6 +555,7 @@ export async function renderCatalog() {
                 if (filter === v) return;
                 filter = v;
                 ui.storageSet('korrektor.catalogFilter', v);
+                if (needsLoad && v !== 'extension') { renderCatalog(); return; }
                 for (const b of filters.children) b.setAttribute('aria-pressed', String(b === e.currentTarget));
                 drawList();
             },
@@ -553,9 +570,12 @@ export async function renderCatalog() {
         h('div', { class: 'section' },
             h('div', { class: 'card-actions centered', style: 'margin-top:0' },
                 h('a', { class: 'btn secondary', href: '#tools/catalog-suggest', text: 'Предложить своё' }),
-                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); renderCatalog(); } }))));
+                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { if (filter === 'extension') { renderExtensions(extensionPanel); return; } await loadCatalogData(true); if (view.isConnected) renderCatalog(); } }))));
     authorEntrance();
-    if (data.items.length) {
+    if (needsLoad && filter !== 'extension') {
+        loadCatalogData().then(() => { if (view.isConnected && location.hash === '#tools/catalog') renderCatalog(); });
+    }
+    if (data.items.length && filter !== 'extension') {
         ui.api('/catalog/status', { timeout: 120000 }).then((r) => { installed = r.installed || {}; }, () => { installed = {}; })
             .then(() => { if (list.isConnected) drawList(); });
     }
