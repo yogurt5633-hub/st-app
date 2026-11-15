@@ -259,3 +259,35 @@ test('catalog share: regexes inside a preset can be dropped; a shared file insta
     const installed = JSON.parse(fs.readFileSync(path.join(t.ctx.dirs.openAI_Settings, r.file), 'utf8'));
     assert.equal(installed.extensions.regex_scripts.length, 2, 'the regexes come along');
 });
+
+test('catalog author: extension ZIP and GitHub imports publish and retain language/translation metadata when edited', async t => {
+    const { writeZipFile } = await import('../plugin/lib/archive.mjs');
+    const { readExtensionPackage } = await import('../plugin/lib/extension-package.mjs');
+    const { importExtensionRepository, editItem } = await import('../plugin/lib/catalog-publish.mjs');
+    const tav = tavern();
+    t.after(() => fs.rmSync(tav.root, { recursive: true, force: true }));
+    const manifest = path.join(tav.root, 'extension-manifest.json');
+    const script = path.join(tav.root, 'extension-index.js');
+    fs.writeFileSync(manifest, JSON.stringify({ display_name: 'Расширение', js: 'index.js' }));
+    fs.writeFileSync(script, 'window.extensionLoaded = true;');
+    const zip = path.join(tav.root, 'extension.zip');
+    await writeZipFile(zip, [{ name: 'repo-main/manifest.json', path: manifest }, { name: 'repo-main/index.js', path: script }]);
+    const data = fs.readFileSync(zip);
+    const upload = await saveCatalogUpload(tav.korrektorDir, 'extension', data, 'extension.zip');
+    const gh = fakeGitHub();
+    const result = await publishItem({ ...tav, token: 'github_pat_test', type: 'extension', source: { upload: upload.upload }, meta: { ...META, language: 'ru', translated: true }, fetchImpl: gh.fetchImpl });
+    assert.equal(result.item.type, 'extension');
+    assert.equal(result.item.language, 'ru');
+    assert.equal(result.item.translated, true);
+    const asset = `catalog/files/extensions/${result.item.id}.zip`;
+    assert.equal(readExtensionPackage(gh.read(asset)).title, 'Расширение');
+    const edited = await editItem({ token: 'github_pat_test', korrektorDir: tav.korrektorDir, id: result.item.id, meta: { ...META, language: 'zh', translated: false }, fetchImpl: gh.fetchImpl });
+    assert.equal(edited.item.language, 'zh');
+    assert.equal(edited.item.translated, false);
+    const imported = await importExtensionRepository(tav.korrektorDir, 'https://github.com/owner/extension', { fetchImpl: async () => new Response(data) });
+    assert.equal(imported.page, 'https://github.com/owner/extension');
+    assert.equal(imported.title, 'Расширение');
+    assert.ok(fs.existsSync(path.join(tav.korrektorDir, 'catalog-uploads', imported.upload + '.zip')));
+    await removeItem({ token: 'github_pat_test', id: result.item.id, fetchImpl: gh.fetchImpl });
+    assert.equal(gh.files.has(asset), false);
+});

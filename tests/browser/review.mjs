@@ -5,11 +5,16 @@ import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
+import { cleanItems } from '../../plugin/lib/catalog.mjs';
 import { DEFAULT_SETTINGS } from '../../plugin/lib/store.mjs';
 const root=path.resolve(import.meta.dirname,'../..');
 const output=process.env.REVIEW_OUTPUT || '/tmp/tavernka-review/screens';
 await fs.mkdir(output,{recursive:true});
 let translations=0;
+let catalogItems=[];
+const publications=[];
+const repositoryRequests=[];
+const uploadRequests=[];
 const server=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://localhost');
  if(url.pathname==='/fixture.html'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><body></body></html>');return;}
@@ -17,11 +22,31 @@ const server=http.createServer(async(req,res)=>{
   res.setHeader('Content-Type','application/json');
   if(url.pathname.startsWith('/api/translate/')){ translations++; res.setHeader('Content-Type','text/plain');res.end('Привет, мир.');return; }
   let data={};
+  let body={};
+  if(req.method==='POST'){
+   const chunks=[];for await(const chunk of req)chunks.push(chunk);
+   const bytes=Buffer.concat(chunks);
+   if(req.headers['content-type']?.includes('json'))body=JSON.parse(bytes.toString()||'{}');
+   if(url.pathname.endsWith('/catalog/upload'))uploadRequests.push({type:url.searchParams.get('type'),bytes:bytes.length});
+  }
+  if(url.pathname.endsWith('/catalog'))data={items:catalogItems};
+  if(url.pathname.endsWith('/catalog/local')||url.pathname.endsWith('/cards-health'))data={items:[]};
+  if(url.pathname.endsWith('/catalog/admin'))data={hasToken:true,login:'fixture',repo:'owner/fixture'};
+  if(url.pathname.endsWith('/catalog/status'))data={installed:{}};
+  if(url.pathname.endsWith('/catalog/regex'))data={global:[]};
+  if(url.pathname.endsWith('/catalog/upload'))data={upload:'u111',title:'ZIP-расширение',removed:[]};
+  if(url.pathname.endsWith('/catalog/upload-repository')){repositoryRequests.push(body);data={upload:'u222',title:'GitHub-расширение',page:body.url};}
+  if(url.pathname.endsWith('/catalog/publish')){
+   publications.push(body);
+   const item=cleanItems({items:[{id:'published-'+publications.length,type:body.type,...body.meta,url:'https://example.org/extension.zip'}]})[0];
+   catalogItems.unshift(item);data={item};
+  }
+  if(url.pathname.endsWith('/usage'))data={total:{roleplay:{input:0,output:0,cost:0,calls:0},korrektor:{input:0,output:0,cost:0}},byDay:[],expensive:[],models:[],chats:[]};
   if(url.pathname==='/csrf-token')data={token:'fixture'};
-  if(url.pathname.endsWith('/status'))data={version:'0.4.27',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
+  if(url.pathname.endsWith('/status'))data={version:'0.4.28',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
   if(url.pathname.endsWith('/proposals')||url.pathname.endsWith('/chats'))data={items:[],mode:'recent'};
   if(url.pathname.endsWith('/settings'))data=DEFAULT_SETTINGS;
-  if(url.pathname.endsWith('/worlds')||url.pathname.endsWith('/catalog')||url.pathname.endsWith('/extensions/review'))data={items:[]};
+  if(url.pathname.endsWith('/worlds')||url.pathname.endsWith('/extensions/review'))data={items:[]};
   res.end(JSON.stringify(data));return;
  }
  try{
@@ -43,11 +68,11 @@ async function noOverflow(page,selector='body'){
  assert.equal(await page.locator(selector).evaluate(e=>e.scrollWidth>innerWidth+1),false,`horizontal overflow: ${selector}`);
 }
 try{
- for(const theme of ['dark','light','black','white','brown'])for(const width of [320,390]){
-  const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:['light','white'].includes(theme)?'light':'dark',reducedMotion:'reduce'});
+ for(const theme of ['dark','light','black','white','brown','system-dark','system-light'])for(const width of [320,390]){
+  const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:['light','white','system-light'].includes(theme)?'light':'dark',reducedMotion:'reduce'});
   const page=await context.newPage();observe(page);
   await page.addInitScript(({theme})=>{
-   const state={resolvedTheme:theme,theme,accent:'amber',onboardingDone:false,stUp:false,termuxInstalled:true,termuxPermission:true,termuxReady:true,lastCheck:Date.now()};
+   const state={resolvedTheme:theme.replace('system-',''),theme:theme.startsWith('system-')?'system':theme,accent:'amber',onboardingDone:false,stUp:false,termuxInstalled:true,termuxPermission:true,termuxReady:true,lastCheck:Date.now()};
    window.bridgeState=state;
    window.KorrektorApp=new Proxy({state:()=>JSON.stringify(state),sites:()=>JSON.stringify([]),finishOnboarding:()=>{state.onboardingDone=true;}},{get:(o,k)=>o[k]||(()=>{})});
   },{theme});
@@ -90,12 +115,25 @@ try{
   await page.evaluate(()=>document.body.style.fontSize='24px');await noOverflow(page);
   await context.close();
  }
+ // Inspect every visible mascot placement in each explicit and system theme.
+ for(const theme of ['dark','light','black','white','brown','system-dark','system-light']){
+  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,colorScheme:['light','white','system-light'].includes(theme)?'light':'dark'});
+  const page=await context.newPage();observe(page);
+  await page.addInitScript(theme=>{if(!theme.startsWith('system-'))localStorage.setItem('korrektor.theme',theme);},theme);
+  for(const [route,title] of [['feed','Оптимизация временно отключена'],['tools/catalog','Каталог пока пуст'],['tools/spend','Пока ничего не потрачено'],['tools/cards','Карточек нет'],['tools/muted','Ничего не скрыто']]){
+   await page.goto(`${origin}/api/plugins/korrektor/app/index.html#${route}`);
+   await page.getByRole('heading',{name:title,exact:true}).waitFor();await decoded(page);await noOverflow(page);
+   await page.screenshot({path:`${output}/${route.replace('/','-')}-${theme}.png`,fullPage:true});
+  }
+  await context.close();
+ }
  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
  const page=await context.newPage();observe(page);
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools`);
- await page.getByRole('heading',{name:'Подключение к модели'}).waitFor();
+ await page.getByRole('link',{name:/Резервная копия/}).waitFor();
+ assert.equal(await page.getByText('Подключение к модели',{exact:true}).count(),0);
  assert.equal(await page.locator('#view .mascot').count(),0,'no cheerful mascot beside a connection error');
- await page.getByRole('button',{name:'Пробный запрос',exact:true}).waitFor();
+
  await noOverflow(page);
 
  await page.waitForFunction(()=>navigator.serviceWorker.controller,null,{timeout:10000});
@@ -108,6 +146,7 @@ try{
  await page.screenshot({path:`${output}/settings.png`,fullPage:true});
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/catalog`);
  await page.getByRole('button',{name:'Расширения',exact:true}).click();
+ await page.getByText('Проверить установленные расширения',{exact:true}).click();
  await page.getByText('Сторонние расширения пока не установлены',{exact:true}).waitFor();
  assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'catalog');
  await noOverflow(page);
@@ -123,6 +162,63 @@ try{
  await page.getByText('Нет связи с SillyTavern',{exact:true}).waitFor();
  assert.equal(await page.locator('#view .mascot').count(),0);
  await context.close();
+ // Catalog filters and the hidden author panel use the actual forms with a fake publishing API.
+ catalogItems=cleanItems({items:[
+  {id:'en',type:'extension',name:'English extension',url:'https://example.org/en.zip',language:'en',translated:false},
+  {id:'ru',type:'card',name:'Русская карточка',url:'https://example.org/ru.png',language:'ru',translated:true},
+  {id:'th',type:'preset',name:'Thai preset',url:'https://example.org/th.json',language:'th'},
+  {id:'zh',type:'lorebook',name:'Chinese lore',url:'https://example.org/zh.json',language:'zh',translated:false},
+ ]});
+ const authorContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+ const author=await authorContext.newPage();observe(author);
+ await author.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/catalog`);
+ await author.locator('.catalog-item').nth(3).waitFor();
+ await author.getByLabel('Все языки',{exact:true}).selectOption('ru');
+ await author.getByLabel('Перевод: любой',{exact:true}).selectOption('yes');
+ assert.equal(await author.locator('.catalog-item').count(),1);
+ await author.getByRole('heading',{name:'Русская карточка',exact:true}).waitFor();
+ await author.getByLabel('Все языки',{exact:true}).selectOption('');
+ await author.getByLabel('Перевод: любой',{exact:true}).selectOption('no');
+ assert.equal(await author.locator('.catalog-item').count(),2);
+ await author.getByLabel('Все языки',{exact:true}).selectOption('th');
+ assert.equal(await author.locator('.catalog-item').count(),0);
+ await author.getByLabel('Перевод: любой',{exact:true}).selectOption('');
+ await author.getByRole('heading',{name:'Thai preset',exact:true}).waitFor();
+ await author.getByLabel('Все языки',{exact:true}).selectOption('en');
+ await author.getByRole('button',{name:'Расширения',exact:true}).click();
+ await author.getByRole('heading',{name:'English extension',exact:true}).waitFor();
+ await noOverflow(author);
+ await author.screenshot({path:`${output}/catalog-languages.png`,fullPage:true});
+ const title=await author.locator('#page-title').boundingBox();
+ await author.mouse.move(title.x+title.width/2,title.y+title.height/2);await author.mouse.down();await author.waitForTimeout(800);await author.mouse.up();
+ await author.getByRole('button',{name:'Расширение',exact:true}).click();
+ await author.locator('input[type="file"][accept*="zip"]').setInputFiles({name:'extension.zip',mimeType:'application/zip',buffer:Buffer.from('fixture archive; ZIP validation is covered by server tests')});
+ await author.getByText('Файл подходит: extension.zip',{exact:true}).waitFor();
+ await author.getByRole('textbox',{name:/^Автор/}).fill('Автор');
+ await author.getByLabel('Язык материала',{exact:true}).selectOption('ru');
+ await author.getByLabel('Наличие перевода',{exact:true}).selectOption('yes');
+ await author.getByRole('checkbox',{name:/Автор разрешил распространять/}).check();
+ await noOverflow(author);await author.screenshot({path:`${output}/catalog-author-extension.png`,fullPage:true});
+ await author.getByRole('button',{name:'Опубликовать',exact:true}).click();
+ await author.getByRole('heading',{name:'ZIP-расширение',exact:true}).waitFor();
+ assert.equal(uploadRequests.at(-1).type,'extension');
+ assert.equal(publications.at(-1).upload,'u111');
+ assert.equal(publications.at(-1).meta.language,'ru');assert.equal(publications.at(-1).meta.translated,true);
+ await author.getByRole('button',{name:'Расширение',exact:true}).click();
+ await author.getByRole('button',{name:'Ссылка GitHub',exact:true}).click();
+ await author.getByLabel('Репозиторий расширения',{exact:true}).fill('https://github.com/author/extension');
+ await author.getByRole('button',{name:'Загрузить с GitHub',exact:true}).click();
+ await author.getByText('Загружено: GitHub-расширение. Можно публиковать',{exact:true}).waitFor();
+ await author.getByRole('textbox',{name:/^Автор/}).fill('Автор');
+ await author.getByLabel('Язык материала',{exact:true}).selectOption('zh');
+ await author.getByLabel('Наличие перевода',{exact:true}).selectOption('no');
+ await author.getByRole('checkbox',{name:/Автор разрешил распространять/}).check();
+ await author.getByRole('button',{name:'Опубликовать',exact:true}).click();
+ await author.getByRole('heading',{name:'GitHub-расширение',exact:true}).waitFor();
+ assert.equal(repositoryRequests.at(-1).url,'https://github.com/author/extension');
+ assert.equal(publications.at(-1).upload,'u222');assert.equal(publications.at(-1).type,'extension');
+ assert.equal(publications.at(-1).meta.language,'zh');assert.equal(publications.at(-1).meta.translated,false);
+ await authorContext.close();
  // Host DOM follows SillyTavern release/public/index.html: .mes_buttons contains .extraMesButtons.
  const chat=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});observe(chat);
  await chat.goto(`${origin}/fixture.html`);
@@ -157,5 +253,5 @@ try{
  assert.equal(await chat.locator('.mes_text').textContent(),'Hello world.');
  await chat.close();
  assert.deepEqual(errors,[]);
- console.log('PASS: 10 mobile/theme combinations, all onboarding steps, enlarged text, API error, offline cache, manual translation, original restoration, keyboard action, no automatic requests.');
+ console.log('PASS: 14 mobile/theme combinations, all mascot screens, catalog languages and ZIP/GitHub author uploads, all onboarding steps, enlarged text, API error, offline cache, manual translation, original restoration, keyboard action, no automatic requests.');
 }finally{await browser.close();await new Promise(r=>server.close(r));}

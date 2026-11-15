@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.27';
+const APP_VERSION = '0.4.28';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -380,13 +380,13 @@ async function renderRoute() {
     const freshView = oldView.cloneNode(false);
     oldView.replaceWith(freshView);
     document.body.style.overflow = '';
-    const toolTitles = { connection: 'Подключение к модели', sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
+    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
     const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
     $('#page-title').textContent = titles[route.name];
     if (route.name === 'tools') return tools.renderTools();
     if (route.name === 'card') return tools.renderCardHealth(route.id);
     if (route.name === 'tool') {
-        if (route.id === 'connection') { put($('#view'), tools.renderKeyCheck()); return; }
+        if (route.id === 'connection') { location.replace('#tools'); return; }
         if (route.id === 'spend') return tools.renderSpend();
         if (route.id === 'sync') return tools.renderSync();
         if (route.id === 'cards') return tools.renderCardsHealth();
@@ -1417,7 +1417,6 @@ async function renderSettings(reload = true) {
                     h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'API в SillyTavern' }), h('span', { class: 'mono secondary', style: 'text-align:right', text: stApiText })),
                     h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Модель в SillyTavern' }), h('span', { class: 'mono secondary', style: 'overflow-wrap:anywhere;text-align:right', text: stModel || '—' })),
                     h('span', { class: 'hint', text: 'Запросы идут через бэкенд SillyTavern с его ключами. Корректор ключи не видит и secrets.json не читает' })))),
-        tools.renderKeyCheck(),
         tools.inApp() ? null : h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Оформление' }),
             h('div', { class: 'rows' },

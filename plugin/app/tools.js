@@ -1,3 +1,5 @@
+import { CATALOG_LANGUAGES, matchesCatalogFilters } from './catalog-filters.js';
+
 // Корректор: the "Ещё" tab and the tools behind it — spending, card health,
 // full backup, import by link, catalog, key check — plus the chat sheet parts
 // "Сжать чат" and "Итоги сессии". Helpers come from app.js through setup().
@@ -74,43 +76,7 @@ export function renderTools() {
             row('#tools/backup', 'Резервная копия', 'Чаты, карточки, лорбуки и настройки в одном файле'),
             row('#history', 'История', 'Применённые изменения и восстановление'),
             row('#tools/catalog', 'Каталог', 'Пресеты, лорбуки и карточки от авторов'),
-            row('#tools/muted', 'Скрытые замечания', 'Виды замечаний, которые вы попросили не показывать')),
-        renderKeyCheck());
-}
-
-// ---------- key check ----------
-
-export function renderKeyCheck() {
-    const { h, state } = ui;
-    let last = state.status?.connectionCheck;
-    const box = h('div', { class: 'section key-check' });
-    const draw = (result, busy = false) => {
-        const tone = result?.ok === true ? 'pos' : result?.ok === false ? 'neg' : '';
-        ui.put(box,
-            h('div', { class: 'with-mascot' },
-                mascot(result?.ok === false ? 'confused' : 'key', 72),
-                h('div', {},
-                    h('h3', { class: 'section-title', text: 'Подключение к модели' }),
-                    h('p', { class: `small ${tone}`, style: 'margin:0', text: busy ? 'Проверяю…' : result ? result.message : 'Проверю, принимает ли провайдер ключ, сохранённый в SillyTavern. Сам ключ Корректор не видит' }),
-                    result?.model ? h('p', { class: 'small muted', style: 'margin:4px 0 0', text: `${result.source || ''} · ${result.model}${result.at ? ` · ${ui.when(result.at)}` : ''}` }) : null)),
-            h('div', { class: 'card-actions' },
-                h('button', { class: 'btn secondary small', type: 'button', disabled: busy, onclick: () => run(false), text: 'Проверить' }),
-                result ? h('button', { class: 'btn secondary small', type: 'button', disabled: busy, onclick: () => run(true), text: 'Пробный запрос' }) : null),
-            result ? h('p', { class: 'small muted', text: 'Пробный запрос проверяет выбранную модель и расходует немного токенов' }) : null);
-    };
-    const run = async (test) => {
-        draw(last, true);
-        try {
-            const result = await ui.api('/connection-check', { method: 'POST', body: { test }, timeout: 120000 });
-            last = result;
-            if (state.status) state.status.connectionCheck = result;
-            draw(result);
-        } catch (error) {
-            draw({ ok: false, message: error.message });
-        }
-    };
-    draw(last);
-    return box;
+            row('#tools/muted', 'Скрытые замечания', 'Виды замечаний, которые вы попросили не показывать')));
 }
 
 // ---------- spending ----------
@@ -367,11 +333,13 @@ async function renderExtensions(container) {
 
 // ---------- catalog ----------
 
-const CATALOG_NAMES = { preset: 'Пресет', lorebook: 'Лорбук', card: 'Карточка' };
+const CATALOG_NAMES = { preset: 'Пресет', lorebook: 'Лорбук', card: 'Карточка', extension: 'Расширение' };
 const CATALOG_TYPES = [['preset', 'Пресет'], ['lorebook', 'Лорбук'], ['card', 'Карточка']];
 // Loaded once per visit: switching between presets, lorebooks and cards only filters it.
 let catalogData = null;
 let catalogAt = 0;
+const catalogFilters = { author: '', model: '', censor: '', language: '', translation: '', text: '' };
+let catalogReviewOpen = false;
 
 async function loadCatalogData(force = false) {
     if (!force && catalogData && Date.now() - catalogAt < 5 * 60000) return catalogData;
@@ -444,6 +412,8 @@ function catalogEntry(item, extra) {
         item.uncensored === false ? h('span', { class: 'badge', text: 'С цензурой' }) : null,
         ...item.models.map(m => h('span', { class: 'badge model', text: m })),
         item.regex ? h('span', { class: 'badge', text: `+ регексы: ${item.regex}` }) : null,
+        item.language ? h('span', { class: 'badge', text: CATALOG_LANGUAGES.find(([code]) => code === item.language)?.[1] || item.language }) : null,
+        typeof item.translated === 'boolean' ? h('span', { class: 'badge', text: item.translated ? 'С переводом' : 'Без перевода' }) : null,
     ].filter(Boolean);
     return h('article', { class: 'card catalog-item' },
         pictures.length ? h('button', { class: 'catalog-thumb-button', type: 'button', 'aria-label': 'Смотреть картинки', onclick: () => openViewer(pictures) },
@@ -469,13 +439,13 @@ export async function renderCatalog() {
     // What is already in this tavern: { [id]: { file, where } }. Checked after the list is shown.
     let installed = null;
     const install = async (item, button) => {
-        const ok = await ui.confirmDialog({ title: `Установить «${item.name}»?`, text: `${CATALOG_NAMES[item.type]} от ${item.author || 'автора'} скачается в SillyTavern. Ваши файлы не перезаписываются: если имя занято, у нового будет номер`, ok: 'Установить' });
+        const ok = await ui.confirmDialog({ title: `Установить «${item.name}»?`, text: item.type === 'extension' ? `Расширение от ${item.author || 'автора'} выполняет код в SillyTavern. Устанавливайте его, если доверяете источнику. После установки обновите страницу таверны` : `${CATALOG_NAMES[item.type]} от ${item.author || 'автора'} скачается в SillyTavern. Ваши файлы не перезаписываются: если имя занято, у нового будет номер`, ok: 'Установить' });
         if (!ok) return;
         button.disabled = true;
         button.textContent = 'Устанавливаю…';
         try {
             const result = await ui.api('/catalog/install', { method: 'POST', body: { id: item.id }, timeout: 120000 });
-            ui.toast(`Установлено: ${result.where} → ${result.name}`);
+            ui.toast(`Установлено: ${result.where} → ${result.name}${result.reload ? '. Обновите страницу таверны, чтобы включить расширение' : ''}`);
             installed = { ...(installed || {}), [item.id]: { file: result.file, where: result.where } };
             drawList();
         } catch (error) {
@@ -494,8 +464,8 @@ export async function renderCatalog() {
         if (!ok) return;
         button.disabled = true;
         try {
-            await ui.api('/catalog/uninstall', { method: 'POST', body: { id: item.id }, timeout: 60000 });
-            ui.toast(`Удалено из таверны: ${item.name}`);
+            const result = await ui.api('/catalog/uninstall', { method: 'POST', body: { id: item.id }, timeout: 60000 });
+            ui.toast(`Удалено из таверны: ${item.name}${result.reload ? '. Обновите страницу таверны' : ''}`);
             installed = { ...(installed || {}) };
             delete installed[item.id];
             drawList();
@@ -517,37 +487,41 @@ export async function renderCatalog() {
         return [button, page];
     };
     // Search and filters: by author, by AI model, by censorship. Applied in place.
-    const pickFilter = { author: '', model: '', censor: '', text: '' };
+    const pickFilter = catalogFilters;
     const authors = [...new Set(data.items.map(i => i.author).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
     const models = [...new Set(data.items.flatMap(i => i.models))].sort((a, b) => a.localeCompare(b));
-    const select = (label, options, key) => h('select', { class: 'select', 'aria-label': label, onchange: (e) => { pickFilter[key] = e.target.value; drawList(); } },
-        h('option', { value: '', text: label }), options.map(([v, t]) => h('option', { value: v, text: t })));
-    const search = h('input', { class: 'input', type: 'search', placeholder: 'Поиск по названию, описанию, тегам', 'aria-label': 'Поиск', oninput: () => { pickFilter.text = search.value.trim().toLowerCase(); drawList(); } });
-    const filterBar = data.items.length > 1 ? h('div', { class: 'catalog-filters' },
+    const select = (label, options, key) => {
+        const field = h('select', { class: 'select', 'aria-label': label, onchange: (e) => { pickFilter[key] = e.target.value; drawList(); } },
+            h('option', { value: '', text: label }), options.map(([v, t]) => h('option', { value: v, text: t })));
+        field.value = pickFilter[key];
+        return field;
+    };
+    const search = h('input', { class: 'input', type: 'search', value: pickFilter.text, placeholder: 'Поиск по названию, описанию, тегам', 'aria-label': 'Поиск', oninput: () => { pickFilter.text = search.value.trim().toLowerCase(); drawList(); } });
+    const filterBar = h('div', { class: 'catalog-filters' },
         search,
         h('div', { class: 'catalog-selects' },
             authors.length > 1 ? select('Все авторы', authors.map(a => [a, a]), 'author') : null,
             models.length ? select('Все модели', models.map(m => [m, m]), 'model') : null,
-            select('Цензура: любая', [['no', 'Без цензуры'], ['yes', 'С цензурой']], 'censor'))) : null;
-    const matches = (i) => (filter === 'all' || i.type === filter)
-        && (!pickFilter.author || i.author === pickFilter.author)
-        && (!pickFilter.model || i.models.includes(pickFilter.model))
-        && (!pickFilter.censor || (pickFilter.censor === 'no' ? i.uncensored === true : i.uncensored === false))
-        && (!pickFilter.text || [i.name, i.description, i.author, ...i.tags, ...i.models].join(' ').toLowerCase().includes(pickFilter.text));
+            select('Все языки', CATALOG_LANGUAGES, 'language'),
+            select('Перевод: любой', [['yes', 'С переводом'], ['no', 'Без перевода']], 'translation'),
+            select('Цензура: любая', [['no', 'Без цензуры'], ['yes', 'С цензурой']], 'censor')));
+    const matches = (item) => matchesCatalogFilters(item, { ...pickFilter, type: filter });
     const list = h('div', { class: 'list catalog-list' });
-    let extensionPanel;
+    const extensionPanel = h('div', { style: 'padding:0 16px 16px' });
+    const review = h('details', { class: 'settings-group', open: catalogReviewOpen },
+        h('summary', { text: 'Проверить установленные расширения' }), extensionPanel);
+    let reviewStarted = false;
+    review.addEventListener('toggle', () => {
+        catalogReviewOpen = review.open;
+        if (review.open && !reviewStarted) { reviewStarted = true; renderExtensions(extensionPanel); }
+    });
     const drawList = () => {
-        if (filterBar) filterBar.hidden = filter === 'extension';
-        if (filter === 'extension') {
-            if (!extensionPanel) { extensionPanel = h('div'); renderExtensions(extensionPanel); }
-            put(list, extensionPanel);
-            return;
-        }
+        review.hidden = filter !== 'extension';
         if (!catalogData) { put(list, h('p', { class: 'muted', text: 'Загружаю каталог' })); return; }
         const items = data.items.filter(matches);
         put(list, items.length ? items.map(item => catalogEntry(item, actionsFor(item))) : h('div', { class: 'empty' }, mascot('books', 150),
             h('h2', { text: data.items.length ? 'Ничего не нашлось' : 'Каталог пока пуст' }),
-            h('p', { text: 'Сюда попадают пресеты, лорбуки и карточки, которые авторы разрешили распространять' })));
+            h('p', { text: 'Здесь появятся пресеты, лорбуки, карточки и расширения, которые авторы разрешили распространять' })));
     };
     const filters = h('div', { class: 'filters' }, [['all', 'Все'], ['preset', 'Пресеты'], ['lorebook', 'Лорбуки'], ['card', 'Карточки'], ['extension', 'Расширения']].map(([v, text]) =>
         h('button', {
@@ -555,7 +529,6 @@ export async function renderCatalog() {
                 if (filter === v) return;
                 filter = v;
                 ui.storageSet('korrektor.catalogFilter', v);
-                if (needsLoad && v !== 'extension') { renderCatalog(); return; }
                 for (const b of filters.children) b.setAttribute('aria-pressed', String(b === e.currentTarget));
                 drawList();
             },
@@ -567,15 +540,16 @@ export async function renderCatalog() {
         filterBar,
         data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
         list,
+        review,
         h('div', { class: 'section' },
             h('div', { class: 'card-actions centered', style: 'margin-top:0' },
                 h('a', { class: 'btn secondary', href: '#tools/catalog-suggest', text: 'Предложить своё' }),
-                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { if (filter === 'extension') { renderExtensions(extensionPanel); return; } await loadCatalogData(true); if (view.isConnected) renderCatalog(); } }))));
+                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); if (view.isConnected) renderCatalog(); } }))));
     authorEntrance();
-    if (needsLoad && filter !== 'extension') {
+    if (needsLoad) {
         loadCatalogData().then(() => { if (view.isConnected && location.hash === '#tools/catalog') renderCatalog(); });
     }
-    if (data.items.length && filter !== 'extension') {
+    if (data.items.length) {
         ui.api('/catalog/status', { timeout: 120000 }).then((r) => { installed = r.installed || {}; }, () => { installed = {}; })
             .then(() => { if (list.isConnected) drawList(); });
     }
@@ -878,6 +852,8 @@ export async function renderCatalogAuthor() {
     let source = 'local';
     let file = '';
     let upload = '';
+    let sourceRevision = 0;
+    const sourcePicker = h('div', { style: 'margin-top:8px' });
     const form = metaForm();
     const allowed = h('input', { type: 'checkbox' });
     const status = h('p', { class: 'small secondary', style: 'margin:8px 0 0' });
@@ -931,10 +907,13 @@ export async function renderCatalogAuthor() {
     fileInput.addEventListener('change', async () => {
         const f = fileInput.files[0];
         if (!f) return;
+        const revision = ++sourceRevision;
+        const uploadType = type;
         status.textContent = 'Проверяю файл…';
         upload = '';
         try {
-            const r = await uploadRaw(`/catalog/upload?type=${type}&name=${encodeURIComponent(f.name)}`, f);
+            const r = await uploadRaw(`/catalog/upload?type=${uploadType}&name=${encodeURIComponent(f.name)}`, f);
+            if (revision !== sourceRevision) return;
             upload = r.upload;
             form.suggestName(r.title);
             inside = r.regexNames || [];
@@ -949,11 +928,15 @@ export async function renderCatalogAuthor() {
         }
     });
     const drawSource = () => {
+        sourceRevision++;
+        if (type === 'extension' && source === 'local') source = 'upload';
+        if (type !== 'extension' && source === 'repository') source = 'local';
+        put(sourcePicker, pick(type === 'extension' ? [['upload', 'ZIP с телефона'], ['repository', 'Ссылка GitHub']] : [['local', 'Из таверны'], ['upload', 'Файл с телефона']], source, v => { source = v; drawSource(); }));
         file = '';
         upload = '';
         inside = [];
         drop = new Set();
-        fileInput.accept = type === 'card' ? '.png,image/png' : '.json,application/json';
+        fileInput.accept = type === 'extension' ? '.zip,application/zip,application/x-zip-compressed' : type === 'card' ? '.png,image/png' : '.json,application/json';
         if (source === 'local') {
             put(sourceBox, localPicker(type, (value, label, row) => {
                 file = value;
@@ -962,8 +945,27 @@ export async function renderCatalogAuthor() {
                 drop = new Set();
                 drawRegex();
             }));
+        } else if (source === 'repository') {
+            const url = h('input', { class: 'input', type: 'url', style: 'width:100%', 'aria-label': 'Репозиторий расширения', placeholder: 'https://github.com/автор/репозиторий', autocapitalize: 'off', spellcheck: 'false' });
+            const load = h('button', { class: 'btn secondary', type: 'button', text: 'Загрузить с GitHub', onclick: async () => {
+                const revision = ++sourceRevision;
+                upload = '';
+                load.disabled = true;
+                status.textContent = 'Скачиваю и проверяю расширение…';
+                try {
+                    const result = await ui.api('/catalog/upload-repository', { method: 'POST', body: { url: url.value.trim() }, timeout: 90000 });
+                    if (revision !== sourceRevision) return;
+                    upload = result.upload;
+                    form.suggestName(result.title);
+                    form.suggestPage(result.page);
+                    status.textContent = `Загружено: ${result.title}. Можно публиковать`;
+                } catch (error) {
+                    if (revision === sourceRevision) { status.textContent = error.message; }
+                } finally { load.disabled = false; }
+            } });
+            put(sourceBox, url, h('div', { class: 'card-actions' }, load), h('p', { class: 'small muted', text: 'Публичный репозиторий. В каталог попадёт текущая версия из основной ветки; в ней нужен manifest.json' }));
         } else {
-            put(sourceBox, h('button', { class: 'btn secondary', type: 'button', text: 'Выбрать файл', onclick: () => fileInput.click() }), fileInput);
+            put(sourceBox, type === 'extension' ? h('p', { class: 'small muted', text: 'ZIP до 20 МБ: manifest.json и файлы расширения в корне или в одной общей папке' }) : null, h('button', { class: 'btn secondary', type: 'button', text: 'Выбрать файл', onclick: () => fileInput.click() }), fileInput);
         }
         status.textContent = '';
         drawRegex();
@@ -980,7 +982,7 @@ export async function renderCatalogAuthor() {
                 body: {
                     type,
                     file: source === 'local' ? file : undefined,
-                    upload: source === 'upload' ? upload : undefined,
+                    upload: source !== 'local' ? upload : undefined,
                     meta: { ...form.values(), allowed: allowed.checked },
                     images: form.images().filter(i => i.upload).map(i => i.upload),
                     regex: type === 'preset' ? { global: [...regexGlobal], uploads: regexUploads.map(r => r.upload), drop: [...drop] } : undefined,
@@ -1046,8 +1048,8 @@ export async function renderCatalogAuthor() {
         back('#tools/catalog', 'Каталог'),
         h('div', { class: 'section' },
             h('h3', { class: 'section-title', text: 'Добавить в каталог' }),
-            pick(CATALOG_TYPES, type, (v) => { type = v; drawSource(); }),
-            h('div', { style: 'margin-top:8px' }, pick([['local', 'Из таверны'], ['upload', 'Файл с телефона']], source, (v) => { source = v; drawSource(); })),
+            pick([...CATALOG_TYPES, ['extension', 'Расширение']], type, (v) => { type = v; drawSource(); }),
+            sourcePicker,
             sourceBox,
             regexBox,
             form.element,
@@ -1119,6 +1121,10 @@ function metaForm(item = null) {
     description.value = item?.description || '';
     const tags = h('input', { class: 'input', style: 'width:100%', type: 'text', placeholder: 'фэнтези, ромком', value: (item?.tags || []).join(', ') });
     const page = h('input', { class: 'input', style: 'width:100%', type: 'url', placeholder: 'https://… (необязательно)', autocapitalize: 'off', value: item?.page || '' });
+    const language = h('select', { class: 'select', 'aria-label': 'Язык материала' }, h('option', { value: '', text: 'Не указан' }), CATALOG_LANGUAGES.map(([value, text]) => h('option', { value, text })));
+    language.value = item?.language || '';
+    const translation = h('select', { class: 'select', 'aria-label': 'Наличие перевода' }, [['', 'Не указано'], ['yes', 'С переводом'], ['no', 'Без перевода']].map(([value, text]) => h('option', { value, text })));
+    translation.value = item?.translated === true ? 'yes' : item?.translated === false ? 'no' : '';
     const chosen = new Set(item?.models || []);
     const otherModels = h('input', { class: 'input', style: 'width:100%;margin-top:8px', type: 'text', placeholder: 'Другие модели через запятую', value: (item?.models || []).filter(m => !CATALOG_MODELS.includes(m)).join(', ') });
     const modelChips = h('div', { class: 'chips' }, CATALOG_MODELS.map(m => h('button', {
@@ -1167,6 +1173,8 @@ function metaForm(item = null) {
         field('Название', name),
         field('Автор', author, 'Указывается в каталоге всегда'),
         field('Что это', description, 'Пара предложений: для чего и чем хорош'),
+        field('Язык материала', language),
+        field('Перевод', translation, 'Отметьте, есть ли перевод у этой версии материала'),
         h('div', { class: 'author-field' }, h('span', { class: 'small secondary', text: 'Картинки' }), picsBox,
             h('span', { class: 'small muted', text: 'До 4: первая — обложка, остальные — скриншоты. Нажмите на картинку, чтобы сделать её обложкой' })),
         h('div', { class: 'author-field' }, h('span', { class: 'small secondary', text: 'Для каких моделей' }), modelChips, otherModels),
@@ -1177,6 +1185,7 @@ function metaForm(item = null) {
     return {
         element,
         busy: () => loading > 0,
+        suggestPage: (value) => { if (!page.value) page.value = value; },
         suggestName: (value) => {
             if (!name.value || name.value === autoName) name.value = value;
             autoName = value;
@@ -1189,6 +1198,8 @@ function metaForm(item = null) {
             page: page.value,
             models: [...CATALOG_MODELS.filter(m => chosen.has(m)), ...otherModels.value.split(',').map(m => m.trim()).filter(Boolean)],
             uncensored: censor === 'no' ? true : censor === 'yes' ? false : undefined,
+            language: language.value,
+            translated: translation.value === 'yes' ? true : translation.value === 'no' ? false : null,
         }),
         images: () => pictures.map(p => (p.upload ? { upload: p.upload } : { keep: p.keep })),
     };

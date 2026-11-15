@@ -32,7 +32,7 @@ import { checkKey, listKeyModels, publicKeyConfig, readKeyConfig, saveKeyConfig 
 import { noteRejection, setMuted } from './lib/mute.mjs';
 import { collectFiles, summarize, writeZip, writeZipFile, describeArchive, restoreArchive, saveUpload } from './lib/archive.mjs';
 import { loadCatalog, installItem, installData } from './lib/catalog.mjs';
-import { listLocal, readLocal, saveCatalogUpload, readAdmin, saveAdmin, checkToken, publishItem, removeItem, editItem, setSubmitLink, readCatalogFresh, saveImageUpload, saveRegexUpload, globalRegex, enabledGlobalRegex, addRegexToPreset, readCatalogUpload, CATALOG_REPO } from './lib/catalog-publish.mjs';
+import { listLocal, readLocal, saveCatalogUpload, importExtensionRepository, readAdmin, saveAdmin, checkToken, publishItem, removeItem, editItem, setSubmitLink, readCatalogFresh, saveImageUpload, saveRegexUpload, globalRegex, enabledGlobalRegex, addRegexToPreset, readCatalogUpload, CATALOG_REPO } from './lib/catalog-publish.mjs';
 import { catalogStatus, uninstallItem } from './lib/catalog-status.mjs';
 import { markTouched } from './lib/touched.mjs';
 import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
@@ -712,6 +712,7 @@ export async function init(router) {
         return Buffer.concat(chunks);
     };
     router.post('/catalog/upload', route(async (req, user) => saveCatalogUpload(user.store.dir, String(req.query.type || ''), await rawBody(req, 20 * 1024 * 1024), String(req.query.name || ''))));
+    router.post('/catalog/upload-repository', route(async (req, user) => importExtensionRepository(user.store.dir, String(req.body?.url || ''))));
     router.post('/catalog/upload-image', route(async (req, user) => saveImageUpload(user.store.dir, await rawBody(req, 3 * 1024 * 1024))));
     router.post('/catalog/upload-regex', route(async (req, user) => saveRegexUpload(user.store.dir, await rawBody(req, 2 * 1024 * 1024))));
     // Global regex scripts of this tavern, to add to a preset when publishing it.

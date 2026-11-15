@@ -1,3 +1,5 @@
+import { readExtensionPackage, downloadExtensionRepository } from './extension-package.mjs';
+import { catalogLanguage } from '../app/catalog-filters.js';
 // Catalog for its author: files from this SillyTavern for sending or publishing,
 // and publishing to the catalog on GitHub (catalog/catalog.json + catalog/files/).
 //
@@ -25,17 +27,19 @@ const KINDS = {
     preset: { dir: (ctx) => ctx.dirs.openAI_Settings, ext: '.json', label: 'пресет' },
     lorebook: { dir: (ctx) => ctx.dirs.worlds, ext: '.json', label: 'лорбук' },
     card: { dir: (ctx) => ctx.dirs.characters, ext: '.png', label: 'карточку' },
+    extension: { ext: '.zip', label: 'расширение' },
 };
 
 function kind(type) {
     const k = KINDS[type];
-    if (!k) throw httpError(400, 'Тип: пресет, лорбук или карточка');
+    if (!k) throw httpError(400, 'Тип: пресет, лорбук, карточка или расширение');
     return k;
 }
 
 /** Presets, lorebooks or cards of this SillyTavern, newest first. */
 export async function listLocal(ctx, type) {
     const k = kind(type);
+    if (type === 'extension') return [];
     let entries = [];
     try {
         entries = await fs.promises.readdir(k.dir(ctx), { withFileTypes: true });
@@ -82,6 +86,10 @@ export function cleanPreset(json) {
 export function checkFile(type, data, fallbackTitle = '') {
     if (!data?.length) throw httpError(400, 'Файл пустой');
     if (data.length > MAX_BYTES) throw httpError(413, 'Файл больше 20 МБ');
+    if (type === 'extension') {
+        const archive = readExtensionPackage(data);
+        return { data, ext: '.zip', title: archive.title, removed: [] };
+    }
     if (type === 'card') {
         let card = null;
         try {
@@ -109,12 +117,13 @@ export function checkFile(type, data, fallbackTitle = '') {
         const { json: clean, removed } = cleanPreset(json);
         return { data: Buffer.from(JSON.stringify(clean, null, 4)), ext: '.json', title: fallbackTitle || 'Пресет', removed };
     }
-    throw httpError(400, 'Тип: пресет, лорбук или карточка');
+    throw httpError(400, 'Тип: пресет, лорбук, карточка или расширение');
 }
 
 /** One file of this SillyTavern, checked and cleaned, for saving or publishing. */
 export async function readLocal(ctx, type, file) {
     const k = kind(type);
+    if (type === 'extension') throw httpError(400, 'Загрузите расширение ZIP-архивом с manifest.json');
     const name = path.basename(String(file || ''));
     if (!name || name !== String(file) || !name.toLowerCase().endsWith(k.ext)) throw httpError(400, 'Нет такого файла');
     const full = path.join(k.dir(ctx), name);
@@ -143,6 +152,12 @@ export async function saveCatalogUpload(korrektorDir, type, data, fileName) {
     }
     await fs.promises.writeFile(path.join(dir, `${id}${k.ext}`), checked.data);
     return { upload: id, title: checked.title, removed: checked.removed, size: checked.data.length, regexNames: type === 'preset' ? regexNames(checked.data) : [] };
+}
+
+/** Import a public repository as a checked ZIP snapshot; publishing remains a separate action. */
+export async function importExtensionRepository(korrektorDir, repository, options = {}) {
+    const { data, page } = await downloadExtensionRepository(repository, options);
+    return { ...await saveCatalogUpload(korrektorDir, 'extension', data, 'extension.zip'), page };
 }
 
 /** A checked file sent from the phone, for installing it into SillyTavern. */
@@ -290,6 +305,8 @@ function cleanMeta(meta, fallbackTitle) {
         description: String(meta.description || '').trim().slice(0, 400),
         tags,
         page: cleanLink(meta.page),
+        language: catalogLanguage(meta.language),
+        translated: typeof meta.translated === 'boolean' ? meta.translated : null,
         models,
     };
     if (typeof meta.uncensored === 'boolean') out.uncensored = meta.uncensored;
@@ -522,7 +539,7 @@ export async function editItem({ token, korrektorDir, id, meta, images = [], fet
     const first = await readCatalogFile(token, fetchImpl);
     const old = (first.json.items || []).find(i => i?.id === id);
     if (!old) throw httpError(404, 'Такой записи в каталоге нет');
-    const info = cleanMeta({ ...meta, allowed: true }, old.name);
+    const info = cleanMeta({ language: old.language, translated: old.translated, ...meta, allowed: true }, old.name);
     const before = Array.isArray(old.images) ? old.images : [];
     const plan = images.slice(0, 4);
     const fresh = await uploadImages(token, korrektorDir, id, plan.filter(i => i.upload).map(i => i.upload), fetchImpl);

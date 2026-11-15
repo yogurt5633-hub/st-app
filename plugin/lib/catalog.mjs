@@ -1,3 +1,5 @@
+import { installExtension } from './extension-package.mjs';
+import { catalogLanguage } from '../app/catalog-filters.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readCardJson } from './cards.mjs';
@@ -10,7 +12,7 @@ import { httpError } from './util.mjs';
 // existing file is never overwritten (a new name is picked instead).
 
 export const CATALOG_URL = 'https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/catalog.json';
-const TYPES = new Set(['lorebook', 'preset', 'card']);
+const TYPES = new Set(['lorebook', 'preset', 'card', 'extension']);
 const MAX_BYTES = 20 * 1024 * 1024;
 const CACHE_MS = 30 * 60 * 1000;
 let cache = { at: 0, items: [], error: '', submit: '', updated: '' };
@@ -52,6 +54,8 @@ export function cleanItems(data) {
             models: Array.isArray(item.models) ? item.models.map(m => String(m).trim().slice(0, 30)).filter(Boolean).slice(0, 10) : [],
             // true: without censorship, false: with, null: not said.
             uncensored: typeof item.uncensored === 'boolean' ? item.uncensored : null,
+            language: catalogLanguage(item.language),
+            translated: typeof item.translated === 'boolean' ? item.translated : null,
             regex: Number.isInteger(item.regex) && item.regex > 0 ? Math.min(item.regex, 999) : 0,
         }));
 }
@@ -104,6 +108,7 @@ export async function installItem(ctx, item, { fetchImpl = globalThis.fetch } = 
 export async function installData(ctx, type, data, title) {
     const item = { type };
     const base = safeFileName(title);
+    if (type === 'extension') return installExtension(ctx, data, base);
     if (item.type === 'lorebook') {
         let json;
         try {

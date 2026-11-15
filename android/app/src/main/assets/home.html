@@ -90,7 +90,7 @@ a { color: var(--accent); }
 .onb { position: fixed; inset: 0; z-index: 50; background: var(--bg); overflow: auto; }
 .onb-in { min-height: 100%; display: flex; flex-direction: column; padding: 16px 24px max(24px, env(safe-area-inset-bottom)); max-width: 520px; margin: 0 auto; }
 .onb-skip { align-self: flex-end; background: none; border: 0; color: var(--text-3); font: inherit; font-size: 14px; min-height: 48px; padding: 12px; }
-.onb-art { align-self: center; margin: 0 0 24px; padding: 16px; border-radius: 16px; background: #f7f4ee; }
+.onb-art { align-self: center; margin: 0 0 24px; padding: 16px; background: transparent; }
 .onb-content { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 24px 0; }
 .onb .title { font-size: 32px; line-height: 40px; margin: 0 0 12px; font-weight: 500; color: var(--text); text-align: center; }
 .onb .lead { color: var(--text-2); text-align: center; margin: 0 0 12px; }
@@ -153,7 +153,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
 .companion { margin: 0 0 16px; border-bottom: 1px solid var(--line); }
 .companion summary { display:flex; gap:16px; align-items:center; min-height:96px; cursor:pointer; list-style:none; padding:8px 0; }
 .companion summary::-webkit-details-marker { display:none; }
-.companion .mascot { width:80px; height:80px; object-fit:contain; background:#fff0d5; border-radius:16px; padding:4px; }
+.companion .mascot { width:80px; height:80px; object-fit:contain; background:transparent; padding:4px; }
 .companion-title { display:block; font-weight:500; }
 .companion-body { padding:0 0 16px; }
 .companion-message { margin:0 0 12px; color:var(--text-2); min-height:44px; }
@@ -591,11 +591,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
                 h('span', { class: 'k', text: 'Сегодня' }),
                 h('span', { class: 'v', text: today === null ? '…' : fmt(today) }),
                 h('span', { class: 's', text: d.today && d.today.cost ? '≈$' + d.today.cost.toFixed(2) : 'токенов' })));
-            var check = status.connectionCheck;
-            tiles.push(h('button', { class: 'tile wide', type: 'button', onclick: function () { app.openKorrektor('#tools/connection'); } },
-                h('span', { class: 'k', text: 'Подключение к модели' }),
-                h('span', { class: 'v' + (check && check.ok === true ? ' pos' : check && check.ok === false ? ' neg' : ''), text: !check ? 'не проверялось' : check.ok === true ? 'ключ работает' : check.ok === false ? 'есть проблема' : 'не ясно' }),
-                h('span', { class: 's', text: check ? (check.model || check.message) : 'Нажмите, чтобы проверить ключ' })));
+
         }
         // Korrektor inside the tavern is updated when the app starts the tavern. If it was
         // started another way, it can stay old: then the new screens are missing.
@@ -604,7 +600,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
         return [
             outdated ? h('div', { class: 'box', style: 'margin-bottom:12px' }, h('div', { class: 'row' },
                 h('div', { text: 'Корректор в таверне устарел: ' + installed }),
-                h('p', { class: 'hint', text: 'Без обновления часть экранов не откроется (расходы, проверка ключа, фоны и аватарки). Таверна перезапустится, это около минуты' }),
+                h('p', { class: 'hint', text: 'Без обновления часть экранов не откроется (каталог, расходы, фоны и аватарки). Таверна перезапустится, это около минуты' }),
                 s.onPc ? h('p', { class: 'hint', text: 'На ПК: в папке с кодом Корректора выполните git pull и node scripts/install.mjs, затем перезапустите таверну' })
                     : h('div', { class: 'actions' }, h('button', { class: 'btn primary small', type: 'button', onclick: function () { app.action('update-korrektor'); }, text: 'Обновить Корректор' })))) : null,
             h('div', { class: 'hello' },

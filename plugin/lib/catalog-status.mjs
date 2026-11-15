@@ -1,3 +1,4 @@
+import { extensionsDir } from './extension-package.mjs';
 // Which catalog items are already in this SillyTavern, and removing them again.
 //
 // An item counts as installed when it was installed (or published) from here and the
@@ -16,6 +17,7 @@ const KINDS = {
     preset: { dir: (ctx) => ctx.dirs.openAI_Settings, ext: '.json', where: 'Пресеты Chat Completion' },
     lorebook: { dir: (ctx) => ctx.dirs.worlds, ext: '.json', where: 'Лорбуки' },
     card: { dir: (ctx) => ctx.dirs.characters, ext: '.png', where: 'Персонажи' },
+    extension: { dir: extensionsDir, ext: '', where: 'Расширения' },
 };
 const MAX_DOWNLOAD = 20 * 1024 * 1024;
 const FINGERPRINTS = 'catalog-fingerprints.json';
@@ -85,11 +87,15 @@ export async function catalogStatus({ ctx, korrektorDir, items, tracked = {}, fe
     for (const item of items) {
         const t = tracked[item.id];
         const k = KINDS[item.type];
-        if (t && k && fs.existsSync(path.join(k.dir(ctx), t.file))) out[item.id] = { file: t.file, where: k.where };
+        if (t && k && typeof t.file === 'string' && t.file && t.file !== '.' && t.file !== '..' && path.basename(t.file) === t.file) {
+            const full = path.join(k.dir(ctx), t.file);
+            const exists = item.type === 'extension' ? fs.existsSync(path.join(full, 'manifest.json')) : fs.existsSync(full);
+            if (exists) out[item.id] = { file: t.file, where: k.where };
+        }
     }
     const memoFile = path.join(korrektorDir, FINGERPRINTS);
     const memo = await readJson(memoFile, {});
-    for (const type of Object.keys(KINDS)) {
+    for (const type of Object.keys(KINDS).filter(type => type !== 'extension')) {
         const pending = items.filter(i => i.type === type && !out[i.id]);
         if (!pending.length) continue;
         const prints = [];
@@ -122,11 +128,18 @@ export async function uninstallItem({ ctx, korrektorDir, item, file }) {
     const k = KINDS[item.type];
     if (!k) throw httpError(400, 'Неизвестный тип');
     const name = path.basename(String(file || ''));
+    if (!name || name === '.' || name === '..' || name !== String(file)) throw httpError(400, 'Недопустимое имя файла');
     const full = path.join(k.dir(ctx), name);
     if (!name || !fs.existsSync(full)) throw httpError(404, 'Этого файла в таверне уже нет');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupDir = path.join(korrektorDir, 'backups', 'catalog', stamp);
     await fs.promises.mkdir(backupDir, { recursive: true });
+    if (item.type === 'extension') {
+        if ((await fs.promises.lstat(full)).isSymbolicLink()) throw httpError(400, 'Удаление расширения по символической ссылке не поддерживается');
+        await fs.promises.cp(full, path.join(backupDir, name), { recursive: true, dereference: false });
+        await fs.promises.rm(full, { recursive: true });
+        return { name, where: k.where, backup: path.join('korrektor', 'backups', 'catalog', stamp, name), reload: true };
+    }
     await fs.promises.copyFile(full, path.join(backupDir, name));
     await fs.promises.rm(full);
     localCache.delete(full);
