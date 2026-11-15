@@ -1,2 +1,10 @@
 node_modules/
 output.png
+desktop/dist/
+ios/build/
+ios/*.xcodeproj/
+ios/Tavernka/Info.plist
+*.xcresult/
+desktop/screens/
+ios/*Simulator.zip
+ios/iphone-preview.png

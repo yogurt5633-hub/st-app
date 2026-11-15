@@ -1,5 +1,7 @@
 # Тавернка — помощник для SillyTavern
 
+> Ветка `tavernka-desktop-ios`: разрабатываются Windows-приложение и нативный клиент iPhone. Linux пока отложен. [Запуск, проверки и ограничения](docs/work/desktop-ios-progress.md). Тестовые сборки находятся в артефактах workflow **Windows and iPhone preview**; готовность к стабильному релизу не заявляется.
+
 <p align="center"><img src="docs/cover.jpg" alt="Корректор: ИИ-помощник для чатов SillyTavern"></p>
 
 **Новичкам:** [пошаговый гайд](docs/GUIDE.md) — телефон, компьютер (Windows, macOS, Linux), связь между ними, перевод и частые ошибки.

@@ -1,0 +1,44 @@
+name: Tavernka
+options:
+  bundleIdPrefix: io.github.yogurt5633
+  deploymentTarget:
+    iOS: '16.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: '1,2'
+targets:
+  Tavernka:
+    type: application
+    platform: iOS
+    sources: [Tavernka]
+    info:
+      path: Tavernka/Info.plist
+      properties:
+        CFBundleDisplayName: Тавернка
+        UILaunchScreen: {}
+        NSLocalNetworkUsageDescription: Подключение к вашей SillyTavern на компьютере в той же сети.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoadsInWebContent: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.yogurt5633.tavernka.ios
+        GENERATE_INFOPLIST_FILE: false
+  TavernkaTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: Tavernka
+schemes:
+  Tavernka:
+    build:
+      targets:
+        Tavernka: all
+    test:
+      targets: [TavernkaTests]

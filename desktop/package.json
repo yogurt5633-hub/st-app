@@ -1,0 +1,20 @@
+{
+  "name": "tavernka-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Тавернка для Windows — SillyTavern и Корректор",
+  "author": "Tavernka contributors",
+  "main": "main.cjs",
+  "scripts": {"start": "electron .", "test": "node --test test/*.test.cjs", "dist:win": "electron-builder --win nsis --x64 --publish never"},
+  "devDependencies": {"electron": "45.3.2", "electron-builder": "26.18.0"},
+  "dependencies": {"yaml": "2.9.1"},
+  "build": {
+    "appId": "io.github.yogurt5633.tavernka.desktop",
+    "productName": "Tavernka",
+    "directories": {"output": "dist"},
+    "files": ["*.cjs", "ui/**", "package.json"],
+    "extraResources": [{"from":"../plugin","to":"bundle/plugin"},{"from":"../st-extension","to":"bundle/st-extension"},{"from":"../scripts/install.mjs","to":"bundle/scripts/install.mjs"}],
+    "win": {"target": ["nsis"], "icon": "../plugin/app/icons/icon-512.png"},
+    "nsis": {"oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "artifactName": "Tavernka-${version}-Windows-x64-Setup.${ext}"}
+  }
+}
