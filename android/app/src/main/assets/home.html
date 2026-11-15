@@ -9,7 +9,7 @@
     --bg-deep: #12110f; --bg: #161513; --card: #1c1a18; --raised: #262421;
     --line: rgba(239, 233, 222, 0.08); --line-strong: rgba(239, 233, 222, 0.14);
     --text: #efe9de; --text-2: #aaa398; --text-3: #aaa398;
-    --accent: #e3a54a; --primary: #efe9de; --on-primary: #161513;
+    --on-accent: #1d1608; --accent: #e3a54a; --primary: #efe9de; --on-primary: #161513;
     --pos: #4cc38a; --neg: #e5484d;
     --mono: "Roboto Mono", ui-monospace, monospace;
     --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -18,7 +18,7 @@ html[data-theme="light"] {
     --bg-deep: #efe9df; --bg: #f7f4ee; --card: #fdfbf7; --raised: #efe9df;
     --line: rgba(31, 27, 22, 0.08); --line-strong: rgba(31, 27, 22, 0.14);
     --text: #1f1b16; --text-2: #5e554a; --text-3: #6c6358;
-    --accent: #8a5200; --primary: #1f1b16; --on-primary: #fdfbf7;
+    --on-accent: #ffffff; --accent: #8a5200; --primary: #1f1b16; --on-primary: #fdfbf7;
     --pos: #15803d; --neg: #dc2626;
 }
 html[data-accent="rose"] { --accent: #e58aa0; }
@@ -65,7 +65,7 @@ input[type="text"] { width: 100%; min-height: 48px; padding: 0 12px; border-radi
 .switch span { position: absolute; inset: 0; border-radius: 13px; background: var(--raised); border: 1px solid var(--line-strong); pointer-events: none; transition: background-color 150ms var(--ease); }
 .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 9px; background: var(--text-3); transition: transform 150ms var(--ease); }
 .switch input:checked + span { background: var(--accent); border-color: transparent; }
-.switch input:checked + span::after { transform: translateX(18px); background: #1d1608; }
+.switch input:checked + span::after { transform: translateX(18px); background: var(--on-accent); }
 .badge { font-family: var(--mono); font-size: 12px; color: var(--accent); }
 a { color: var(--accent); }
 /* home dashboard */
@@ -130,7 +130,7 @@ html[data-theme="white"] {
     --bg-deep:#f4f4f5; --bg:#fafafa; --card:#ffffff; --raised:#f0f0f1;
     --text:#171717; --text-2:#525252; --text-3:#666666;
     --line:rgba(23,23,23,.08); --line-strong:rgba(23,23,23,.16);
-    --pos:#15803d; --neg:#b91c1c; --accent:#8a5200; --primary:#171717; --on-primary:#ffffff; color-scheme:light;
+    --on-accent:#ffffff; --pos:#15803d; --neg:#b91c1c; --accent:#8a5200; --primary:#171717; --on-primary:#ffffff; color-scheme:light;
 }
 html[data-theme="brown"] {
     --bg-deep:#181412; --bg:#211b17; --card:#2a231e; --raised:#352c25;
@@ -555,7 +555,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
     }
 
     // The oldest Korrektor plugin this app's screens work with.
-    var MIN_KORREKTOR = '0.4.9';
+    var MIN_KORREKTOR = '0.4.27';
 
     function versionLess(a, b) {
         var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);

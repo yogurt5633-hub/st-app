@@ -75,6 +75,9 @@ try{
   await page.getByText('Оформление',{exact:true}).first().click();
   assert.equal(await page.locator('.settings-group[open]').count(),1);
   if(width===390)await page.screenshot({path:`${output}/home-${theme}.png`,fullPage:true});
+  await page.getByRole('checkbox',{name:'Маскот на главной',exact:true}).uncheck();
+  await page.waitForFunction(()=>!document.querySelector('.companion'));
+  await page.getByRole('checkbox',{name:'Маскот на главной',exact:true}).check();
   await page.getByLabel('Тавернка: подсказки и реакции').click();
   await page.getByRole('button',{name:'Погладить',exact:true}).click();
   assert.match(await page.locator('.companion-message').textContent(),/Мур/);
@@ -92,6 +95,7 @@ try{
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools`);
  await page.getByRole('heading',{name:'Подключение к модели'}).waitFor();
  assert.equal(await page.locator('#view .mascot').count(),0,'no cheerful mascot beside a connection error');
+ await page.getByRole('button',{name:'Пробный запрос',exact:true}).waitFor();
  await noOverflow(page);
 
  await page.waitForFunction(()=>navigator.serviceWorker.controller,null,{timeout:10000});
