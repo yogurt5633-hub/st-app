@@ -102,6 +102,7 @@ else {
     win.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
     win.webContents.on('will-navigate', e => e.preventDefault());
     win.on('resize', layout);
+    win.on('close', event => { if (busy) { event.preventDefault(); announce('Дождитесь окончания установки Корректора, затем закройте приложение.'); } });
     handle('state', () => snapshot());
     handle('choose-folder', async () => {
       if (child || busy) throw new Error('Сначала остановите Таверну.');
@@ -157,6 +158,7 @@ else {
     win.loadFile(homeFile);
   });
   app.on('before-quit', event => {
+    if (busy) { event.preventDefault(); announce('Дождитесь окончания установки Корректора.'); return; }
     if ((!child && !installer) || quitting) return;
     event.preventDefault(); quitting = true;
     installer?.kill(); stop().finally(() => app.quit());

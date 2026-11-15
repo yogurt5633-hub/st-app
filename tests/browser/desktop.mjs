@@ -33,6 +33,9 @@ try {
   let ready = false;
   for (let i=0; i<50; i++) { try { ready=(await fetch('http://127.0.0.1:18763')).ok; } catch {} if(ready)break; await new Promise(r=>setTimeout(r,200)); }
   assert.ok(ready,'bundled runtime starts server');
+  await home.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  assert.equal(await home.locator('header').evaluate(element => element.getBoundingClientRect().top), 0, 'navigation remains visible when home scrolls');
+  await home.evaluate(() => window.scrollTo(0, 0));
   await home.screenshot({path:path.join(screenshots,'windows-home.png')});
   for (const label of ['Таверна','Корректор','Каталог']) {
     await home.getByRole('button',{name:label,exact:true}).click();
