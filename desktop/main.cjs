@@ -72,6 +72,28 @@ function handle(channel, fn) {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.on('login', (event, contents, details, authInfo, callback) => {
+    event.preventDefault();
+    if (authInfo.isProxy || !sameOrigin(details.url, prefs.url) || ![...views.values()].some(view => view.webContents === contents)) { callback(); return; }
+    const auth = new BrowserWindow({parent: win, modal: true, width: 480, height: 440, resizable: false, autoHideMenuBar: true, webPreferences: {preload: path.join(__dirname, 'auth-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true}});
+    let completed = false;
+    const finish = value => {
+      if (completed) return;
+      completed = true; ipcMain.removeListener('auth-response', receive);
+      if (value && typeof value.username === 'string' && typeof value.password === 'string') callback(value.username, value.password);
+      else callback();
+      if (!auth.isDestroyed()) auth.close();
+    };
+    const receive = (e, value) => {
+      if (e.sender === auth.webContents && e.senderFrame === auth.webContents.mainFrame) finish(value);
+    };
+    ipcMain.on('auth-response', receive);
+    auth.on('closed', () => finish(null));
+    auth.webContents.setWindowOpenHandler(() => ({action:'deny'}));
+    auth.webContents.on('will-navigate', e => e.preventDefault());
+    auth.webContents.on('did-finish-load', () => auth.webContents.send('auth-host', authInfo.host));
+    auth.loadFile(path.join(__dirname, 'ui/auth.html'));
+  });
   app.whenReady().then(() => {
     try { const stored = JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); prefs = {url: serverURL(stored.url), folder: String(stored.folder || '')}; } catch {}
     session.fromPartition('persist:tavernka').setPermissionRequestHandler((_wc, _permission, callback) => callback(false));

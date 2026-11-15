@@ -12,7 +12,7 @@ await fs.mkdir(path.join(fixture, 'node_modules'));
 await fs.writeFile(path.join(fixture, 'data/default-user/settings.json'), '{}');
 await fs.writeFile(path.join(fixture, 'package.json'), JSON.stringify({name:'SillyTavern',type:'module'}));
 await fs.writeFile(path.join(fixture, 'config.yaml'), 'port: 18763\nenableServerPlugins: false\n');
-await fs.writeFile(path.join(fixture, 'server.js'), `import http from 'node:http'; http.createServer((req,res)=>{res.setHeader('Content-Type','text/html'); res.end('<!doctype html><html><body><h1>Tavern fixture</h1><a href="https://example.org/">External</a></body></html>');}).listen(18763,'127.0.0.1');`);
+await fs.writeFile(path.join(fixture, 'server.js'), `import http from 'node:http'; http.createServer((req,res)=>{if(req.url==='/auth' && req.headers.authorization!=='Basic '+Buffer.from('fixture:test').toString('base64')){res.writeHead(401,{'WWW-Authenticate':'Basic realm=fixture'});res.end();return;}res.setHeader('Content-Type','text/html'); res.end('<!doctype html><html><body><h1>Tavern fixture</h1><a href="https://example.org/">External</a></body></html>');}).listen(18763,'127.0.0.1');`);
 const app = await electron.launch(process.env.TAVERNKA_EXE ? {executablePath:process.env.TAVERNKA_EXE} : {args:[path.join(root,'desktop')],executablePath:path.join(root,'desktop/node_modules/electron/dist',process.platform==='win32'?'electron.exe':'electron')});
 try {
   const home = await app.firstWindow();
@@ -49,6 +49,19 @@ try {
   });
   await home.waitForTimeout(300);
   assert.ok((await app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.getType()==='window').map(w=>w.getURL()))).every(url=>!url.startsWith('https://example.org')));
+  const loginOpened = app.waitForEvent('window');
+  await app.evaluate(({webContents}) => {
+    webContents.getAllWebContents().find(w=>w.getURL().startsWith('http://127.0.0.1:18763')).loadURL('http://127.0.0.1:18763/auth').catch(()=>{});
+  });
+  const login = await loginOpened;
+  await login.getByLabel('Логин',{exact:true}).fill('fixture');
+  await login.getByLabel('Пароль',{exact:true}).fill('test');
+  await login.getByRole('button',{name:'Войти',exact:true}).click();
+  await home.waitForTimeout(500);
+  assert.ok(await app.evaluate(async ({webContents}) => {
+    const wc=webContents.getAllWebContents().find(w=>w.getURL()==='http://127.0.0.1:18763/auth');
+    return wc && (await wc.executeJavaScript('document.body.textContent')).includes('Tavern fixture');
+  }), 'password-protected server opens after native login');
   await home.getByRole('button',{name:'Главная',exact:true}).click();
   await home.getByRole('button',{name:'Остановить',exact:true}).click();
   await home.getByText('Таверна остановлена.',{exact:true}).waitFor();

@@ -15,6 +15,10 @@ targets:
     type: application
     platform: iOS
     sources: [Tavernka]
+    preBuildScripts:
+      - name: Prepare existing Tavernka icon
+        script: /usr/bin/sips -z 1024 1024 "$SRCROOT/../plugin/app/icons/icon-512.png" --out "$SRCROOT/Tavernka/Assets.xcassets/AppIcon.appiconset/icon.png"
+        basedOnDependencyAnalysis: false
     info:
       path: Tavernka/Info.plist
       properties:
@@ -29,10 +33,17 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.yogurt5633.tavernka.ios
         GENERATE_INFOPLIST_FILE: false
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   TavernkaTests:
     type: bundle.unit-test
     platform: iOS
     sources: [Tests]
+    dependencies:
+      - target: Tavernka
+  TavernkaUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
     dependencies:
       - target: Tavernka
 schemes:
@@ -41,4 +52,4 @@ schemes:
       targets:
         Tavernka: all
     test:
-      targets: [TavernkaTests]
+      targets: [TavernkaTests, TavernkaUITests]
