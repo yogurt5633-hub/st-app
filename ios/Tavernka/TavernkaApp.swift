@@ -50,6 +50,11 @@ struct ConnectionView: View {
     @EnvironmentObject private var connection: Connection
     @State private var address = ""
     @State private var error: String?
+    @FocusState private var addressFocused: Bool
+    private func connect() {
+        addressFocused = false
+        do { try connection.connect(address); error = nil } catch { self.error = error.localizedDescription }
+    }
     var body: some View {
         NavigationStack {
             Form {
@@ -61,9 +66,8 @@ struct ConnectionView: View {
                     TextField("http://192.168.1.10:8000", text: $address)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .accessibilityLabel("Адрес SillyTavern")
-                    Button("Подключиться") {
-                        do { try connection.connect(address); error = nil } catch { self.error = error.localizedDescription }
-                    }.frame(minHeight: 44)
+                        .focused($addressFocused).submitLabel(.go).onSubmit(connect)
+                    Button("Подключиться", action: connect).frame(minHeight: 44)
                     if let error { Text(error).foregroundStyle(.red).accessibilityLabel("Ошибка: \(error)") }
                 }
                 Section("Как подготовить компьютер") {
@@ -74,6 +78,8 @@ struct ConnectionView: View {
                 }
                 Section { Text("Тестовая версия 0.1.0. SillyTavern работает на компьютере или сервере; приложение на iPhone её не запускает.").font(.footnote).foregroundStyle(.secondary) }
             }
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Готово") { addressFocused = false } } }
             .navigationTitle("Тавернка")
             .onAppear { if address.isEmpty { address = connection.server?.absoluteString ?? "" } }
         }
