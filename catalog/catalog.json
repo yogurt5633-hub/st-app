@@ -2,6 +2,23 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-memory-hub-russkiy-perevod",
+            "type": "extension",
+            "name": "Memory Hub — русский перевод",
+            "author": "Este / Kitima",
+            "description": "Расширение сохраняет старые части диалога как отдельные воспоминания и добавляет к запросу только подходящие. Исходный чат не удаляется. Есть автоматическое и ручное суммирование, импорт из Memory Books/Summarize и продолжение истории в новом чате.\n\nИнтерфейс и уведомления переведены на русский. Формат памяти, теги карточек, команды и промпты модели оставлены совместимыми с оригиналом.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-memory-hub-russkiy-perevod.zip",
+            "added": "2026-11-16",
+            "hash": "cf161550318c3da3dc93c4514d589b0e121ce01f91e6c3288d4aa24e56b26d3c",
+            "size": 75119,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-memory-hub-russkiy-perevod-1794862079622-1.webp"
+            ]
+        },
+        {
             "id": "extension-lingua-tavern-izuchenie-angliyskogo-i-kitayskogo-p",
             "type": "extension",
             "name": "Lingua Tavern — изучение английского и китайского прямо в SillyTavern",
@@ -91,5 +108,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-15T23:07:27.604Z"
+    "updated": "2026-11-16T20:48:01.473Z"
 }
