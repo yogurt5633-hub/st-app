@@ -2,6 +2,23 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-typing-indicator",
+            "type": "extension",
+            "name": "Typing Indicator",
+            "author": "Cohee1207",
+            "description": "Показывает над строкой ввода «Имя персонажа печатает...», пока модель готовит ответ. В настройках можно включить отображение во время потоковой генерации.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-typing-indicator.zip",
+            "added": "2026-11-16",
+            "hash": "985244a63a15f2a504489a2d5f7adfe55c516301206bd6e89c19be84c90afcfc",
+            "size": 16884,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-typing-indicator-1794862266909-1.webp"
+            ]
+        },
+        {
             "id": "extension-item",
             "type": "extension",
             "name": "酒馆助手",
@@ -125,5 +142,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-16T20:50:00.379Z"
+    "updated": "2026-11-16T20:51:08.200Z"
 }
