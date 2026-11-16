@@ -50,6 +50,14 @@ case "${1:-}" in
         ;;
 esac
 
+# Таверну открывает приложение. Без этого SillyTavern по умолчанию (browserLaunch.enabled: true)
+# сам открывает браузер, а при установленном Termux:API это Chrome с веб-версией.
+# Переменная окружения действует и на свою команду запуска; config.yaml пользователя не меняется.
+export SILLYTAVERN_BROWSERLAUNCH_ENABLED=false
+# То же для версий SillyTavern до 1.13.1, где настройка называлась autorun.
+export SILLYTAVERN_AUTORUN=false
+NO_BROWSER_ARGS=(--browserLaunchEnabled=false --autorun=false)
+
 # Папку ищем только когда она нужна: журналам и остановке поиск не нужен.
 SEARCHED=0
 have_dir() {
@@ -231,12 +239,12 @@ run_st() {
         if [ -d node_modules ] && [ "$(cat "$DEPS_FILE" 2>/dev/null)" = "$stamp" ] && command -v node >/dev/null; then
             say "Запускаю SillyTavern из $ST_DIR (зависимости не менялись, без npm install)"
             watch_ready "$from" "$stamp" &
-            node server.js 2>&1 | st_output
+            node server.js "${NO_BROWSER_ARGS[@]}" 2>&1 | st_output
             code=${PIPESTATUS[0]}
         else
             say "Запускаю SillyTavern из $ST_DIR. Сначала ставятся зависимости: в первый раз это может занять несколько минут"
             watch_ready "$from" "$stamp" &
-            bash ./start.sh 2>&1 | st_output
+            bash ./start.sh "${NO_BROWSER_ARGS[@]}" 2>&1 | st_output
             code=${PIPESTATUS[0]}
         fi
     fi

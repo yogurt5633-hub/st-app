@@ -15,7 +15,8 @@ if ! is_up; then
     # Не даём Android усыпить Termux, пока работает сервер.
     termux-wake-lock 2>/dev/null || true
     cd "$ST_DIR" || exit 1
-    nohup ./start.sh > "$HOME/.korrektor-st.log" 2>&1 &
+    # Браузер откроет этот ярлык сам, ниже; SillyTavern не должен открывать второй.
+    SILLYTAVERN_BROWSERLAUNCH_ENABLED=false SILLYTAVERN_AUTORUN=false nohup ./start.sh --browserLaunchEnabled=false --autorun=false > "$HOME/.korrektor-st.log" 2>&1 &
     for _ in $(seq 1 90); do
         is_up && break
         sleep 1

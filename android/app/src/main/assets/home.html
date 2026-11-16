@@ -119,18 +119,20 @@ button { overflow-wrap: anywhere; }
     .btn:active, .tile:active { transform: none; }
 }
 
-/* Theme variants requested for long reading sessions. */
-html[data-theme="black"] {
-    --bg-deep:#000000; --bg:#000000; --card:#101010; --raised:#1e1e1e;
-    --text:#ededed; --text-2:#b3b3b3; --text-3:#a1a1a1;
-    --line:rgba(237,237,237,.08); --line-strong:rgba(237,237,237,.16);
-    --primary:#ededed; --on-primary:#101010; color-scheme:dark;
+/* Extra themes: each differs from dark and light by more than shade.
+   Midnight: cool blue-grey night. Mist: cool grey-blue paper. Brown: muted warm neutrals.
+   Black and white were near copies of dark and light; saved choices map to those. */
+html[data-theme="midnight"] {
+    --bg-deep:#0d111a; --bg:#121722; --card:#192131; --raised:#222c3f;
+    --text:#e6eaf2; --text-2:#aab3c5; --text-3:#95a0b4;
+    --line:rgba(230,234,242,.08); --line-strong:rgba(230,234,242,.16);
+    --primary:#e6eaf2; --on-primary:#121722; color-scheme:dark;
 }
-html[data-theme="white"] {
-    --bg-deep:#f4f4f5; --bg:#fafafa; --card:#ffffff; --raised:#f0f0f1;
-    --text:#171717; --text-2:#525252; --text-3:#666666;
-    --line:rgba(23,23,23,.08); --line-strong:rgba(23,23,23,.16);
-    --on-accent:#ffffff; --pos:#15803d; --neg:#b91c1c; --accent:#8a5200; --primary:#171717; --on-primary:#ffffff; color-scheme:light;
+html[data-theme="mist"] {
+    --bg-deep:#e3e9f0; --bg:#eef2f6; --card:#f9fbfc; --raised:#e2e8ef;
+    --text:#17202a; --text-2:#465566; --text-3:#556274;
+    --line:rgba(23,32,42,.08); --line-strong:rgba(23,32,42,.16);
+    --on-accent:#ffffff; --pos:#15803d; --neg:#b91c1c; --accent:#8a5200; --primary:#17202a; --on-primary:#f9fbfc; color-scheme:light;
 }
 html[data-theme="brown"] {
     --bg-deep:#181412; --bg:#211b17; --card:#2a231e; --raised:#352c25;
@@ -144,10 +146,10 @@ html[data-theme="brown"] {
 .settings-content { padding:0 12px 12px; }
 .settings-content > h2:first-child { display:none; }
 .settings-content .box { background:var(--bg); }
-html[data-theme="white"][data-accent="rose"] { --accent:#a8325a; }
-html[data-theme="white"][data-accent="mint"] { --accent:#0f7a55; }
-html[data-theme="white"][data-accent="sky"] { --accent:#1d5f9e; }
-html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
+html[data-theme="mist"][data-accent="rose"] { --accent:#a8325a; }
+html[data-theme="mist"][data-accent="mint"] { --accent:#0b6b4a; }
+html[data-theme="mist"][data-accent="sky"] { --accent:#1d5f9e; }
+html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; }
 
 /* A quiet, optional companion. Motion runs only after an explicit interaction. */
 .companion { margin: 0 0 16px; border-bottom: 1px solid var(--line); }
@@ -555,7 +557,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
     }
 
     // The oldest Korrektor plugin this app's screens work with.
-    var MIN_KORREKTOR = '0.4.27';
+    var MIN_KORREKTOR = '0.4.29';
 
     function versionLess(a, b) {
         var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
@@ -617,7 +619,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
             h('div', { class: 'box' },
                 toggle('Маскот на главной', 'Подсказки и реакции по нажатию', companionVisible(), function (v) { try { localStorage.setItem('tavernka.companion', v ? 'visible' : 'hidden'); } catch (e) {} render(); }),
                 h('div', { class: 'row' }, h('span', { text: 'Тема' }),
-                    seg([['black', 'Чёрная'], ['white', 'Белая'], ['brown', 'Коричневая'], ['dark', 'Тёмная'], ['light', 'Светлая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
+                    seg([['dark', 'Тёмная'], ['light', 'Светлая'], ['midnight', 'Полночь'], ['mist', 'Туман'], ['brown', 'Коричневая'], ['system', 'Как в системе']], s.theme, function (v) { app.setTheme(v, s.accent); })),
                 h('div', { class: 'row' }, h('span', { text: 'Цвет акцента' }),
                     seg([['amber', 'Янтарь', '#e3a54a'], ['rose', 'Роза', '#e58aa0'], ['mint', 'Мята', '#5fc9a0'], ['sky', 'Небо', '#6aaee8'], ['lavender', 'Лаванда', '#a99be8']], s.accent, function (v) { app.setTheme(s.theme, v); })),
                 toggle('Модель и пресет над таверной', 'В строке над таверной: модель и пресет Chat Completion меняются одним нажатием. Обновить страницу, перевод, фоны и аватар там есть всегда', s.showModelBar, function (v) { app.setFlag('showModelBar', v); })),
@@ -767,7 +769,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
 
     function applyLook() {
         var el = document.documentElement;
-        el.dataset.theme = ['light', 'dark', 'black', 'white', 'brown'].indexOf(state.resolvedTheme) >= 0 ? state.resolvedTheme : 'dark';
+        el.dataset.theme = ['light', 'dark', 'brown', 'midnight', 'mist'].indexOf(state.resolvedTheme) >= 0 ? state.resolvedTheme : 'dark';
         if (state.accent && state.accent !== 'amber') el.dataset.accent = state.accent;
         else delete el.dataset.accent;
     }
@@ -843,7 +845,7 @@ html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; }
     refresh(true);
     // Tiles stay fresh while the home page is on screen (every 2 minutes: each refresh asks the tavern).
     setInterval(function () { if (state.stUp && state.homeShown !== false && document.visibilityState === 'visible') loadDashboard(); }, 120000);
-    setInterval(function () { if (state.starting || state.termuxChecking) refresh(); }, 2000);
+    setInterval(function () { if ((state.starting || state.termuxChecking) && state.homeShown !== false && document.visibilityState === 'visible') refresh(); }, 2500);
     if (!state.lastCheck || Date.now() - state.lastCheck > 6 * 3600 * 1000) {
         checking = true;
         render();

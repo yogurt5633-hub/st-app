@@ -500,6 +500,16 @@ test('glossary: preserve original spelling for blank translations and match punc
     assert.equal(suggestTerms('Ihan arrived. Ihan smiled.')[0].text, 'Ihan');
 });
 
+test('glossary protection matches whole words only, also in Cyrillic', async () => {
+    const { protectGlossary } = await import('../st-extension/translate.js');
+    const latin = protectGlossary('Ann met Annie and pAnn.', 'Ann = Анна');
+    assert.equal((latin.text.match(/TAVERNKATERM\d+END/g) || []).length, 1);
+    assert.ok(latin.text.includes('Annie') && latin.text.includes('pAnn'));
+    const cyrillic = protectGlossary('Аня и Анька.', 'Аня = Anya');
+    assert.ok(cyrillic.text.includes('Анька'));
+    assert.equal(cyrillic.restore(cyrillic.text), 'Anya и Анька.');
+});
+
 test('glossary restores marker-like translations in one pass and rejects duplicated terms', async () => {
     const { protectGlossary } = await import('../st-extension/translate.js');
     const protectedText = protectGlossary('Ann met Bob.', 'Ann = TAVERNKATERM1END\nBob = Роберт');

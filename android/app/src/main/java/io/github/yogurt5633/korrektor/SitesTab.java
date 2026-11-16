@@ -8,10 +8,12 @@ import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -38,9 +40,14 @@ final class SitesTab {
     private final LinearLayout root;
     private final LinearLayout chips;
     private WebView web;
-    private final View line;
+    private final FrameLayout line;
+    private final View progress;
     private int selected = -1;
+    private boolean loading;
     private Palette palette;
+    private final Runnable stopStuck = () -> {
+        if (web != null && loading) web.stopLoading();
+    };
 
     SitesTab(MainActivity activity) {
         this.activity = activity;
@@ -56,14 +63,19 @@ final class SitesTab {
         chips.setPadding(dp(12), dp(8), dp(12), dp(8));
         scroll.addView(chips);
         root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        line = new View(activity);
+        line = new FrameLayout(activity);
         line.setBackgroundColor(palette.line);
-        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
-
+        progress = new View(activity);
+        progress.setBackgroundColor(palette.accent);
+        progress.setVisibility(View.GONE);
+        line.addView(progress, new FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
     }
 
     void releaseHidden() {
         if (web == null || root.getVisibility() == View.VISIBLE) return;
+        root.removeCallbacks(stopStuck);
+        loading = false;
         root.removeView(web);
         web.destroy();
         web = null;
@@ -77,11 +89,19 @@ final class SitesTab {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setLoadsImagesAutomatically(true);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
         s.setSupportMultipleWindows(false); // target=_blank opens here
         s.setTextZoom(100);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true); // sign-in pages need it
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView v, int p) {
+                setLoading(p < 100, p);
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
@@ -93,6 +113,20 @@ final class SitesTab {
             }
 
             @Override
+            public void onPageStarted(WebView v, String url, android.graphics.Bitmap favicon) {
+                setLoading(true, 10);
+                root.removeCallbacks(stopStuck);
+                // Blocked third-party trackers can keep a page "loading" for a minute after it is usable.
+                root.postDelayed(stopStuck, 25_000);
+            }
+
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                root.removeCallbacks(stopStuck);
+                setLoading(false, 100);
+            }
+
+            @Override
             public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail detail) {
                 // Android stopped the page engine to free memory: a fresh page instead of a crash.
                 v.post(() -> recover(v));
@@ -100,6 +134,23 @@ final class SitesTab {
             }
         });
         return web;
+    }
+
+    private void setLoading(boolean on, int percent) {
+        boolean changed = loading != on;
+        loading = on;
+        if (!on) {
+            progress.setVisibility(View.GONE);
+        } else {
+            progress.setVisibility(View.VISIBLE);
+            int width = line.getWidth();
+            if (width > 0) {
+                ViewGroup.LayoutParams lp = progress.getLayoutParams();
+                lp.width = Math.max(dp(24), width * Math.min(Math.max(percent, 5), 100) / 100);
+                progress.setLayoutParams(lp);
+            }
+        }
+        if (changed) rebuild();
     }
 
     private void recover(WebView dead) {
@@ -121,6 +172,7 @@ final class SitesTab {
         this.palette = palette;
         root.setBackgroundColor(palette.bg);
         line.setBackgroundColor(palette.line);
+        progress.setBackgroundColor(palette.accent);
         if (web != null) web.setBackgroundColor(palette.bg);
         rebuild();
     }
@@ -179,7 +231,11 @@ final class SitesTab {
             if (item == null) continue;
             chips.addView(chip(item.optString("name"), i == selected, false, v -> open(index)));
         }
-        if (list.length() > 0) chips.addView(chip("Обновить", false, true, v -> { if (web != null) web.reload(); }));
+        if (list.length() > 0) chips.addView(chip(loading ? "Остановить" : "Обновить", false, true, v -> {
+            if (web == null) return;
+            if (loading) web.stopLoading();
+            else web.reload();
+        }));
         if (list.length() > 0) chips.addView(chip("В браузере", false, true, v -> {
             String url = web == null ? null : web.getUrl();
             if (url != null && url.startsWith("http")) openOutside(url);
@@ -187,12 +243,16 @@ final class SitesTab {
         chips.addView(chip(list.length() == 0 ? "Добавить сайт" : "Изменить список", false, true, v -> activity.showSitesSettings()));
     }
 
+    private void ensureWeb() {
+        if (web != null) return;
+        web = makeWeb();
+        root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+    }
+
     /** Shows the tab; loads the last used site the first time. */
     void onShown() {
-        if (web == null) {
-            web = makeWeb();
-            root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        }
+        ensureWeb();
+        web.onResume();
         if (selected < 0) {
             int last = (int) activity.prefs.number("siteIndex");
             JSONArray list = sites();
@@ -205,6 +265,11 @@ final class SitesTab {
         JSONArray list = sites();
         JSONObject item = list.optJSONObject(index);
         if (item == null) return;
+        ensureWeb();
+        if (selected == index && web.getUrl() != null) {
+            rebuild();
+            return;
+        }
         selected = index;
         activity.prefs.setNumber("siteIndex", index);
         web.loadUrl(item.optString("url"));

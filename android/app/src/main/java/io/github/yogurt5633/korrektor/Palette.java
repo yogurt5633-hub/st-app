@@ -17,17 +17,20 @@ final class Palette {
     final int accent;
     final int onPrimary;
 
+    /** Themes the person can pick. Older black/white were near copies of dark/light and map to them. */
+    static final String THEMES = "light|dark|brown|midnight|mist";
+
     private Palette(String theme, String accent) {
-        boolean light = "light".equals(theme) || "white".equals(theme);
+        boolean light = isLight(theme);
         this.light = light;
         // Order: background, deep, card, raised, border, text, muted, primary text.
         String[] colors;
         switch (theme) {
-            case "white":
-                colors = new String[]{"#fafafa", "#f4f4f5", "#ffffff", "#f0f0f1", "#e8e8e8", "#171717", "#666666", "#ffffff"};
+            case "midnight":
+                colors = new String[]{"#121722", "#0d111a", "#192131", "#222c3f", "#2a3446", "#e6eaf2", "#95a0b4", "#121722"};
                 break;
-            case "black":
-                colors = new String[]{"#000000", "#000000", "#101010", "#1e1e1e", "#222222", "#ededed", "#a1a1a1", "#101010"};
+            case "mist":
+                colors = new String[]{"#eef2f6", "#e3e9f0", "#f9fbfc", "#e2e8ef", "#d3dbe5", "#17202a", "#556274", "#f9fbfc"};
                 break;
             case "brown":
                 colors = new String[]{"#211b17", "#181412", "#2a231e", "#352c25", "#3c332b", "#f1e8dd", "#b6a694", "#211b17"};
@@ -46,23 +49,39 @@ final class Palette {
         text = Color.parseColor(colors[5]);
         muted = Color.parseColor(colors[6]);
         onPrimary = Color.parseColor(colors[7]);
-        this.accent = Color.parseColor(accentHex(accent, light));
+        this.accent = Color.parseColor(accentHex(accent, light, "mist".equals(theme)));
+    }
+
+    static boolean isLight(String theme) {
+        return "light".equals(theme) || "mist".equals(theme);
+    }
+
+    /** A saved theme name as it is now: black and white were removed. */
+    static String migrate(String theme) {
+        if ("black".equals(theme)) return "dark";
+        if ("white".equals(theme)) return "light";
+        return theme;
     }
 
     static String accentHex(String accent, boolean light) {
+        return accentHex(accent, light, false);
+    }
+
+    /** Mist is a cooler paper: the default mint is under 4.5:1 on it, so it gets a deeper one. */
+    static String accentHex(String accent, boolean light, boolean mist) {
         switch (accent == null ? "" : accent) {
             case "rose": return light ? "#a8325a" : "#e58aa0";
-            case "mint": return light ? "#0f7a55" : "#5fc9a0";
+            case "mint": return light ? (mist ? "#0b6b4a" : "#0f7a55") : "#5fc9a0";
             case "sky": return light ? "#1d5f9e" : "#6aaee8";
             case "lavender": return light ? "#5b47b3" : "#a99be8";
             default: return light ? "#8a5200" : "#e3a54a";
         }
     }
 
-    /** "dark" or "light": the chosen theme, or the system one for "system". */
+    /** The chosen theme, or the system one (light or dark) for "system". */
     static String resolvedTheme(Context context, Prefs prefs) {
-        String theme = prefs.text(Prefs.THEME);
-        if (theme != null && theme.matches("light|dark|black|white|brown")) return theme;
+        String theme = migrate(prefs.text(Prefs.THEME));
+        if (theme != null && theme.matches(THEMES)) return theme;
         if ("system".equals(theme)) {
             int night = context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
             return night == Configuration.UI_MODE_NIGHT_NO ? "light" : "dark";

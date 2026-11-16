@@ -74,8 +74,45 @@ final class Net {
         }
     }
 
-    /** Is SillyTavern answering at this address? */
+    /**
+     * Is SillyTavern answering at this address? Only the status line is read, not the page:
+     * the tavern's index.html is large, and this runs every 1.5 s while the tavern starts.
+     */
     static boolean alive(String stUrl) {
-        return get(stUrl + "/", 2500, false).status > 0;
+        return status(stUrl + "/", 2500) > 0;
+    }
+
+    /**
+     * Is it still there? Asked after the app comes back from the background, when Termux and
+     * the network wake up slowly: a single slow answer must not count as "the tavern stopped".
+     */
+    static boolean stillAlive(String stUrl) {
+        for (int i = 0; i < 3; i++) {
+            if (status(stUrl + "/", i == 0 ? 2500 : 5000) > 0) return true;
+            try {
+                Thread.sleep(800);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** HTTP status of a HEAD request (any status means the server answered), or 0. */
+    private static int status(String address, int timeoutMs) {
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL(address).openConnection();
+            connection.setRequestMethod("HEAD");
+            connection.setConnectTimeout(timeoutMs);
+            connection.setReadTimeout(timeoutMs);
+            connection.setRequestProperty("User-Agent", "KorrektorApp");
+            return connection.getResponseCode();
+        } catch (Exception e) {
+            return 0;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 }

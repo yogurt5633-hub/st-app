@@ -535,7 +535,7 @@ export async function renderCatalog() {
         }, text)));
     drawList();
     put(view,
-        back('#tools', 'Ещё'),
+        inApp() ? null : back('#tools', 'Ещё'),
         filters,
         filterBar,
         data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
@@ -734,6 +734,7 @@ export async function receiveFile(name, base64) {
     const blob = new Blob([bytes]);
     let type = '';
     if (bytes[0] === 0x89 && bytes[1] === 0x50) type = 'card';
+    else if (bytes[0] === 0x50 && bytes[1] === 0x4b) type = 'extension';
     else {
         try {
             const json = JSON.parse(new TextDecoder().decode(bytes).replace(/^﻿/, ''));
@@ -744,7 +745,7 @@ export async function receiveFile(name, base64) {
         }
     }
     try {
-        if (!type) throw new Error('Это не пресет, не лорбук, не карточка и не регекс SillyTavern');
+        if (!type) throw new Error('Это не пресет, не лорбук, не карточка, не расширение (ZIP) и не регекс SillyTavern');
         if (type === 'regex') {
             const r = await uploadRaw('/catalog/upload-regex', blob);
             incoming = { type, name, upload: r.upload, regexNames: r.names };
@@ -904,9 +905,18 @@ export async function renderCatalogAuthor() {
             regexUploads.length ? h('div', { class: 'badges', style: 'margin-top:8px' }, regexUploads.map((r, i) => h('button', { class: 'badge removable', type: 'button', title: 'Убрать', onclick: () => { regexUploads.splice(i, 1); drawRegex(); }, text: `${r.names.join(', ')} ✕` }))) : null,
             h('div', { class: 'card-actions', style: 'margin-top:8px' }, h('button', { class: 'btn secondary small', type: 'button', text: 'Добавить файл регекса', onclick: () => regexInput.click() }), regexInput));
     };
+    const typePicker = h('div');
+    const drawTypePicker = () => put(typePicker, pick([...CATALOG_TYPES, ['extension', 'Расширение']], type, (v) => { type = v; drawSource(); }));
     fileInput.addEventListener('change', async () => {
         const f = fileInput.files[0];
         if (!f) return;
+        const isZip = /\.zip$/i.test(f.name || '') || /zip/i.test(f.type || '');
+        if (isZip && type !== 'extension') {
+            type = 'extension';
+            source = 'upload';
+            drawTypePicker();
+            drawSource();
+        }
         const revision = ++sourceRevision;
         const uploadType = type;
         status.textContent = 'Проверяю файл…';
@@ -936,7 +946,8 @@ export async function renderCatalogAuthor() {
         upload = '';
         inside = [];
         drop = new Set();
-        fileInput.accept = type === 'extension' ? '.zip,application/zip,application/x-zip-compressed' : type === 'card' ? '.png,image/png' : '.json,application/json';
+        // Include .zip so choosing an extension archive works even before switching the type tab.
+        fileInput.accept = type === 'extension' ? '.zip,application/zip,application/x-zip-compressed,application/octet-stream' : type === 'card' ? '.png,image/png,.zip,application/zip' : '.json,application/json,.zip,application/zip,application/x-zip-compressed';
         if (source === 'local') {
             put(sourceBox, localPicker(type, (value, label, row) => {
                 file = value;
@@ -965,7 +976,7 @@ export async function renderCatalogAuthor() {
             } });
             put(sourceBox, url, h('div', { class: 'card-actions' }, load), h('p', { class: 'small muted', text: 'Публичный репозиторий. В каталог попадёт текущая версия из основной ветки; в ней нужен manifest.json' }));
         } else {
-            put(sourceBox, type === 'extension' ? h('p', { class: 'small muted', text: 'ZIP до 20 МБ: manifest.json и файлы расширения в корне или в одной общей папке' }) : null, h('button', { class: 'btn secondary', type: 'button', text: 'Выбрать файл', onclick: () => fileInput.click() }), fileInput);
+            put(sourceBox, type === 'extension' ? h('p', { class: 'small muted', text: 'ZIP до 20 МБ: manifest.json и файлы расширения в корне или в одной общей папке' }) : null, h('button', { class: 'btn secondary', type: 'button', text: type === 'extension' ? 'Выбрать ZIP-файл' : 'Выбрать файл', onclick: () => fileInput.click() }), fileInput);
         }
         status.textContent = '';
         drawRegex();
@@ -1035,6 +1046,7 @@ export async function renderCatalogAuthor() {
         type = shared.type;
         source = 'upload';
     }
+    drawTypePicker();
     drawSource();
     if (shared && shared.type !== 'regex') {
         upload = shared.upload;
@@ -1048,7 +1060,7 @@ export async function renderCatalogAuthor() {
         back('#tools/catalog', 'Каталог'),
         h('div', { class: 'section' },
             h('h3', { class: 'section-title', text: 'Добавить в каталог' }),
-            pick([...CATALOG_TYPES, ['extension', 'Расширение']], type, (v) => { type = v; drawSource(); }),
+            typePicker,
             sourcePicker,
             sourceBox,
             regexBox,
@@ -1493,10 +1505,19 @@ export function recapSection(info) {
 // ---------- theme ----------
 
 export const ACCENTS = [['amber', 'Янтарь'], ['rose', 'Роза'], ['mint', 'Мята'], ['sky', 'Небо'], ['lavender', 'Лаванда']];
+/** Themes to choose from. Black and white were near copies of dark and light: saved ones map to those. */
+export const THEMES = [['dark', 'Тёмная'], ['light', 'Светлая'], ['midnight', 'Полночь'], ['mist', 'Туман'], ['brown', 'Коричневая']];
+
+export function themeName(theme) {
+    if (theme === 'black') return 'dark';
+    if (theme === 'white') return 'light';
+    return THEMES.some(([key]) => key === theme) ? theme : '';
+}
 
 export function applyTheme(theme, accent) {
     const root = document.documentElement;
-    if (['light', 'dark', 'black', 'white', 'brown'].includes(theme)) root.dataset.theme = theme;
+    const name = themeName(theme);
+    if (name) root.dataset.theme = name;
     else delete root.dataset.theme;
     if (accent && accent !== 'amber') root.dataset.accent = accent;
     else delete root.dataset.accent;

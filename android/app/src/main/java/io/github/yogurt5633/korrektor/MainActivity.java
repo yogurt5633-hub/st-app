@@ -49,6 +49,7 @@ import java.util.Map;
  */
 public class MainActivity extends Activity {
     static final String TAVERN = "tavern";
+    static final String CATALOG = "catalog";
     static final String KORREKTOR = "korrektor";
     static final String HOME = "home";
     static final String SITES = "sites";
@@ -108,6 +109,8 @@ public class MainActivity extends Activity {
     private String pendingImport;
     private boolean reportPending;
     private boolean korrektorLoaded;
+    /** Last screen opened on the «Настройки» tab, so returning from «Каталог» goes back to it. */
+    private String settingsHash = "#feed";
     /** The latest line SillyTavern printed while starting: shown on the home page. */
     String progress = "";
     private View updateBar;
@@ -123,6 +126,8 @@ public class MainActivity extends Activity {
     private int waitToken;
     private String pendingTab;
     private final java.util.List<HttpAuthHandler> authWaiting = new java.util.ArrayList<>();
+    /** The tavern page failed once and was reloaded after the server answered: a second failure is real. */
+    private boolean pageErrorRetried;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -166,7 +171,8 @@ public class MainActivity extends Activity {
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(60)));
         addTab(bar, HOME, "Главная", R.drawable.ic_tab_home);
         addTab(bar, TAVERN, "Таверна", R.drawable.ic_tab_tavern);
-        addTab(bar, KORREKTOR, "Каталог", R.drawable.ic_tab_korrektor);
+        addTab(bar, CATALOG, "Каталог", R.drawable.ic_tab_catalog);
+        addTab(bar, KORREKTOR, "Настройки", R.drawable.ic_tab_settings);
         addTab(bar, SITES, "Сайты", R.drawable.ic_tab_sites);
         setSitesVisible(prefs.flag(Prefs.SHOW_SITES, true));
 
@@ -361,7 +367,8 @@ public class MainActivity extends Activity {
         view.setPadding(0, dp(8), 0, dp(6));
         view.setOnClickListener(v -> {
             if (HOME.equals(name)) homeChosen = true;
-            if (KORREKTOR.equals(name)) openKorrektor("#tools/catalog");
+            if (CATALOG.equals(name)) openKorrektor("#tools/catalog");
+            else if (KORREKTOR.equals(name)) openKorrektor(settingsHash);
             else showTab(name);
         });
         tabs.put(name, view);
@@ -411,6 +418,22 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void doUpdateVisitedHistory(WebView v, String url, boolean isReload) {
+                if (v != korrektor || url == null) return;
+                int idx = url.indexOf('#');
+                String hash = idx >= 0 ? url.substring(idx) : "#feed";
+                boolean catalog = hash.startsWith("#tools/catalog");
+                if (!catalog) settingsHash = hash;
+                if (isPluginTab(current)) {
+                    String wanted = catalog ? CATALOG : KORREKTOR;
+                    if (!wanted.equals(current)) {
+                        current = wanted;
+                        paintTabs();
+                    }
+                }
+            }
+
+            @Override
             public void onPageFinished(WebView v, String url) {
                 if (pageTab) v.evaluateJavascript(FilesBridge.HOOK, null);
                 authTries = 0;
@@ -428,6 +451,7 @@ public class MainActivity extends Activity {
                 }
                 // SillyTavern fills its menus a little after the page loads.
                 if (v == tavern) {
+                    pageErrorRetried = false;
                     handler.postDelayed(modelBar::refresh, 4000);
                     passTavernTheme();
                 }
@@ -458,12 +482,25 @@ public class MainActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView v, WebResourceRequest request, WebResourceError error) {
-                if (pageTab && request.isForMainFrame()) {
-                    stUp = false;
-                    loaded = false;
-                    message = "SillyTavern не отвечает";
-                    showTab(HOME);
+                if (!pageTab || !request.isForMainFrame()) return;
+                // A slow answer right after the app returns from the background is not a stopped
+                // tavern: look again (with retries) before dropping the page and leaving the tab.
+                if (pageErrorRetried) {
+                    pageErrorRetried = false;
+                    dropTavernPage();
+                    return;
                 }
+                new Thread(() -> {
+                    boolean up = Net.stillAlive(prefs.stUrl());
+                    runOnUiThread(() -> {
+                        if (up) {
+                            pageErrorRetried = true;
+                            v.reload();
+                        } else {
+                            dropTavernPage();
+                        }
+                    });
+                }).start();
             }
         });
 
@@ -492,6 +529,13 @@ public class MainActivity extends Activity {
             view.setDownloadListener((url, userAgent, disposition, mime, length) -> download(view, url, userAgent, disposition, mime));
         }
         return view;
+    }
+
+    private void dropTavernPage() {
+        stUp = false;
+        loaded = false;
+        message = "SillyTavern не отвечает";
+        showTab(HOME);
     }
 
     private void replaceWebView(WebView dead) {
@@ -525,7 +569,7 @@ public class MainActivity extends Activity {
         } else {
             korrektor = fresh;
             korrektorLoaded = false;
-            if (stUp && KORREKTOR.equals(current)) loadKorrektor();
+            if (stUp && isPluginTab(current)) loadKorrektor(CATALOG.equals(current) ? "#tools/catalog" : settingsHash);
         }
         appLog("Android выгрузил страницу " + (isHome ? "главной" : isTavern ? "таверны" : "Корректора") + " ради памяти: открыта заново");
     }
@@ -623,12 +667,16 @@ public class MainActivity extends Activity {
 
     // ---------- tabs and server state ----------
 
+    private static boolean isPluginTab(String tab) {
+        return CATALOG.equals(tab) || KORREKTOR.equals(tab);
+    }
+
     private WebView viewOf(String tab) {
-        return TAVERN.equals(tab) ? tavern : KORREKTOR.equals(tab) ? korrektor : SITES.equals(tab) ? sites.webView() : home;
+        return TAVERN.equals(tab) ? tavern : isPluginTab(tab) ? korrektor : SITES.equals(tab) ? sites.webView() : home;
     }
 
     void showTab(String name) {
-        String tab = TAVERN.equals(name) || KORREKTOR.equals(name) || SITES.equals(name) ? name : HOME;
+        String tab = TAVERN.equals(name) || isPluginTab(name) || SITES.equals(name) ? name : HOME;
         // Provider sites work without SillyTavern; the other tabs need it running.
         if (!HOME.equals(tab) && !SITES.equals(tab) && !stUp) {
             message = starting ? message : "SillyTavern не запущен";
@@ -638,16 +686,18 @@ public class MainActivity extends Activity {
         paintTabs();
         tavernBox.setVisibility(TAVERN.equals(tab) ? View.VISIBLE : View.GONE);
         if (TAVERN.equals(tab)) modelBar.refresh();
-        if (KORREKTOR.equals(tab) && loaded && !korrektorLoaded) loadKorrektor();
-        korrektor.setVisibility(KORREKTOR.equals(tab) ? View.VISIBLE : View.GONE);
+        boolean plugin = isPluginTab(tab);
+        if (plugin && loaded && !korrektorLoaded) loadKorrektor(CATALOG.equals(tab) ? "#tools/catalog" : settingsHash);
+        korrektor.setVisibility(plugin ? View.VISIBLE : View.GONE);
         home.setVisibility(HOME.equals(tab) ? View.VISIBLE : View.GONE);
         sites.view().setVisibility(SITES.equals(tab) ? View.VISIBLE : View.GONE);
         // Hidden pages need no animations or redraws. The tavern is never paused: a reply may be streaming.
-        pauseUnless(korrektor, KORREKTOR.equals(tab));
+        pauseUnless(home, HOME.equals(tab));
+        pauseUnless(korrektor, plugin);
         pauseUnless(sites.webView(), SITES.equals(tab));
         if (SITES.equals(tab)) sites.onShown();
-        if (TAVERN.equals(tab) || KORREKTOR.equals(tab)) prefs.setText(Prefs.LAST_TAB, tab);
-        notifyHome();
+        if (TAVERN.equals(tab) || plugin) prefs.setText(Prefs.LAST_TAB, tab);
+        if (HOME.equals(tab)) notifyHome();
     }
 
     private void pauseUnless(WebView view, boolean shown) {
@@ -695,8 +745,11 @@ public class MainActivity extends Activity {
     }
 
     private void checkServer(boolean mayAutoStart) {
+        // While the tavern is open, a failed check is retried before the page is dropped:
+        // after a while in the background Termux and the network answer slowly at first.
+        boolean wasUp = stUp && loaded;
         new Thread(() -> {
-            boolean up = Net.alive(prefs.stUrl());
+            boolean up = wasUp ? Net.stillAlive(prefs.stUrl()) : Net.alive(prefs.stUrl());
             runOnUiThread(() -> onServerState(up, mayAutoStart));
         }).start();
     }
@@ -717,7 +770,7 @@ public class MainActivity extends Activity {
                 tavern.loadUrl(prefs.stUrl() + "/");
                 // The Korrektor page loads on first visit: the phone has less work while the tavern starts.
                 korrektorLoaded = false;
-                if (KORREKTOR.equals(current)) loadKorrektor();
+                if (isPluginTab(current)) loadKorrektor(CATALOG.equals(current) ? "#tools/catalog" : settingsHash);
                 loaded = true;
             }
             progress = "";
@@ -728,13 +781,13 @@ public class MainActivity extends Activity {
                 pendingTab = null;
             } else if (HOME.equals(current) && !homeChosen) {
                 String last = prefs.text(Prefs.LAST_TAB);
-                showTab(KORREKTOR.equals(last) ? KORREKTOR : TAVERN);
+                showTab(isPluginTab(last) ? last : TAVERN);
             }
         } else {
             loaded = false;
             if (prefs.onPc()) {
                 message = "Таверна на ПК не отвечает: проверьте, что компьютер включён, таверна запущена и адрес верный";
-            } else if (mayAutoStart && prefs.flag(Prefs.AUTO_START, true) && Termux.installed(this) && Termux.permitted(this)) {
+            } else if (mayAutoStart && prefs.autoStart() && Termux.installed(this) && Termux.permitted(this)) {
                 // Start once Termux has answered the check and SillyTavern is known to be there.
                 boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
                 if (termuxReady == Boolean.TRUE && !termuxChecking) {
@@ -947,7 +1000,8 @@ public class MainActivity extends Activity {
                 if (startAfterCheck) {
                     startAfterCheck = false;
                     boolean known = !stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty();
-                    if (!o.failedToRun() && known && !stUp && !starting) {
+                    // Checked again: the option may have been switched off while Termux answered.
+                    if (!o.failedToRun() && known && !stUp && !starting && prefs.autoStart() && !prefs.onPc()) {
                         runAction(prefs.startAction());
                     }
                 }
@@ -1054,13 +1108,15 @@ public class MainActivity extends Activity {
 
     void openKorrektor(String hash) {
         homeChosen = false;
+        boolean catalog = hash != null && hash.startsWith("#tools/catalog");
+        if (!catalog && hash != null && !hash.isEmpty()) settingsHash = hash;
+        String tab = catalog ? CATALOG : KORREKTOR;
         if (stUp && !korrektorLoaded) {
             // Not opened yet: load it straight on the wanted screen.
-            korrektorLoaded = true;
-            korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/" + hash);
+            loadKorrektor(hash);
         }
-        showTab(KORREKTOR);
-        if (KORREKTOR.equals(current)) korrektor.evaluateJavascript("location.hash=" + JSONObject.quote(hash), null);
+        showTab(tab);
+        if (isPluginTab(current)) korrektor.evaluateJavascript("location.hash=" + JSONObject.quote(hash), null);
     }
 
     void refreshModelBar() {
@@ -1071,7 +1127,7 @@ public class MainActivity extends Activity {
         prefs.setNumber(Prefs.ONBOARDING, Prefs.ONBOARDING_VERSION);
         homeChosen = false;
         if (stUp) showTab(TAVERN);
-        else if (termuxReady == Boolean.TRUE && (!stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty()) && !starting) {
+        else if (prefs.autoStart() && termuxReady == Boolean.TRUE && (!stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty()) && !starting) {
             runAction(prefs.startAction());
         } else notifyHome();
     }
@@ -1144,6 +1200,7 @@ public class MainActivity extends Activity {
     }
 
     void notifyHome() {
+        if (!HOME.equals(current)) return;
         sendToHome("state", null);
     }
 
@@ -1206,9 +1263,10 @@ public class MainActivity extends Activity {
 
     // ---------- links shared to the app ----------
 
-    private void loadKorrektor() {
+    private void loadKorrektor(String hash) {
         korrektorLoaded = true;
-        korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/");
+        String suffix = hash == null ? "" : hash;
+        korrektor.loadUrl(prefs.stUrl() + "/api/plugins/korrektor/app/" + suffix);
     }
 
     /** Reloads SillyTavern's page (the tavern tab). */
@@ -1426,7 +1484,7 @@ public class MainActivity extends Activity {
                 pendingAction = null;
                 // Pressed "Start" before: do it now. Otherwise start on our own only once
                 // Termux has answered and SillyTavern is known to be there.
-                startAfterCheck = action == null && prefs.flag(Prefs.AUTO_START, true);
+                startAfterCheck = action == null && prefs.autoStart();
                 checkTermux();
                 if (action != null) runAction(action);
             } else {
@@ -1502,7 +1560,9 @@ public class MainActivity extends Activity {
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW && sites != null) sites.releaseHidden();
+        // Only while the app is in the background: dropping the site tab while the person
+        // switches between tabs inside the app made every return reload the site from scratch.
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND && sites != null) sites.releaseHidden();
     }
 
     @Override
@@ -1519,14 +1579,14 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         visible = false;
-        CookieManager.getInstance().flush();
+        new Thread(() -> CookieManager.getInstance().flush()).start();
     }
 
     @Override
     public void onBackPressed() {
         if (SITES.equals(current)) {
             WebView site = sites.webView();
-            if (site.canGoBack()) site.goBack();
+            if (site != null && site.canGoBack()) site.goBack();
             else showTab(stUp ? TAVERN : HOME);
             return;
         }

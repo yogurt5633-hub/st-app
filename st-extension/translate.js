@@ -22,7 +22,7 @@ const SETTINGS_KEY = 'korrektor.translate';
 const MODEL_API = '/api/plugins/korrektor/translate';
 const KEY_API = '/api/plugins/korrektor/translate/key';
 // The companion's version, for the journal (the same as in manifest.json).
-const COMPANION_VERSION = '0.4.28';
+const COMPANION_VERSION = '0.4.29';
 
 // ---------- journal ----------
 // What the translation did: requests, retries, cut answers, errors. Kept in this browser
@@ -364,7 +364,7 @@ export function protectGlossary(text, glossary) {
     while (text.includes(prefix)) prefix += 'X';
     const values = new Map(terms.map(term => [term.from.toLowerCase(), term.to]));
     const pattern = terms.map(term => escapeRegex(term.from)).join('|');
-    const protectedText = text.replace(new RegExp(`(?<![\p{L}\p{N}])(?:${pattern})(?![\p{L}\p{N}])`, 'giu'), match => {
+    const protectedText = text.replace(new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'giu'), match => {
         const marker = `${prefix}${replacements.length}END`;
         replacements.push({ marker, value: values.get(match.toLowerCase()) || match });
         return marker;

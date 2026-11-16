@@ -103,6 +103,14 @@ final class Prefs {
     static final int ONBOARDING_VERSION = 1;
 
     /**
+     * Start SillyTavern when the app opens. Off unless the person switched it on: with the old
+     * default (on) the tavern started by itself every time Android had unloaded the app.
+     */
+    boolean autoStart() {
+        return flag(AUTO_START, false);
+    }
+
+    /**
      * "start-update" only when a newer Korrektor is already known (from the update check);
      * otherwise a plain start that does not wait for GitHub.
      */

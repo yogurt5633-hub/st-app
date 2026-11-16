@@ -43,7 +43,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(url.pathname.endsWith('/usage'))data={total:{roleplay:{input:0,output:0,cost:0,calls:0},korrektor:{input:0,output:0,cost:0}},byDay:[],expensive:[],models:[],chats:[]};
   if(url.pathname==='/csrf-token')data={token:'fixture'};
-  if(url.pathname.endsWith('/status'))data={version:'0.4.28',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
+  if(url.pathname.endsWith('/status'))data={version:'0.4.29',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
   if(url.pathname.endsWith('/proposals')||url.pathname.endsWith('/chats'))data={items:[],mode:'recent'};
   if(url.pathname.endsWith('/settings'))data=DEFAULT_SETTINGS;
   if(url.pathname.endsWith('/worlds')||url.pathname.endsWith('/extensions/review'))data={items:[]};
@@ -68,8 +68,9 @@ async function noOverflow(page,selector='body'){
  assert.equal(await page.locator(selector).evaluate(e=>e.scrollWidth>innerWidth+1),false,`horizontal overflow: ${selector}`);
 }
 try{
- for(const theme of ['dark','light','black','white','brown','system-dark','system-light'])for(const width of [320,390]){
-  const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:['light','white','system-light'].includes(theme)?'light':'dark',reducedMotion:'reduce'});
+ const homeBgs=new Map();
+ for(const theme of ['dark','light','midnight','mist','brown','system-dark','system-light'])for(const width of [320,390]){
+  const context=await browser.newContext({viewport:{width,height:844},isMobile:true,hasTouch:true,colorScheme:['light','mist','system-light'].includes(theme)?'light':'dark',reducedMotion:'reduce'});
   const page=await context.newPage();observe(page);
   await page.addInitScript(({theme})=>{
    const state={resolvedTheme:theme.replace('system-',''),theme:theme.startsWith('system-')?'system':theme,accent:'amber',onboardingDone:false,stUp:false,termuxInstalled:true,termuxPermission:true,termuxReady:true,lastCheck:Date.now()};
@@ -77,6 +78,7 @@ try{
    window.KorrektorApp=new Proxy({state:()=>JSON.stringify(state),sites:()=>JSON.stringify([]),finishOnboarding:()=>{state.onboardingDone=true;}},{get:(o,k)=>o[k]||(()=>{})});
   },{theme});
   await page.goto(`${origin}/android/app/src/main/assets/home.html`);await decoded(page);
+  if(!theme.startsWith('system-')&&width===390)homeBgs.set(theme,await page.evaluate(()=>getComputedStyle(document.body).backgroundColor));
   assert.equal(await page.locator('.onb .mascot').count(),1);
   assert.equal(await page.locator('.onb .title').textContent(),'Тавернка');
   for(let step=1;step<=5;step++){
@@ -115,9 +117,10 @@ try{
   await page.evaluate(()=>document.body.style.fontSize='24px');await noOverflow(page);
   await context.close();
  }
+ assert.equal(new Set(homeBgs.values()).size,5,'all 5 explicit themes have distinct backgrounds');
  // Inspect every visible mascot placement in each explicit and system theme.
- for(const theme of ['dark','light','black','white','brown','system-dark','system-light']){
-  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,colorScheme:['light','white','system-light'].includes(theme)?'light':'dark'});
+ for(const theme of ['dark','light','midnight','mist','brown','system-dark','system-light']){
+  const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,colorScheme:['light','mist','system-light'].includes(theme)?'light':'dark'});
   const page=await context.newPage();observe(page);
   await page.addInitScript(theme=>{if(!theme.startsWith('system-'))localStorage.setItem('korrektor.theme',theme);},theme);
   for(const [route,title] of [['feed','Оптимизация временно отключена'],['tools/catalog','Каталог пока пуст'],['tools/spend','Пока ничего не потрачено'],['tools/cards','Карточек нет'],['tools/muted','Ничего не скрыто']]){
@@ -148,11 +151,21 @@ try{
  await page.getByRole('button',{name:'Расширения',exact:true}).click();
  await page.getByText('Проверить установленные расширения',{exact:true}).click();
  await page.getByText('Сторонние расширения пока не установлены',{exact:true}).waitFor();
- assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'catalog');
+ assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'tools');
  await noOverflow(page);
  await page.screenshot({path:`${output}/extensions.png`,fullPage:true});
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/import`);
  await page.getByText('Импорт по ссылке временно отключён',{exact:true}).waitFor();
+ await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Оптимизация временно отключена',{exact:true}).waitFor();await decoded(page);
+ assert.equal(await page.locator('#page-title').textContent(),'Оптимизация');
+ assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'optimization');
+ await page.locator('.optimization-switch').getByRole('link',{name:'Чаты',exact:true}).click();
+ await page.getByRole('heading',{name:'Чатов пока нет',exact:true}).waitFor();
+ assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'optimization');
+ await page.locator('.tab[data-tab="tavern"]').click();
+ await page.getByRole('heading',{name:'Раздел в разработке',exact:true}).waitFor();
+ assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'tavern');
+ await noOverflow(page);
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Оптимизация временно отключена',{exact:true}).waitFor();await decoded(page);
  await page.screenshot({path:`${output}/feed.png`});
  await page.getByRole('button',{name:'Совет Тавернки',exact:true}).click();
@@ -162,6 +175,18 @@ try{
  await page.getByText('Нет связи с SillyTavern',{exact:true}).waitFor();
  assert.equal(await page.locator('#view .mascot').count(),0);
  await context.close();
+ // Inside the Android app, the catalog opens as its own bottom-bar tab without the settings tabbar.
+ const appContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true,userAgent:'Mozilla/5.0 KorrektorApp/1.0'});
+ const appPage=await appContext.newPage();observe(appPage);
+ await appPage.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/catalog`);
+ await appPage.getByRole('heading',{name:'Каталог пока пуст',exact:true}).waitFor();
+ assert.equal(await appPage.locator('.tabbar').isVisible(),false);
+ assert.equal(await appPage.locator('.back-link').count(),0);
+ await appPage.goto(`${origin}/api/plugins/korrektor/app/index.html#settings`);
+ await appPage.locator('.settings-group summary').first().waitFor();
+ assert.equal(await appPage.locator('.tabbar').isVisible(),true);
+ assert.deepEqual(await appPage.locator('.tabbar .tab span:not(.tab-count)').allTextContents(),['Оптимизация','Ещё','Настройки','Таверна']);
+ await appContext.close();
  // Catalog filters and the hidden author panel use the actual forms with a fake publishing API.
  catalogItems=cleanItems({items:[
   {id:'en',type:'extension',name:'English extension',url:'https://example.org/en.zip',language:'en',translated:false},

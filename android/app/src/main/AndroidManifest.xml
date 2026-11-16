@@ -48,12 +48,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
-            <!-- "Поделиться" a preset, lorebook, card or regex file (from Telegram): install or publish it -->
+            <!-- "Поделиться" a preset, lorebook, card, extension ZIP or regex file (from Telegram): install or publish it -->
             <intent-filter android:label="Корректор">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/json" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
                 <data android:mimeType="image/png" />
                 <data android:mimeType="text/json" />
             </intent-filter>

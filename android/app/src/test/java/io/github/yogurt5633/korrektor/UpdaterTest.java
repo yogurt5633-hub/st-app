@@ -29,4 +29,16 @@ public class UpdaterTest {
         assertEquals(0, Updater.compare("0.4.27", "0.4.27"));
         assertTrue(Updater.compare("0.4.26", "0.4.27") < 0);
     }
+
+    @Test public void duplicateThemesMigrateAndDistinctOnesAreKept() {
+        assertEquals("dark", Palette.migrate("black"));
+        assertEquals("light", Palette.migrate("white"));
+        assertEquals("midnight", Palette.migrate("midnight"));
+        assertEquals("mist", Palette.migrate("mist"));
+        assertTrue(Palette.isLight("light"));
+        assertTrue(Palette.isLight("mist"));
+        assertFalse(Palette.isLight("dark"));
+        assertFalse(Palette.isLight("midnight"));
+        assertFalse(Palette.isLight("brown"));
+    }
 }

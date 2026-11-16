@@ -40,7 +40,7 @@ final class ControlBridge {
             s.put("termuxSetup", Termux.SETUP);
             s.put("notifications", Notifier.allowed(activity));
             s.put("canInstall", Updater.canInstall(activity));
-            s.put("autoStart", prefs.flag(Prefs.AUTO_START, true));
+            s.put("autoStart", prefs.autoStart());
             s.put("autoUpdate", prefs.flag(Prefs.AUTO_UPDATE, true));
             s.put("notify", prefs.flag(Prefs.NOTIFY, true));
             s.put("lastCheck", prefs.number("lastCheck"));
@@ -55,7 +55,7 @@ final class ControlBridge {
             s.put("permissionDenied", activity.permissionDenied);
             s.put("showSites", prefs.flag(Prefs.SHOW_SITES, true));
             s.put("showModelBar", prefs.flag(Prefs.SHOW_MODEL_BAR, true));
-            s.put("theme", prefs.text(Prefs.THEME).isEmpty() ? "dark" : prefs.text(Prefs.THEME));
+            s.put("theme", prefs.text(Prefs.THEME).isEmpty() ? "dark" : Palette.migrate(prefs.text(Prefs.THEME)));
             s.put("resolvedTheme", Palette.resolvedTheme(activity, prefs));
             s.put("accent", prefs.text(Prefs.ACCENT).isEmpty() ? "amber" : prefs.text(Prefs.ACCENT));
             s.put("onboardingDone", prefs.number(Prefs.ONBOARDING) >= Prefs.ONBOARDING_VERSION);
@@ -219,10 +219,10 @@ final class ControlBridge {
         });
     }
 
-    /** dark | light | system, and the accent colour. */
+    /** A theme from {@link Palette#THEMES} or system, and the accent colour. */
     @JavascriptInterface
     public void setTheme(String theme, String accent) {
-        String t = theme != null && theme.matches("light|dark|black|white|brown|system") ? theme : "dark";
+        String t = theme != null && theme.matches(Palette.THEMES + "|system") ? theme : "dark";
         String a = accent != null && accent.matches("amber|rose|mint|sky|lavender") ? accent : "amber";
         activity.prefs.setText(Prefs.THEME, t);
         activity.prefs.setText(Prefs.ACCENT, a);
@@ -276,8 +276,8 @@ final class ControlBridge {
     @JavascriptInterface
     public void openSite(int index) {
         activity.runOnUiThread(() -> {
-            activity.showTab(MainActivity.SITES);
             activity.sites.open(index);
+            activity.showTab(MainActivity.SITES);
         });
     }
 

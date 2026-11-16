@@ -147,6 +147,16 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 }
 .tab[aria-current="page"] { color: var(--text); }
 .tab-count { position: absolute; top: 6px; left: calc(50% + 10px); font-family: var(--mono); font-size: 11px; line-height: 16px; color: var(--accent); }
+/* The bar holds four tabs: «Оптимизация», «Ещё», «Настройки», «Таверна». */
+.tabbar { grid-template-columns: repeat(4, 1fr); }
+.tab span:not(.tab-count) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
+/* Inside the Android app the catalog is a tab of its own: no second row of tabs under it. */
+body.no-tabbar .tabbar { display: none; }
+body.no-tabbar .view { padding-bottom: calc(24px + var(--safe-bottom)); }
+/* «Лента / Чаты» on top of the «Оптимизация» tab. */
+.optimization-switch { margin-top: 0; }
+.optimization-switch .filter { display: inline-flex; align-items: center; text-decoration: none; }
+@media (pointer: coarse) { .optimization-switch .filter { height: 48px; } }
 
 /* Sections and text */
 .section { margin-top: 24px; }
@@ -450,20 +460,22 @@ button.row, a.row { width: 100%; border-left: 0; border-right: 0; border-bottom:
     .icon-button { min-width: 48px; }
 }
 
-/* Theme variants requested for long reading sessions. */
-html[data-theme="black"] {
-    --bg-deep:#000000; --bg:#000000; --card:#101010; --raised:#1e1e1e;
-    --text:#ededed; --text-2:#b3b3b3; --text-3:#a1a1a1;
-    --line:rgba(237,237,237,.08); --line-strong:rgba(237,237,237,.16);
-    --primary:#ededed; --on-primary:#101010; color-scheme:dark;
+/* Extra themes: each differs from dark and light by more than shade.
+   Midnight: cool blue-grey night. Mist: cool grey-blue paper. Brown: muted warm neutrals.
+   Black and white were near copies of dark and light; saved choices map to those. */
+html[data-theme="midnight"] {
+    --bg-deep:#0d111a; --bg:#121722; --card:#192131; --raised:#222c3f;
+    --text:#e6eaf2; --text-2:#aab3c5; --text-3:#95a0b4;
+    --line:rgba(230,234,242,.08); --line-strong:rgba(230,234,242,.16);
+    --primary:#e6eaf2; --on-primary:#121722; color-scheme:dark;
 }
-html[data-theme="white"] {
-    --bg-deep:#f4f4f5; --bg:#fafafa; --card:#ffffff; --raised:#f0f0f1;
-    --text:#171717; --text-2:#525252; --text-3:#666666;
-    --line:rgba(23,23,23,.08); --line-strong:rgba(23,23,23,.16);
-    --accent:#8a5200; --on-accent:#ffffff; --primary:#171717;
+html[data-theme="mist"] {
+    --bg-deep:#e3e9f0; --bg:#eef2f6; --card:#f9fbfc; --raised:#e2e8ef;
+    --text:#17202a; --text-2:#465566; --text-3:#556274;
+    --line:rgba(23,32,42,.08); --line-strong:rgba(23,32,42,.16);
+    --accent:#8a5200; --on-accent:#ffffff; --primary:#17202a;
     --pos:#15803d; --neg:#b91c1c; --ins-text:#15803d; --del-text:#b91c1c;
-    --ins:rgba(22,163,74,.12); --del:rgba(220,38,38,.1); --on-primary:#ffffff; color-scheme:light;
+    --ins:rgba(22,163,74,.12); --del:rgba(220,38,38,.1); --on-primary:#f9fbfc; color-scheme:light;
 }
 html[data-theme="brown"] {
     --bg-deep:#181412; --bg:#211b17; --card:#2a231e; --raised:#352c25;
@@ -476,10 +488,10 @@ html[data-theme="brown"] {
 .settings-group summary { padding:16px; min-height:56px; cursor:pointer; font-weight:500; }
 .settings-group > .rows { border:0; border-radius:0 0 12px 12px; }
 
-html[data-theme="white"][data-accent="rose"] { --accent:#a8325a; --on-accent:#ffffff; }
-html[data-theme="white"][data-accent="mint"] { --accent:#0f7a55; --on-accent:#ffffff; }
-html[data-theme="white"][data-accent="sky"] { --accent:#1d5f9e; --on-accent:#ffffff; }
-html[data-theme="white"][data-accent="lavender"] { --accent:#5b47b3; --on-accent:#ffffff; }
+html[data-theme="mist"][data-accent="rose"] { --accent:#a8325a; --on-accent:#ffffff; }
+html[data-theme="mist"][data-accent="mint"] { --accent:#0b6b4a; --on-accent:#ffffff; }
+html[data-theme="mist"][data-accent="sky"] { --accent:#1d5f9e; --on-accent:#ffffff; }
+html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; --on-accent:#ffffff; }
 
 .mascot-button { border:0; background:none; padding:0; cursor:pointer; border-radius:16px; }
 .mascot-button:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }

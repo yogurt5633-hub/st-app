@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.28';
+const APP_VERSION = '0.4.29';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -357,13 +357,27 @@ function currentRoute() {
     if (hash.startsWith('compress/')) return { name: 'compress', id: hash.slice(9) };
     if (hash.startsWith('card/')) return { name: 'card', id: hash.slice(5) };
     if (hash.startsWith('tools/')) return { name: 'tool', id: hash.slice(6) };
-    return { name: ['feed', 'chats', 'history', 'settings', 'tools'].includes(hash) ? hash : 'feed' };
+    return { name: ['feed', 'chats', 'history', 'settings', 'tools', 'tavern'].includes(hash) ? hash : 'feed' };
+}
+
+/** The catalog is its own tab in the app's bottom bar: there it opens without this page's tabs. */
+function catalogRoute(route) {
+    return route.name === 'tool' && String(route.id).startsWith('catalog');
+}
+
+/** Feed and chats live together on the «Оптимизация» tab, switched by a row on top. */
+function optimizationSwitch(active) {
+    return h('div', { class: 'filters optimization-switch', role: 'group', 'aria-label': 'Оптимизация' },
+        [['feed', 'Лента'], ['chats', 'Чаты']].map(([key, label]) =>
+            h('a', { class: 'filter', href: `#${key}`, 'aria-current': active === key ? 'page' : null, 'aria-pressed': String(active === key) }, label)));
 }
 
 async function renderRoute() {
     const route = currentRoute();
     const sheet = $('#sheet');
-    const tabName = route.name === 'tool' && route.id.startsWith('catalog') ? 'catalog' : route.name === 'proposal' ? 'feed' : ['chat', 'compress'].includes(route.name) ? 'chats' : ['tool', 'card'].includes(route.name) ? 'tools' : route.name;
+    const tabName = ['feed', 'chats', 'proposal', 'chat', 'compress'].includes(route.name) ? 'optimization'
+        : ['tool', 'card', 'history'].includes(route.name) ? 'tools' : route.name;
+    document.body.classList.toggle('no-tabbar', tools.inApp() && catalogRoute(route));
     for (const tab of document.querySelectorAll('.tab')) {
         if (tab.dataset.tab === tabName) tab.setAttribute('aria-current', 'page');
         else tab.removeAttribute('aria-current');
@@ -381,8 +395,9 @@ async function renderRoute() {
     oldView.replaceWith(freshView);
     document.body.style.overflow = '';
     const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
-    const titles = { feed: 'Лента', chats: 'Чаты', history: 'История', settings: 'Настройки', tools: 'Ещё', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
+    const titles = { feed: 'Оптимизация', chats: 'Оптимизация', history: 'История', settings: 'Настройки', tools: 'Ещё', tavern: 'Таверна', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
     $('#page-title').textContent = titles[route.name];
+    if (route.name === 'tavern') return renderTavern();
     if (route.name === 'tools') return tools.renderTools();
     if (route.name === 'card') return tools.renderCardHealth(route.id);
     if (route.name === 'tool') {
@@ -404,6 +419,13 @@ async function renderRoute() {
     if (route.name === 'chats') return renderChats();
     if (route.name === 'history') return renderHistory();
     return renderSettings();
+}
+
+/** «Таверна» in the settings' bottom bar: its contents are not decided yet. */
+function renderTavern() {
+    put($('#view'), h('div', { class: 'empty' },
+        h('h2', { text: 'Раздел в разработке' }),
+        h('p', { text: 'Здесь появятся настройки таверны' })));
 }
 
 // ---------- top bar ----------
@@ -531,6 +553,7 @@ function renderFeed() {
     if (remarksOff()) {
         // What was asked for still shows; findings do not.
         put(view,
+            optimizationSwitch('feed'),
             h('div', { class: 'empty' },
                 tools.mascot('sleep', 150),
                 h('h2', { text: state.status?.optimizationPaused ? 'Оптимизация временно отключена' : 'Замечания выключены' }),
@@ -541,6 +564,7 @@ function renderFeed() {
     }
     const single = !['all', 'watched'].includes(state.feedChat);
     const children = [
+        optimizationSwitch('feed'),
         h('p', { class: 'scanline', id: 'scanline' }),
         // Not wanted at all: one switch, at the top, where it is seen without scrolling past every card.
         h('div', { class: 'feed-off' }, h('button', { class: 'btn quiet small', type: 'button', onclick: () => setRemarks(false), text: 'Выключить замечания' })),
@@ -877,15 +901,16 @@ async function loadChats() {
 
 async function renderChats() {
     const view = $('#view');
-    if (!state.chats.length) put(view, h('p', { class: 'muted', text: 'Загружаю чаты' }));
+    const top = optimizationSwitch('chats');
+    if (!state.chats.length) put(view, top, h('p', { class: 'muted', text: 'Загружаю чаты' }));
     try {
         await loadChats();
     } catch (error) {
-        put(view, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
+        put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
         return;
     }
     if (!state.chats.length) {
-        put(view, h('div', { class: 'empty' }, h('h2', { text: 'Чатов пока нет' }), h('p', { text: 'Начните чат в SillyTavern, и он появится здесь' })));
+        put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Чатов пока нет' }), h('p', { text: 'Начните чат в SillyTavern, и он появится здесь' })));
         return;
     }
 
@@ -921,7 +946,7 @@ async function renderChats() {
     };
     search.addEventListener('input', () => { state.chatQuery = search.value; draw(); });
     draw();
-    put(view, h('div', { style: 'margin-bottom:12px' }, search), tabs, hint, list);
+    put(view, top, h('div', { style: 'margin-bottom:12px' }, search), tabs, hint, list);
 }
 
 // ---------- "Ask Korrektor" ----------
@@ -1422,7 +1447,7 @@ async function renderSettings(reload = true) {
             h('div', { class: 'rows' },
                 h('div', { class: 'field' },
                     h('span', { class: 'label', text: 'Тема' }),
-                    seg([['', 'Как в системе'], ['black', 'Чёрная'], ['white', 'Белая'], ['brown', 'Коричневая'], ['dark', 'Тёмная'], ['light', 'Светлая']], storageGet('korrektor.theme') || '', (v) => { window.korrektorTheme(v, storageGet('korrektor.accent')); renderSettings(false); })),
+                    seg([['', 'Как в системе'], ...tools.THEMES], tools.themeName(storageGet('korrektor.theme')), (v) => { window.korrektorTheme(v, storageGet('korrektor.accent')); renderSettings(false); })),
                 h('div', { class: 'field' },
                     h('span', { class: 'label', text: 'Цвет акцента' }),
                     seg(tools.ACCENTS, storageGet('korrektor.accent') || 'amber', (v) => { window.korrektorTheme(storageGet('korrektor.theme'), v); renderSettings(false); })))),
@@ -1455,7 +1480,7 @@ async function renderSettings(reload = true) {
                     h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Какие чаты' }),
                         seg([['recent', 'Недавние'], ['watched', 'Отмеченные']], s.scan.mode, (v) => save({ scan: { mode: v } }, true))),
                     h('span', { class: 'hint', text: s.scan.mode === 'watched'
-                        ? `Отмечено чатов: ${(s.scan.watched || []).length}. Отмечать — звёздочкой на вкладке «Чаты»`
+                        ? `Отмечено чатов: ${(s.scan.watched || []).length}. Отмечать — звёздочкой: «Оптимизация» → «Чаты»`
                         : 'Последние изменённые чаты. Если чатов много, удобнее отметить нужные звёздочкой и выбрать «Отмеченные»' })),
                 h('div', { class: 'field' }, h('div', { class: 'field-row' }, h('span', { class: 'label', text: 'Как часто' }), interval)),
                 s.scan.mode !== 'watched' ? numberField('Сколько недавних чатов', null, s.scan.recentChats, (v) => save({ scan: { recentChats: v } }), { min: 1, max: 20 }) : null,
