@@ -8,8 +8,8 @@
             "author": "Cohee1207",
             "description": "Показывает полный запрос к модели перед отправкой и позволяет разово его исправить. Можно проверить порядок системных инструкций, пресет и записи лора. Полезно при работе с Claude и DeepSeek, когда модель не следует нужному правилу.",
             "tags": [],
-            "language": "",
-            "translated": null,
+            "language": "th",
+            "translated": true,
             "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-proverka-zaprosov-prompt-inspector.zip",
             "added": "2026-11-16",
             "hash": "3ff864a0c550415284aae404309ccba1ced1755e8fe4421ec2c40aec78bdf410",
@@ -176,5 +176,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-16T20:52:55.250Z"
+    "updated": "2026-11-16T20:53:09.294Z"
 }
