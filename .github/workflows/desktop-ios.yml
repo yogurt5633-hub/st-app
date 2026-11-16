@@ -1,0 +1,104 @@
+name: Windows and iPhone release
+on:
+  push:
+    branches: [main, tavernka-gpt, tavernka-desktop-ios]
+    paths: ['desktop/**', 'ios/**', 'plugin/**', 'st-extension/**', 'scripts/install.mjs', 'tests/**', '.github/workflows/desktop-ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: desktop-ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix desktop
+      - run: npm test
+      - run: npm test --prefix desktop
+      - run: npx playwright install chromium
+      - name: Review existing web UI
+        run: npm run test:browser
+        env:
+          REVIEW_OUTPUT: ${{ github.workspace }}/desktop/screens/web
+      - name: Build Windows installer
+        run: npm run dist:win --prefix desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Test packaged Windows application
+        run: node tests/browser/desktop.mjs
+        env:
+          TAVERNKA_EXE: ${{ github.workspace }}/desktop/dist/win-unpacked/Tavernka.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-preview
+          path: |
+            desktop/dist/*Setup.exe
+            desktop/screens/
+          if-no-files-found: error
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate --spec ios/project.yml
+      - name: Build and test on iPhone simulator
+        shell: bash
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for a in d["devices"].values() for v in a if "iPhone" in v["name"]))')
+          xcodebuild -project ios/Tavernka.xcodeproj -scheme Tavernka -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath ios/build -resultBundlePath ios/TestResults.xcresult CODE_SIGNING_ALLOWED=NO test
+          ditto -c -k --sequesterRsrc --keepParent ios/build/Build/Products/Debug-iphonesimulator/Tavernka.app ios/Tavernka-Simulator.zip
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl install "$DEVICE" ios/build/Build/Products/Debug-iphonesimulator/Tavernka.app
+          xcrun simctl launch "$DEVICE" io.github.yogurt5633.tavernka.ios
+          sleep 3
+          xcrun simctl io "$DEVICE" screenshot ios/iphone-preview.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iphone-simulator-preview
+          path: |
+            ios/Tavernka-Simulator.zip
+            ios/iphone-preview.png
+            ios/TestResults.xcresult
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: [windows, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-preview
+          path: release-win
+      - uses: actions/download-artifact@v4
+        with:
+          name: iphone-simulator-preview
+          path: release-ios
+      - name: Attach Windows and iPhone builds to latest GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WIN_EXE=$(find release-win -name '*Setup.exe' | head -n 1)
+          IOS_ZIP=$(find release-ios -name 'Tavernka-Simulator.zip' | head -n 1)
+          for i in $(seq 1 12); do
+            TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+            [ -n "$TAG" ] && break
+            sleep 10
+          done
+          if [ -n "$TAG" ]; then
+            gh release upload "$TAG" "$WIN_EXE" "$IOS_ZIP" --clobber
+          fi
+

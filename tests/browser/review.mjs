@@ -158,7 +158,7 @@ try{
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/catalog`);
  await page.getByRole('button',{name:'Расширения',exact:true}).click();
  assert.equal(await page.getByText('Проверить установленные расширения',{exact:true}).count(),0);
- assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'tools');
+ assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'catalog');
  await noOverflow(page);
  await page.screenshot({path:`${output}/extensions.png`,fullPage:true});
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/import`);
@@ -196,7 +196,8 @@ try{
  await appPage.goto(`${origin}/api/plugins/korrektor/app/index.html#settings`);
  await appPage.getByRole('heading',{name:'Подключение',exact:true}).waitFor();
  assert.equal(await appPage.locator('.tabbar').isVisible(),true);
- assert.deepEqual(await appPage.locator('.tabbar .tab span:not(.tab-count)').allTextContents(),['Оптимизация','Ещё','Настройки','Таверна']);
+ assert.equal(await appPage.locator('.tabbar .only-browser').isVisible(),false);
+ assert.deepEqual(await appPage.locator('.tabbar .tab:not(.only-browser) span:not(.tab-count)').allTextContents(),['Оптимизация','Ещё','Настройки','Таверна']);
  await appContext.close();
  // Catalog filters and the hidden author panel use the actual forms with a fake publishing API.
  catalogItems=cleanItems({items:[

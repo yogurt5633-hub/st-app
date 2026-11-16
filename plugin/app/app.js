@@ -382,10 +382,12 @@ function optimizationSwitch(active) {
 async function renderRoute() {
     const route = currentRoute();
     const sheet = $('#sheet');
+    const inNativeApp = tools.inApp();
+    document.body.classList.toggle('in-app', inNativeApp);
     const isOpt = ['feed', 'chats', 'proposal', 'chat', 'compress', 'history', 'card'].includes(route.name)
         || (route.name === 'tool' && ['cards', 'muted'].includes(route.id));
-    const tabName = isOpt ? 'optimization' : route.name === 'tool' ? 'tools' : route.name;
-    document.body.classList.toggle('no-tabbar', tools.inApp() && catalogRoute(route));
+    const tabName = catalogRoute(route) ? 'catalog' : isOpt ? 'optimization' : route.name === 'tool' ? 'tools' : route.name;
+    document.body.classList.toggle('no-tabbar', inNativeApp && catalogRoute(route));
     for (const tab of document.querySelectorAll('.tab')) {
         if (tab.dataset.tab === tabName) tab.setAttribute('aria-current', 'page');
         else tab.removeAttribute('aria-current');
@@ -1517,6 +1519,7 @@ async function renderSettings(reload = true) {
 
         h('div', { class: 'section' },
             h('div', { class: 'card-actions' },
+                h('button', { class: 'btn secondary', type: 'button', text: 'Что нового', onclick: () => showWhatsNewSheet() }),
                 h('button', { class: 'btn secondary', type: 'button', text: 'Откат до заводских настроек', onclick: async () => {
                     const ok = await confirmDialog({ title: 'Вернуть заводские настройки?', text: 'Настройки Тавернки, глоссарий, скрытые виды замечаний и статистика расходов вернутся к исходным значениям. Чаты и карточки SillyTavern не затрагиваются', ok: 'Сбросить всё', danger: true });
                     if (!ok) return;
@@ -1547,6 +1550,20 @@ async function renderSettings(reload = true) {
 }
 
 // ---------- misc ----------
+
+function showWhatsNewSheet() {
+    storageSet('korrektor.whatsNewSeen', APP_VERSION);
+    const items = [
+        ['Вкладка «Таверна» — всё управление в одном месте', 'Пресеты, Лорбук, Карточки, Расширения, Регексы и Антивирус: переключайте пресеты и лорбуки, редактируйте промпты, карточки и правила Regex без лагов самой SillyTavern.'],
+        ['Конвертация и перенос в SillyTavern', 'Во вкладке «Ещё → Конвертация для SillyTavern» превращайте JSON-карточки в PNG, извлекайте вшитые лорбуки и регексы, упаковывайте расширения в ZIP и сразу устанавливайте в таверну.'],
+        ['Живой каталог и новые темы', 'Когда в каталоге выходит новинка, на кнопке «Каталог» сразу загорается метка. В оформлении добавлены темы «Полночь» и «Туман».'],
+        ['Всё для оптимизации рядом', 'Лента, Чаты, Здоровье карточек, История и Скрытые замечания объединены во вкладке «Оптимизация». В «Расходах» добавлен сброс статистики и откат настроек.'],
+    ];
+    openSheet(`Что нового в Тавернке ${APP_VERSION}`, h('div', { class: 'list' },
+        items.map(([title, text]) => h('article', { class: 'card' },
+            h('h2', { class: 'card-title', text: title }),
+            h('p', { class: 'card-summary', text })))));
+}
 
 function plural(n, one, few, many) {
     const m10 = n % 10;

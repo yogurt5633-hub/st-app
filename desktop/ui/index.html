@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Тавернка</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header>
+  <div class="brand">Тавернка <span id="version-label">для Windows · 0.4.30</span></div>
+  <nav aria-label="Основные разделы">
+    <button data-tab="home" aria-current="page">Главная</button>
+    <button data-tab="tavern">Таверна</button>
+    <button data-tab="catalog" id="catalog-tab">Каталог</button>
+    <button data-tab="korrektor">Настройки</button>
+    <button id="whats-new-btn" type="button" class="reload">Что нового</button>
+    <button id="reload" type="button">Обновить страницу</button>
+  </nav>
+</header>
+<main>
+  <h1>Ваши истории, в одном окне</h1>
+  <p class="intro">Запустите Таверну на этом компьютере или подключитесь к уже работающей.</p>
+  <p id="status" role="status" aria-live="polite"></p>
+  <div class="columns">
+    <section>
+      <h2>На этом компьютере</h2>
+      <p>Нужна установленная SillyTavern. Выберите её папку — ту, где находится <code>server.js</code>.</p>
+      <p id="folder">Папка ещё не выбрана</p>
+      <button id="choose" type="button">Выбрать папку</button>
+      <ol>
+        <li>Остановите Таверну, если она открыта отдельно.</li>
+        <li>Установите Корректор. Существующие файлы сохранятся в резервную копию.</li>
+        <li>Запустите Таверну и откройте её вкладку сверху.</li>
+      </ol>
+      <div class="actions">
+        <button id="install" type="button">Установить Корректор</button>
+        <button id="start" type="button" class="primary">Запустить</button>
+        <button id="stop" type="button">Остановить</button>
+      </div>
+      <p class="hint">При закрытии приложения запущенная им Таверна тоже остановится.</p>
+    </section>
+    <section>
+      <h2>По адресу</h2>
+      <p>Для сервера на другом компьютере или уже запущенной Таверны.</p>
+      <form id="connection">
+        <label for="url">Адрес SillyTavern</label>
+        <input id="url" type="url" required placeholder="http://192.168.1.10:8000" autocomplete="url">
+        <button class="primary" type="submit">Подключиться</button>
+      </form>
+      <details>
+        <summary>Оформление</summary>
+        <p class="hint">Тема и цвет акцента применяются к окну Тавернки и ко вкладкам «Каталог» и «Настройки».</p>
+        <div class="actions" id="theme-picker" role="group" aria-label="Тема">
+          <button type="button" data-theme="dark">Тёмная</button>
+          <button type="button" data-theme="light">Светлая</button>
+          <button type="button" data-theme="midnight">Полночь</button>
+          <button type="button" data-theme="mist">Туман</button>
+          <button type="button" data-theme="brown">Коричневая</button>
+          <button type="button" data-theme="system">Как в системе</button>
+        </div>
+        <div class="actions" id="accent-picker" role="group" aria-label="Акцент" style="margin-top:8px">
+          <button type="button" data-accent="amber">Янтарь</button>
+          <button type="button" data-accent="rose">Роза</button>
+          <button type="button" data-accent="mint">Мята</button>
+          <button type="button" data-accent="sky">Небо</button>
+          <button type="button" data-accent="lavender">Лаванда</button>
+        </div>
+      </details>
+      <details>
+        <summary>Подключение с iPhone и Android</summary>
+        <p>Компьютер должен оставаться включённым. В приложении на телефоне укажите сетевой адрес этого ПК, а не <code>127.0.0.1</code>.</p>
+        <p>В <code>config.yaml</code> SillyTavern включите <code>listen: true</code> и добавьте IP телефона в <code>whitelist</code>. Перезапустите сервер. Для доступа извне используйте защищённый сервер или частную сеть (Tailscale).</p>
+      </details>
+    </section>
+  </div>
+</main>
+<div id="whats-new-modal" class="modal" hidden role="dialog" aria-modal="true" aria-label="Что нового в Тавернке">
+  <div class="modal-box">
+    <h2>Что нового в Тавернке</h2>
+    <p class="intro">Обновление 0.4.30 — управление таверной без лагов, конвертер, новые темы и живой каталог.</p>
+    <div class="modal-list">
+      <div class="modal-item">
+        <strong>Настройки → Таверна</strong>
+        <p>Вкладки «Пресеты», «Лорбук», «Карточки», «Расширения», «Регексы» и «Антивирус» — управляйте всем содержимым запущенной SillyTavern напрямую из лёгкого интерфейса.</p>
+      </div>
+      <div class="modal-item">
+        <strong>Конвертация и выгрузка в SillyTavern</strong>
+        <p>Во вкладке «Настройки → Ещё → Конвертация для SillyTavern» превращайте JSON-карточки в PNG, вытаскивайте вшитые лорбуки и регексы, упаковывайте расширения в ZIP и устанавливайте в таверну в один клик.</p>
+      </div>
+      <div class="modal-item">
+        <strong>Отдельный «Каталог» с живой меткой и новые темы</strong>
+        <p>Кнопка «Каталог» показывает метку <code>+N</code> сразу при выходе новинок. В оформлении добавлены уникальные темы «Полночь» и «Туман».</p>
+      </div>
+      <div class="modal-item">
+        <strong>Оптимизация и статистика</strong>
+        <p>«Лента», «Чаты», «Здоровье карточек», «История» и «Скрытые замечания» объединены во вкладке «Оптимизация». В «Расходах» добавлен сброс статистики и откат до заводских настроек.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="close-whats-new" type="button" class="primary">Отлично, за дело!</button>
+    </div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body></html>
+
