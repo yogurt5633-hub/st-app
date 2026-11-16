@@ -2,6 +2,23 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-item",
+            "type": "extension",
+            "name": "酒馆助手",
+            "author": "KAKAA",
+            "description": "Расширение позволяет запускать JavaScript-скрипты в SillyTavern и делать интерактивные элементы карточек. Само по себе это не готовая тема и не набор скриптов. Фото из Discord показывает пример другого расширения, работающего вместе с JS-Slash-Runner.\n\nДобавлена русская таблица интерфейса; исполняемый код и настройки оригинала сохранены. Команды и служебные обозначения не менялись.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-item.zip",
+            "added": "2026-11-16",
+            "hash": "d5b59f9b9c5eb2f9c58406397e5830aceadc42eea8ec68e3689329467ac1800f",
+            "size": 1638063,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-item-1794862198623-1.webp"
+            ]
+        },
+        {
             "id": "extension-memory-hub-russkiy-perevod",
             "type": "extension",
             "name": "Memory Hub — русский перевод",
@@ -108,5 +125,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-16T20:48:01.473Z"
+    "updated": "2026-11-16T20:50:00.379Z"
 }
