@@ -46,7 +46,21 @@ jobs:
           path: |
             desktop/dist/*Setup.exe
             desktop/screens/
-          if-no-files-found: error
+      - name: Attach Windows installer to latest GitHub release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WIN_EXE=$(ls desktop/dist/*Setup.exe | head -n 1)
+          for i in $(seq 1 18); do
+            TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+            [ -n "$TAG" ] && break
+            sleep 10
+          done
+          if [ -n "$TAG" ] && [ -f "$WIN_EXE" ]; then
+            gh release upload "$TAG" "$WIN_EXE" --clobber
+          fi
   ios:
     runs-on: macos-15
     timeout-minutes: 30
@@ -54,12 +68,16 @@ jobs:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
       - run: xcodegen generate --spec ios/project.yml
-      - name: Build and test on iPhone simulator
+      - name: Build and test on iPhone simulator and package IPA
         shell: bash
         run: |
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(v["udid"] for a in d["devices"].values() for v in a if "iPhone" in v["name"]))')
           xcodebuild -project ios/Tavernka.xcodeproj -scheme Tavernka -destination "platform=iOS Simulator,id=$DEVICE" -derivedDataPath ios/build -resultBundlePath ios/TestResults.xcresult CODE_SIGNING_ALLOWED=NO test
           ditto -c -k --sequesterRsrc --keepParent ios/build/Build/Products/Debug-iphonesimulator/Tavernka.app ios/Tavernka-Simulator.zip
+          xcodebuild -project ios/Tavernka.xcodeproj -scheme Tavernka -sdk iphoneos -configuration Release -derivedDataPath ios/build-device CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES build
+          mkdir -p ios/ipa-stage/Payload
+          cp -R ios/build-device/Build/Products/Release-iphoneos/Tavernka.app ios/ipa-stage/Payload/Tavernka.app
+          (cd ios/ipa-stage && zip -qry ../Tavernka-iOS.ipa Payload)
           xcrun simctl bootstatus "$DEVICE" -b
           xcrun simctl install "$DEVICE" ios/build/Build/Products/Debug-iphonesimulator/Tavernka.app
           xcrun simctl launch "$DEVICE" io.github.yogurt5633.tavernka.ios
@@ -70,35 +88,23 @@ jobs:
         with:
           name: iphone-simulator-preview
           path: |
+            ios/Tavernka-iOS.ipa
             ios/Tavernka-Simulator.zip
             ios/iphone-preview.png
             ios/TestResults.xcresult
-  publish:
-    if: github.ref == 'refs/heads/main'
-    needs: [windows, ios]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-preview
-          path: release-win
-      - uses: actions/download-artifact@v4
-        with:
-          name: iphone-simulator-preview
-          path: release-ios
-      - name: Attach Windows and iPhone builds to latest GitHub release
+      - name: Attach iPhone builds to latest GitHub release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          WIN_EXE=$(find release-win -name '*Setup.exe' | head -n 1)
-          IOS_ZIP=$(find release-ios -name 'Tavernka-Simulator.zip' | head -n 1)
-          for i in $(seq 1 12); do
+          for i in $(seq 1 18); do
             TAG=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
             [ -n "$TAG" ] && break
             sleep 10
           done
           if [ -n "$TAG" ]; then
-            gh release upload "$TAG" "$WIN_EXE" "$IOS_ZIP" --clobber
+            gh release upload "$TAG" ios/Tavernka-iOS.ipa ios/Tavernka-Simulator.zip --clobber
           fi
+
 

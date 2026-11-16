@@ -259,7 +259,8 @@ test('translate key: saved apart, never shown back, used directly; a cut answer 
     // A new model without a new key keeps the key.
     cfg = await saveKeyConfig(dir, { model: 'openai/gpt-5-mini' });
     assert.equal((await readKeyConfig(dir)).key, 'sk-or-secret-1234');
-    assert.equal((fs.statSync(path.join(dir, 'translate-key.json')).mode & 0o777), 0o600);
+    // Windows uses ACLs; POSIX owner/group mode bits are not implemented there.
+    if (process.platform !== 'win32') assert.equal((fs.statSync(path.join(dir, 'translate-key.json')).mode & 0o777), 0o600);
 
     const requests = [];
     const fetchImpl = async (url, init) => {
