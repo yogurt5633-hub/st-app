@@ -2,6 +2,91 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-proverka-zaprosov-prompt-inspector",
+            "type": "extension",
+            "name": "Проверка запросов (Prompt Inspector)",
+            "author": "Cohee1207",
+            "description": "Показывает полный запрос к модели перед отправкой и позволяет разово его исправить. Можно проверить порядок системных инструкций, пресет и записи лора. Полезно при работе с Claude и DeepSeek, когда модель не следует нужному правилу.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-proverka-zaprosov-prompt-inspector.zip",
+            "added": "2026-11-16",
+            "hash": "3ff864a0c550415284aae404309ccba1ced1755e8fe4421ec2c40aec78bdf410",
+            "size": 16500,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-proverka-zaprosov-prompt-inspector-1794862373541-1.webp"
+            ]
+        },
+        {
+            "id": "extension-novyy-chat-so-svodkoy",
+            "type": "extension",
+            "name": "Новый чат со сводкой",
+            "author": "nattaphat010447",
+            "description": "Продолжает историю в новом чате: переносит последнее сообщение персонажа и сводку из стандартного расширения Summarize. Перед созданием можно заново сформировать сводку. Подходит, когда текущий чат стал слишком длинным.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-novyy-chat-so-svodkoy.zip",
+            "added": "2026-11-16",
+            "hash": "19a029a9e9dfd26c7e8f507928dc525d6d46f045998b1910aa520c79201fb7bb",
+            "size": 6894,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-novyy-chat-so-svodkoy-1794862326828-1.webp"
+            ]
+        },
+        {
+            "id": "extension-typing-indicator",
+            "type": "extension",
+            "name": "Typing Indicator",
+            "author": "Cohee1207",
+            "description": "Показывает над строкой ввода «Имя персонажа печатает...», пока модель готовит ответ. В настройках можно включить отображение во время потоковой генерации.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-typing-indicator.zip",
+            "added": "2026-11-16",
+            "hash": "985244a63a15f2a504489a2d5f7adfe55c516301206bd6e89c19be84c90afcfc",
+            "size": 16884,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-typing-indicator-1794862266909-1.webp"
+            ]
+        },
+        {
+            "id": "extension-item",
+            "type": "extension",
+            "name": "酒馆助手",
+            "author": "KAKAA",
+            "description": "Расширение позволяет запускать JavaScript-скрипты в SillyTavern и делать интерактивные элементы карточек. Само по себе это не готовая тема и не набор скриптов. Фото из Discord показывает пример другого расширения, работающего вместе с JS-Slash-Runner.\n\nДобавлена русская таблица интерфейса; исполняемый код и настройки оригинала сохранены. Команды и служебные обозначения не менялись.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-item.zip",
+            "added": "2026-11-16",
+            "hash": "d5b59f9b9c5eb2f9c58406397e5830aceadc42eea8ec68e3689329467ac1800f",
+            "size": 1638063,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-item-1794862198623-1.webp"
+            ]
+        },
+        {
+            "id": "extension-memory-hub-russkiy-perevod",
+            "type": "extension",
+            "name": "Memory Hub",
+            "author": "Este / Kitima",
+            "description": "Расширение сохраняет старые части диалога как отдельные воспоминания и добавляет к запросу только подходящие. Исходный чат не удаляется. Есть автоматическое и ручное суммирование, импорт из Memory Books/Summarize и продолжение истории в новом чате.\n\nИнтерфейс и уведомления переведены на русский. Формат памяти, теги карточек, команды и промпты модели оставлены совместимыми с оригиналом.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-memory-hub-russkiy-perevod.zip",
+            "added": "2026-11-16",
+            "hash": "cf161550318c3da3dc93c4514d589b0e121ce01f91e6c3288d4aa24e56b26d3c",
+            "size": 75119,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-memory-hub-russkiy-perevod-1794862079622-1.webp"
+            ]
+        },
+        {
             "id": "extension-lingua-tavern-izuchenie-angliyskogo-i-kitayskogo-p",
             "type": "extension",
             "name": "Lingua Tavern — изучение английского и китайского прямо в SillyTavern",
@@ -91,5 +176,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-15T23:07:27.604Z"
+    "updated": "2026-11-16T20:55:31.828Z"
 }
