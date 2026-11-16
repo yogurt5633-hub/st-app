@@ -2,6 +2,24 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-lingua-tavern-izuchenie-angliyskogo-i-kitayskogo-p",
+            "type": "extension",
+            "name": "Lingua Tavern — изучение английского и китайского прямо в SillyTavern",
+            "author": "inette",
+            "description": "Перевод слов и предложений в ролевом чате, подсветка сложной лексики, словарь, карточки, проверка письма, упражнения и тренировка речи. Работает на ПК и мобильных устройствах. Распознавание речи браузерное и может ошибаться, поэтому это помощник для практики, а не точная проверка произношения.",
+            "tags": [],
+            "page": "https://t.me/inettebreed",
+            "language": "ru",
+            "translated": false,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-lingua-tavern-izuchenie-angliyskogo-i-kitayskogo-p.zip",
+            "added": "2026-11-15",
+            "hash": "d5cd64e4c513cdd2f037aaa5cdaad746e9e4f2d533063d5bee64376102c4bb8c",
+            "size": 382507,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-lingua-tavern-izuchenie-angliyskogo-i-kitayskogo-p-1794784044950-1.webp"
+            ]
+        },
+        {
             "id": "preset-cyberwitch-ultraviolence-3",
             "type": "preset",
             "name": "CyberWitch Ultraviolence 3",
@@ -73,5 +91,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-05T19:35:52.433Z"
+    "updated": "2026-11-15T23:07:27.604Z"
 }
