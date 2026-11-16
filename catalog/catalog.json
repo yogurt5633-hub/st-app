@@ -2,6 +2,23 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-proverka-lora-lore-lens",
+            "type": "extension",
+            "name": "Проверка лора (Lore Lens)",
+            "author": "?",
+            "description": "Показывает, какие записи World Info попали в промпт, какое ключевое слово их активировало и где оно встретилось. Отдельная вкладка показывает примерный расход токенов по пресету, карточке, World Info, чату и расширениям. Отчёт можно скопировать и обсудить с Claude или DeepSeek. Само расширение не вызывает API моделей.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-proverka-lora-lore-lens.zip",
+            "added": "2026-11-16",
+            "hash": "c3d89478c21fdb79cfb744f238b6c95dcc533ae23d83ba25dcc053a1e8b4ef96",
+            "size": 69535,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-proverka-lora-lore-lens-1794867960184-1.webp"
+            ]
+        },
+        {
             "id": "extension-proverka-zaprosov-prompt-inspector",
             "type": "extension",
             "name": "Проверка запросов (Prompt Inspector)",
@@ -176,5 +193,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-16T20:55:31.828Z"
+    "updated": "2026-11-16T22:26:01.902Z"
 }
