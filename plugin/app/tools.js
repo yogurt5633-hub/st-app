@@ -1,4 +1,6 @@
 import { CATALOG_LANGUAGES, matchesCatalogFilters } from './catalog-filters.js';
+import { setupTavern, renderTavern, renderConvert } from './tavern.js';
+export { renderTavern, renderConvert };
 
 // Корректор: the "Ещё" tab and the tools behind it — spending, card health,
 // full backup, import by link, catalog, key check — plus the chat sheet parts
@@ -8,6 +10,7 @@ let ui = null;
 
 export function setup(helpers) {
     ui = helpers;
+    setupTavern(helpers, { renderExtensions, mascotRow, back });
 }
 
 const TOKEN_KINDS = ['context', 'preset_bloat', 'prompt_reasoning', 'prompt_html', 'advice', 'lore_keyed', 'lore_card_dup', 'lore_bloat', 'card_bloat'];
@@ -24,7 +27,7 @@ export function mascot(name, size = 120, alt = '') {
     const { h } = ui;
     return h('button', { class: 'mascot-button', type: 'button', 'aria-label': 'Совет Тавернки', onclick: () => {
         ui.openSheet('Совет Тавернки', h('div', {},
-            h('p', { text: name === 'books' ? 'Пусто? Попробуй другую вкладку каталога или сбрось фильтры. Проверка расширений доступна отдельно от списка материалов.' : 'Оптимизация пока отдыхает. Перевод сообщений, каталог и резервные копии работают.' }),
+            h('p', { text: name === 'books' ? 'Пусто? Попробуй другую вкладку каталога или сбрось фильтры. Проверить дополнения можно во вкладке «Таверна → Антивирус».' : 'Оптимизация пока отдыхает. Перевод сообщений, каталог и резервные копии работают.' }),
             h('div', { class: 'card-actions' },
                 h('a', { class: 'btn secondary', href: '#tools/catalog', text: 'Каталог' }),
                 h('a', { class: 'btn secondary', href: '#tools/backup', text: 'Резервные копии' }))));
@@ -70,13 +73,10 @@ export function renderTools() {
         h('span', { class: 'chev', 'aria-hidden': 'true', text: '›' }));
     put($('#view'),
         h('div', { class: 'rows' },
+            row('#tools/convert', 'Конвертация для SillyTavern', 'Карточки, лорбуки, пресеты, регексы и расширения — перенос и скачивание в формате таверны'),
             row('#tools/sync', 'Связь с ПК', 'Чаты, карточки и лорбуки одинаковые на телефоне и компьютере'),
-            row('#tools/spend', 'Расходы', 'Сколько токенов и денег ушло: ролёвка и проверки'),
-            row('#tools/cards', 'Здоровье карточек', 'Оценка каждой карточки и что поправить'),
-            row('#tools/backup', 'Резервная копия', 'Чаты, карточки, лорбуки и настройки в одном файле'),
-            row('#history', 'История', 'Применённые изменения и восстановление'),
-            row('#tools/catalog', 'Каталог', 'Пресеты, лорбуки и карточки от авторов'),
-            row('#tools/muted', 'Скрытые замечания', 'Виды замечаний, которые вы попросили не показывать')));
+            row('#tools/spend', 'Расходы', 'Сколько токенов и денег ушло, сброс статистики и откат настроек'),
+            row('#tools/backup', 'Резервная копия', 'Чаты, карточки, лорбуки и настройки в одном файле')));
 }
 
 // ---------- spending ----------
@@ -145,7 +145,24 @@ export async function renderSpend() {
                 h('span', { class: 'row-side', text: c.cost ? `≈${money(c.cost)}` : fmt(c.tokens) }))))) : null,
         !total ? h('div', { class: 'empty' }, mascot('sleep', 140),
             h('h2', { text: 'Пока ничего не потрачено' }),
-            h('p', { text: 'Расходы ролёвки считаются после каждого ответа, если в SillyTavern стоит расширение «Корректор: синхронизация». Проверки Корректора считаются сами' })) : null);
+            h('p', { text: 'Расходы ролёвки считаются после каждого ответа, если в SillyTavern стоит расширение «Корректор: синхронизация». Проверки Корректора считаются сами' })) : null,
+        h('div', { class: 'section' },
+            h('h3', { class: 'section-title', text: 'Управление статистикой и настройками' }),
+            h('div', { class: 'card-actions' },
+                h('button', { class: 'btn secondary', type: 'button', text: 'Сбросить статистику', onclick: async () => {
+                    const ok = await ui.confirmDialog({ title: 'Сбросить статистику расходов?', text: 'Счётчики токенов по дням, моделям и чатам обнулятся. Указанные вами цены моделей останутся', ok: 'Сбросить', danger: true });
+                    if (!ok) return;
+                    await ui.api('/usage/reset', { method: 'POST' });
+                    ui.toast('Статистика расходов сброшена');
+                    renderSpend();
+                } }),
+                h('button', { class: 'btn quiet', type: 'button', text: 'Откат до заводских настроек', onclick: async () => {
+                    const ok = await ui.confirmDialog({ title: 'Вернуть заводские настройки?', text: 'Настройки Тавернки, глоссарий, скрытые виды замечаний и статистика расходов вернутся к исходным значениям. Чаты, карточки и лорбуки SillyTavern не затрагиваются', ok: 'Сбросить всё', danger: true });
+                    if (!ok) return;
+                    ui.state.settings = await ui.api('/settings/reset', { method: 'POST' });
+                    ui.toast('Настройки возвращены к заводским');
+                    renderSpend();
+                } }))));
 }
 
 function mascotRow(name, title, text) {
@@ -163,15 +180,16 @@ function scoreTag(score) {
 export async function renderCardsHealth() {
     const { h, put, $, fmt } = ui;
     const view = $('#view');
-    put(view, back('#tools', 'Ещё'), h('p', { class: 'muted', text: 'Читаю карточки' }));
+    const top = ui.optimizationSwitch ? ui.optimizationSwitch('cards') : back('#feed', 'Оптимизация');
+    put(view, top, h('p', { class: 'muted', text: 'Читаю карточки' }));
     let items;
     try {
         items = (await ui.api('/cards-health')).items;
     } catch (error) {
-        put(view, back('#tools', 'Ещё'), h('div', { class: 'empty' }, h('h2', { text: 'Не удалось прочитать карточки' }), h('p', { text: error.message })));
+        put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось прочитать карточки' }), h('p', { text: error.message })));
         return;
     }
-    put(view, back('#tools', 'Ещё'),
+    put(view, top,
         h('p', { class: 'small muted', text: 'Сначала те, что стоит поправить. Оценка без модели: размер, пустые поля, лишняя разметка, повторы и открытые замечания' }),
         items.length ? h('div', { class: 'rows' }, items.map(c => h('a', { class: 'row row-link', href: `#card/${encodeURIComponent(c.avatar)}` },
             h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: c.name }), h('span', { class: 'row-sub', text: `${c.verdict} · ≈${fmt(c.tokens)} токенов` })),
@@ -338,8 +356,65 @@ const CATALOG_TYPES = [['preset', 'Пресет'], ['lorebook', 'Лорбук'],
 // Loaded once per visit: switching between presets, lorebooks and cards only filters it.
 let catalogData = null;
 let catalogAt = 0;
+let catalogInstalledCache = null;
+let catalogInstalledAt = 0;
 const catalogFilters = { author: '', model: '', censor: '', language: '', translation: '', text: '' };
-let catalogReviewOpen = false;
+const SEEN_CATALOG_KEY = 'korrektor.seenCatalogIds';
+
+function readSeenCatalogIds() {
+    try {
+        const raw = ui.storageGet(SEEN_CATALOG_KEY);
+        const list = raw ? JSON.parse(raw) : null;
+        return Array.isArray(list) ? new Set(list.map(String)) : null;
+    } catch {
+        return null;
+    }
+}
+
+export function markCatalogSeen(items) {
+    if (!Array.isArray(items) || !items.length) return;
+    const seen = readSeenCatalogIds() || new Set();
+    for (const item of items) {
+        const id = typeof item === 'string' ? item : item?.id;
+        if (id) seen.add(String(id));
+    }
+    ui.storageSet(SEEN_CATALOG_KEY, JSON.stringify([...seen]));
+    setCatalogBadge(0);
+}
+
+function setCatalogBadge(count) {
+    const n = Math.max(0, Number(count) || 0);
+    const el = document.getElementById('catalog-count');
+    if (el) el.textContent = n ? `+${n}` : '';
+    try {
+        window.KorrektorFiles?.catalogBadge?.(n);
+    } catch {
+        // outside Android bridge
+    }
+}
+
+export async function checkCatalogNew() {
+    try {
+        const head = await ui.api('/catalog/head');
+        const ids = Array.isArray(head?.ids) ? head.ids.map(String) : [];
+        if (!ids.length) return 0;
+        const seen = readSeenCatalogIds();
+        if (!seen) {
+            ui.storageSet(SEEN_CATALOG_KEY, JSON.stringify(ids));
+            setCatalogBadge(0);
+            return 0;
+        }
+        const fresh = ids.filter(id => !seen.has(id));
+        if (location.hash === '#tools/catalog') {
+            markCatalogSeen(ids);
+            return 0;
+        }
+        setCatalogBadge(fresh.length);
+        return fresh.length;
+    } catch {
+        return 0;
+    }
+}
 
 async function loadCatalogData(force = false) {
     if (!force && catalogData && Date.now() - catalogAt < 5 * 60000) return catalogData;
@@ -436,8 +511,9 @@ export async function renderCatalog() {
     const data = catalogData || { items: [] };
     if (location.hash !== '#tools/catalog') return;
 
-    // What is already in this tavern: { [id]: { file, where } }. Checked after the list is shown.
-    let installed = null;
+    // What is already in this tavern: { [id]: { file, where } }. Cached for a minute so tab switches are instant.
+    let installed = catalogInstalledCache && Date.now() - catalogInstalledAt < 60000 ? catalogInstalledCache : null;
+    if (data.items.length) markCatalogSeen(data.items);
     const install = async (item, button) => {
         const ok = await ui.confirmDialog({ title: `Установить «${item.name}»?`, text: item.type === 'extension' ? `Расширение от ${item.author || 'автора'} выполняет код в SillyTavern. Устанавливайте его, если доверяете источнику. После установки обновите страницу таверны` : `${CATALOG_NAMES[item.type]} от ${item.author || 'автора'} скачается в SillyTavern. Ваши файлы не перезаписываются: если имя занято, у нового будет номер`, ok: 'Установить' });
         if (!ok) return;
@@ -447,6 +523,8 @@ export async function renderCatalog() {
             const result = await ui.api('/catalog/install', { method: 'POST', body: { id: item.id }, timeout: 120000 });
             ui.toast(`Установлено: ${result.where} → ${result.name}${result.reload ? '. Обновите страницу таверны, чтобы включить расширение' : ''}`);
             installed = { ...(installed || {}), [item.id]: { file: result.file, where: result.where } };
+            catalogInstalledCache = installed;
+            catalogInstalledAt = Date.now();
             drawList();
         } catch (error) {
             ui.toast(error.message, true);
@@ -468,6 +546,8 @@ export async function renderCatalog() {
             ui.toast(`Удалено из таверны: ${item.name}${result.reload ? '. Обновите страницу таверны' : ''}`);
             installed = { ...(installed || {}) };
             delete installed[item.id];
+            catalogInstalledCache = installed;
+            catalogInstalledAt = Date.now();
             drawList();
         } catch (error) {
             ui.toast(error.message, true);
@@ -507,16 +587,7 @@ export async function renderCatalog() {
             select('Цензура: любая', [['no', 'Без цензуры'], ['yes', 'С цензурой']], 'censor')));
     const matches = (item) => matchesCatalogFilters(item, { ...pickFilter, type: filter });
     const list = h('div', { class: 'list catalog-list' });
-    const extensionPanel = h('div', { style: 'padding:0 16px 16px' });
-    const review = h('details', { class: 'settings-group', open: catalogReviewOpen },
-        h('summary', { text: 'Проверить установленные расширения' }), extensionPanel);
-    let reviewStarted = false;
-    review.addEventListener('toggle', () => {
-        catalogReviewOpen = review.open;
-        if (review.open && !reviewStarted) { reviewStarted = true; renderExtensions(extensionPanel); }
-    });
     const drawList = () => {
-        review.hidden = filter !== 'extension';
         if (!catalogData) { put(list, h('p', { class: 'muted', text: 'Загружаю каталог' })); return; }
         const items = data.items.filter(matches);
         put(list, items.length ? items.map(item => catalogEntry(item, actionsFor(item))) : h('div', { class: 'empty' }, mascot('books', 150),
@@ -540,17 +611,23 @@ export async function renderCatalog() {
         filterBar,
         data.error ? h('p', { class: 'small', style: 'color:var(--del-text)', text: data.error }) : null,
         list,
-        review,
         h('div', { class: 'section' },
             h('div', { class: 'card-actions centered', style: 'margin-top:0' },
                 h('a', { class: 'btn secondary', href: '#tools/catalog-suggest', text: 'Предложить своё' }),
-                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { await loadCatalogData(true); if (view.isConnected) renderCatalog(); } }))));
+                h('button', { class: 'btn quiet', type: 'button', text: 'Обновить список', onclick: async () => { catalogInstalledCache = null; await loadCatalogData(true); if (view.isConnected) renderCatalog(); } }))));
     authorEntrance();
     if (needsLoad) {
-        loadCatalogData().then(() => { if (view.isConnected && location.hash === '#tools/catalog') renderCatalog(); });
+        loadCatalogData().then((loaded) => {
+            if (loaded?.items?.length) markCatalogSeen(loaded.items);
+            if (view.isConnected && location.hash === '#tools/catalog') renderCatalog();
+        });
     }
-    if (data.items.length) {
-        ui.api('/catalog/status', { timeout: 120000 }).then((r) => { installed = r.installed || {}; }, () => { installed = {}; })
+    if (data.items.length && !installed) {
+        ui.api('/catalog/status', { timeout: 120000 }).then((r) => {
+            installed = r.installed || {};
+            catalogInstalledCache = installed;
+            catalogInstalledAt = Date.now();
+        }, () => { installed = {}; })
             .then(() => { if (list.isConnected) drawList(); });
     }
 }
@@ -1339,16 +1416,17 @@ export async function renderSync() {
 export async function renderMuted() {
     const { h, put, $ } = ui;
     const view = $('#view');
+    const top = ui.optimizationSwitch ? ui.optimizationSwitch('muted') : back('#feed', 'Оптимизация');
     let settings;
     try {
         settings = await ui.api('/settings');
     } catch (error) {
-        put(view, back('#tools', 'Ещё'), h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить' }), h('p', { text: error.message })));
+        put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить' }), h('p', { text: error.message })));
         return;
     }
     const muted = settings.muted || [];
     put(view,
-        back('#tools', 'Ещё'),
+        top,
         muted.length ? h('div', { class: 'rows' }, muted.map(kind => h('div', { class: 'row' },
             h('span', { class: 'row-main' }, h('span', { class: 'row-title', text: ui.KIND[kind] || kind })),
             h('button', { class: 'btn secondary small', type: 'button', onclick: async () => { await ui.api('/mute', { method: 'POST', body: { kind, muted: false } }); renderMuted(); }, text: 'Показывать снова' }))))

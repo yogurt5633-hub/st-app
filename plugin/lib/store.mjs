@@ -140,6 +140,17 @@ export class Store {
         });
     }
 
+    async resetSettings() {
+        return this.lock('settings', async () => {
+            const next = structuredClone(DEFAULT_SETTINGS);
+            await writeJson(this.files.settings, next);
+            await writeJson(this.files.state, { chats: {}, lastScan: null });
+            await writeJson(this.files.actual, { chats: {} });
+            await writeJson(path.join(this.dir, 'usage.json'), { days: {}, lastPrompt: {}, prices: {} });
+            return next;
+        });
+    }
+
     async getProposals() {
         const data = await readJson(this.files.proposals, { items: [] });
         return Array.isArray(data.items) ? data.items : [];

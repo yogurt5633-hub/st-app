@@ -14,7 +14,7 @@ import { httpError } from './util.mjs';
 export const CATALOG_URL = 'https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/catalog.json';
 const TYPES = new Set(['lorebook', 'preset', 'card', 'extension']);
 const MAX_BYTES = 20 * 1024 * 1024;
-const CACHE_MS = 30 * 60 * 1000;
+const CACHE_MS = 45 * 1000;
 let cache = { at: 0, items: [], error: '', submit: '', updated: '' };
 
 /** An https link, or '' for anything else. */

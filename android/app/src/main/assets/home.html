@@ -425,6 +425,7 @@ html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; }
         ];
     }
 
+    var whatsNewOpen = false;
     function updatesSection() {
         var s = state;
         var u = updates || {};
@@ -434,8 +435,7 @@ html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; }
             h('div', { class: 'line' },
                 h('div', {}, h('div', { text: 'Приложение' }), h('div', { class: 'small muted', text: 'версия ' + (s.appVersion || '?') + (appInfo.latest ? ' · последняя ' + appInfo.latest : '') })),
                 appInfo.available ? h('button', { class: 'btn primary small', type: 'button', onclick: function () { app.installApp(); }, text: 'Обновить' })
-                    : h('span', { class: 'small muted', text: appInfo.error || u.error || (appInfo.latest ? 'актуальная' : '') })),
-            appInfo.notes ? h('details', { class: 'release-notes' }, h('summary', { text: 'Что изменилось' }), h('p', { style: 'white-space:pre-wrap', text: appInfo.notes })) : null,
+                    : h('button', { class: 'btn secondary small', type: 'button', onclick: function () { whatsNewOpen = true; render(); }, text: 'Что нового' })),
             appInfo.available && !s.canInstall ? h('p', { class: 'hint', text: 'Android спросит разрешение устанавливать приложения: включите его для Корректора и вернитесь' }) : null);
         var kRow = h('div', { class: 'row' },
             h('div', { class: 'line' },
@@ -557,7 +557,7 @@ html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; }
     }
 
     // The oldest Korrektor plugin this app's screens work with.
-    var MIN_KORREKTOR = '0.4.29';
+    var MIN_KORREKTOR = '0.4.30';
 
     function versionLess(a, b) {
         var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
@@ -743,6 +743,38 @@ html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; }
     root.addEventListener('pointerup', released, true);
     root.addEventListener('pointercancel', released, true);
 
+    function whatsNewModal() {
+        var s = state;
+        if (!s.onboardingDone) return null;
+        if (!whatsNewOpen && !s.whatsNewPending) return null;
+        function close() {
+            whatsNewOpen = false;
+            state.whatsNewPending = false;
+            try { app.dismissWhatsNew(); } catch (e) {}
+            render();
+        }
+        var items = [
+            ['Настройка таверны без лагов', 'В разделе «Настройки → Таверна» появились вкладки «Пресеты», «Лорбук», «Карточки», «Расширения», «Регексы» и «Антивирус» — включайте лорбуки, правьте промпты, карточки и регексы прямо здесь, не открывая тяжёлые меню SillyTavern.'],
+            ['Конвертация и выгрузка в SillyTavern', 'Во вкладке «Ещё → Конвертация для SillyTavern» можно превратить JSON-карточку в PNG, вытащить вшитый лорбук или регексы, упаковать расширение в ZIP и сразу установить в таверну.'],
+            ['Живой каталог и новые темы', 'Когда в каталоге выходит новый материал, на кнопке «Каталог» снизу сразу загорается метка. А в оформлении появились темы «Полночь» и «Туман».'],
+            ['Оптимизация и стабильность', 'Здоровье карточек, история и скрытые замечания собраны во вкладке «Оптимизация». Таверна больше не открывает браузер сама и не сбрасывается после сворачивания.'],
+        ];
+        return h('div', { class: 'onb whats-new-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Что нового' },
+            h('div', { class: 'onb-in' },
+                h('span', { style: 'height:16px' }),
+                h('div', { class: 'onb-content' },
+                    h('div', { class: 'onb-art' }, mascot('wave', 136)),
+                    h('div', { class: 'title', text: 'Что нового в Тавернке' }),
+                    h('p', { class: 'lead', text: 'Обновление ' + (s.appVersion || '') + ' — быстрее, удобнее и всё под рукой' }),
+                    h('div', { class: 'box', style: 'margin-top:8px' }, items.map(function (it) {
+                        return h('div', { class: 'row' },
+                            h('div', { style: 'font-weight:500', text: it[0] }),
+                            h('p', { class: 'message', style: 'margin-top:4px', text: it[1] }));
+                    }))),
+                h('div', { class: 'onb-foot', style: 'margin-top:16px' },
+                    h('button', { class: 'btn primary', type: 'button', onclick: close, text: 'Отлично, за дело!' }))));
+    }
+
     function render() {
         // Redrawing would drop what is being typed or the tap in progress, and a hidden page needs none.
         if (typing() || pressing || state.homeShown === false) {
@@ -762,6 +794,7 @@ html[data-theme="mist"][data-accent="lavender"] { --accent:#5b47b3; }
             fold('background', 'Работа в фоне', [].concat(keepSection(), notifySection())),
             fold('help', 'Помощь', helpSection()),
             onboarding() || [],
+            whatsNewModal() || [],
             h('p', { class: 'hint', style: 'margin-top:24px' }, 'Журналы в Termux: ~/.korrektor-ctl.log и ~/.korrektor-st.log · ',
                 h('a', { href: '#', onclick: function (e) { e.preventDefault(); app.openLink('project'); }, text: 'проект на GitHub' }))
         ).filter(Boolean));

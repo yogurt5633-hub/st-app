@@ -198,3 +198,45 @@ test('remarks: one switch hides the findings of the checks, what was asked for s
     assert.deepEqual(visibleProposals(items, { scan: { enabled: false } }).map(p => p.kind), ['request', 'manual', 'rewrite']);
     assert.equal(remarksOn({ scan: { enabled: false } }), false);
 });
+
+test('convert and reset: converts JSON card with lorebook to SillyTavern PNG and resets usage/settings', async () => {
+    const { convertForSillyTavern } = await import('../plugin/lib/tavern-manage.mjs');
+    const { resetUsage } = await import('../plugin/lib/usage.mjs');
+    const { readCardJson } = await import('../plugin/lib/cards.mjs');
+    const { ctx, store, cleanup } = makeUser();
+    await store.ensureDir();
+
+    const jsonCard = Buffer.from(JSON.stringify({
+        name: 'Алиса',
+        description: 'Героиня истории',
+        first_mes: 'Привет!',
+        data: {
+            name: 'Алиса',
+            description: 'Героиня истории',
+            first_mes: 'Привет!',
+            character_book: { name: 'Мир Алисы', entries: [{ keys: ['алиса'], content: 'Факт' }] },
+        },
+    }));
+    const inspected = await convertForSillyTavern(ctx, { name: 'alisa.json', data: jsonCard, action: 'inspect' });
+    assert.equal(inspected.detected, 'card-json');
+    assert.equal(inspected.title, 'Алиса');
+
+    const pngOut = await convertForSillyTavern(ctx, { name: 'alisa.json', data: jsonCard, action: 'download', targetFormat: 'png' });
+    assert.equal(pngOut.mime, 'image/png');
+    assert.equal(readCardJson(pngOut.data).data.name, 'Алиса');
+
+    const loreOut = await convertForSillyTavern(ctx, { name: 'alisa.json', data: jsonCard, action: 'download', targetFormat: 'lorebook' });
+    const parsedLore = JSON.parse(loreOut.data.toString('utf8'));
+    assert.equal(parsedLore.entries[0].content, 'Факт');
+
+    await logUsage(store, { kind: 'roleplay', model: 'm', chatId: 'c/A/1', input: 5000, output: 200 });
+    await resetUsage(store);
+    const afterReset = await usageSummary(store, { days: 7 });
+    assert.equal(afterReset.total.roleplay.input, 0);
+
+    await store.saveSettings({ translation: { glossary: 'A = Б' } });
+    const resetCfg = await store.resetSettings();
+    assert.equal(resetCfg.translation.glossary, '');
+    cleanup();
+});
+

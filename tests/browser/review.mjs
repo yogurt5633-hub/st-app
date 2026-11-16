@@ -30,7 +30,10 @@ const server=http.createServer(async(req,res)=>{
    if(url.pathname.endsWith('/catalog/upload'))uploadRequests.push({type:url.searchParams.get('type'),bytes:bytes.length});
   }
   if(url.pathname.endsWith('/catalog'))data={items:catalogItems};
-  if(url.pathname.endsWith('/catalog/local')||url.pathname.endsWith('/cards-health'))data={items:[]};
+  if(url.pathname.endsWith('/catalog/head'))data={updated:'',ids:catalogItems.map(i=>i.id),latest:catalogItems[0]?.name||''};
+  if(url.pathname.endsWith('/catalog/local')||url.pathname.endsWith('/cards-health')||url.pathname.endsWith('/cards')||url.pathname.endsWith('/backups'))data={items:[]};
+  if(url.pathname.endsWith('/tavern/presets'))data={active:'',params:{maxContext:4096,maxTokens:300,temp:1,stream:true},items:[]};
+  if(url.pathname.endsWith('/tavern/lorebooks')||url.pathname.endsWith('/tavern/extensions')||url.pathname.endsWith('/tavern/regex'))data={items:[]};
   if(url.pathname.endsWith('/catalog/admin'))data={hasToken:true,login:'fixture',repo:'owner/fixture'};
   if(url.pathname.endsWith('/catalog/status'))data={installed:{}};
   if(url.pathname.endsWith('/catalog/regex'))data={global:[]};
@@ -43,7 +46,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(url.pathname.endsWith('/usage'))data={total:{roleplay:{input:0,output:0,cost:0,calls:0},korrektor:{input:0,output:0,cost:0}},byDay:[],expensive:[],models:[],chats:[]};
   if(url.pathname==='/csrf-token')data={token:'fixture'};
-  if(url.pathname.endsWith('/status'))data={version:'0.4.29',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
+  if(url.pathname.endsWith('/status'))data={version:'0.4.30',remarks:false,optimizationPaused:true,connectionCheck:{ok:false,message:'Нет подключения',model:'Test'}};
   if(url.pathname.endsWith('/proposals')||url.pathname.endsWith('/chats'))data={items:[],mode:'recent'};
   if(url.pathname.endsWith('/settings'))data=DEFAULT_SETTINGS;
   if(url.pathname.endsWith('/worlds')||url.pathname.endsWith('/extensions/review'))data={items:[]};
@@ -134,7 +137,9 @@ try{
  const page=await context.newPage();observe(page);
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools`);
  await page.getByRole('link',{name:/Резервная копия/}).waitFor();
+ await page.getByRole('link',{name:/Конвертация для SillyTavern/}).waitFor();
  assert.equal(await page.getByText('Подключение к модели',{exact:true}).count(),0);
+ assert.equal(await page.locator('#view').getByText('Каталог',{exact:true}).count(),0);
  assert.equal(await page.locator('#view .mascot').count(),0,'no cheerful mascot beside a connection error');
 
  await noOverflow(page);
@@ -142,15 +147,17 @@ try{
  await page.waitForFunction(()=>navigator.serviceWorker.controller,null,{timeout:10000});
  assert.ok(await page.evaluate(async()=>Boolean(await caches.match('img/mascot.png'))),'mascot precached');
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#settings`);
- await page.locator('.settings-group summary').first().waitFor();
+ await page.getByRole('heading',{name:'Подключение',exact:true}).waitFor();
+ await page.getByRole('heading',{name:'Модели',exact:true}).waitFor();
+ assert.equal(await page.getByText('Какая модель для какой задачи',{exact:true}).count(),0);
+ assert.equal(await page.getByText('Уведомления',{exact:true}).count(),0);
  assert.equal(await page.locator('.settings-group[open]').count(),0);
- assert.equal(await page.locator('.settings-group summary').filter({hasText:/^(Проверка|Что искать|Пороги|Резюме и факты)$/}).count(),0);
+ assert.equal(await page.locator('.settings-group summary').filter({hasText:/^(Подключение|Модели|Проверка|Что искать|Пороги|Резюме и факты)$/}).count(),0);
  await noOverflow(page);
  await page.screenshot({path:`${output}/settings.png`,fullPage:true});
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#tools/catalog`);
  await page.getByRole('button',{name:'Расширения',exact:true}).click();
- await page.getByText('Проверить установленные расширения',{exact:true}).click();
- await page.getByText('Сторонние расширения пока не установлены',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Проверить установленные расширения',{exact:true}).count(),0);
  assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'tools');
  await noOverflow(page);
  await page.screenshot({path:`${output}/extensions.png`,fullPage:true});
@@ -159,11 +166,15 @@ try{
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Оптимизация временно отключена',{exact:true}).waitFor();await decoded(page);
  assert.equal(await page.locator('#page-title').textContent(),'Оптимизация');
  assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'optimization');
+ assert.deepEqual(await page.locator('.optimization-switch .filter').allTextContents(),['Лента','Чаты','Здоровье карточек','История','Скрытые замечания']);
  await page.locator('.optimization-switch').getByRole('link',{name:'Чаты',exact:true}).click();
  await page.getByRole('heading',{name:'Чатов пока нет',exact:true}).waitFor();
  assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'optimization');
  await page.locator('.tab[data-tab="tavern"]').click();
- await page.getByRole('heading',{name:'Раздел в разработке',exact:true}).waitFor();
+ await page.locator('[aria-label="Разделы таверны"] .filter').first().waitFor();
+ assert.deepEqual(await page.locator('[aria-label="Разделы таверны"] .filter').allTextContents(),['Пресеты','Лорбук','Карточки','Расширения','Регексы','Антивирус']);
+ await page.locator('[aria-label="Разделы таверны"]').getByRole('button',{name:'Антивирус',exact:true}).click();
+ await page.getByText('Сторонние расширения пока не установлены',{exact:true}).waitFor();
  assert.equal(await page.locator('.tab[aria-current="page"]').getAttribute('data-tab'),'tavern');
  await noOverflow(page);
  await page.goto(`${origin}/api/plugins/korrektor/app/index.html#feed`);await page.getByText('Оптимизация временно отключена',{exact:true}).waitFor();await decoded(page);
@@ -183,7 +194,7 @@ try{
  assert.equal(await appPage.locator('.tabbar').isVisible(),false);
  assert.equal(await appPage.locator('.back-link').count(),0);
  await appPage.goto(`${origin}/api/plugins/korrektor/app/index.html#settings`);
- await appPage.locator('.settings-group summary').first().waitFor();
+ await appPage.getByRole('heading',{name:'Подключение',exact:true}).waitFor();
  assert.equal(await appPage.locator('.tabbar').isVisible(),true);
  assert.deepEqual(await appPage.locator('.tabbar .tab span:not(.tab-count)').allTextContents(),['Оптимизация','Ещё','Настройки','Таверна']);
  await appContext.close();

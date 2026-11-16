@@ -24,7 +24,7 @@ import {
     rejectProposal, revertProposal, fingerprint, OPEN_STATUSES,
 } from './lib/proposals.mjs';
 import { httpError, isInside, nowIso } from './lib/util.mjs';
-import { logUsage, usageSummary, refreshOpenRouterPrices, getPrices, setPrice, lastPromptOf } from './lib/usage.mjs';
+import { logUsage, usageSummary, refreshOpenRouterPrices, getPrices, setPrice, lastPromptOf, resetUsage } from './lib/usage.mjs';
 import { cardHealth } from './lib/health.mjs';
 import { makeRecap } from './lib/recap.mjs';
 import { translateText } from './lib/translate.mjs';
@@ -37,6 +37,14 @@ import { catalogStatus, uninstallItem } from './lib/catalog-status.mjs';
 import { markTouched } from './lib/touched.mjs';
 import { localManifest, fullPath, cleanName, writeSynced, runSync, PeerClient, readBody, deviceName } from './lib/sync.mjs';
 import { readJson, writeJson } from './lib/util.mjs';
+import {
+    listTavernPresets, activateTavernPreset, saveTavernPresetParams, readTavernPresetDetail, updateTavernPresetPrompt, deleteTavernPreset,
+    listTavernLorebooks, toggleTavernLorebook, readTavernLorebookDetail, saveTavernLorebookEntry, deleteTavernLorebookEntry, deleteTavernLorebook,
+    readTavernCardDetail, saveTavernCardDetail, deleteTavernCard,
+    listTavernExtensions, toggleTavernExtension, deleteTavernExtension, packInstalledExtensionZip,
+    listTavernRegexes, saveTavernRegex, deleteTavernRegex, importTavernRegexFile,
+    convertForSillyTavern,
+} from './lib/tavern-manage.mjs';
 
 const OPTIMIZATION_PAUSED = true;
 const PAUSE_MESSAGE = 'Оптимизация чатов временно отключена из-за нестабильной работы и расхода токенов';
@@ -318,6 +326,10 @@ export async function init(router) {
 
     router.get('/settings', route(async (req, user) => user.store.getSettings()));
     router.post('/settings', route(async (req, user) => user.store.saveSettings(req.body || {})));
+    router.post('/settings/reset', route(async (req, user) => {
+        await saveKeyConfig(user.store.dir, { on: false, provider: 'openrouter', key: '', model: '', customUrl: '' }).catch(() => {});
+        return user.store.resetSettings();
+    }));
 
     router.get('/proposals', route(async (req, user) => ({ items: visibleAppProposals(await listProposals(user.store, { status: req.query.status }), await user.store.getSettings()) })));
     // Remarks on or off at all, with one switch.
@@ -437,6 +449,7 @@ export async function init(router) {
         return { ...summary, prices };
     }));
     router.post('/usage/price', route(async (req, user) => ({ prices: await setPrice(user.store, req.body?.model, req.body?.input, req.body?.output) })));
+    router.post('/usage/reset', route(async (req, user) => resetUsage(user.store)));
 
     // ---------- does the key work ----------
     router.post('/connection-check', route(async (req, user) => {
@@ -633,6 +646,14 @@ export async function init(router) {
     }));
 
     // ---------- catalog ----------
+    router.get('/catalog/head', route(async () => {
+        const catalog = await loadCatalog();
+        return {
+            updated: catalog.updated || '',
+            ids: catalog.items.map(i => i.id),
+            latest: catalog.items[0]?.name || '',
+        };
+    }));
     router.get('/catalog', route(async (req, user) => {
         // The catalog's author asking for a fresh list gets it straight from GitHub, past its cache.
         let fresh = false;
@@ -921,6 +942,61 @@ export async function init(router) {
         return { items };
     }));
     router.post('/backups/:id/restore', route(async (req, user) => restoreBackup(user.ctx, user.store, req.params.id)));
+
+    // ---------- tavern management (#tavern) & conversion (#tools/convert) ----------
+    router.get('/tavern/presets', route(async (req, user) => listTavernPresets(user.ctx)));
+    router.post('/tavern/presets/activate', route(async (req, user) => activateTavernPreset(user.ctx, req.body?.name)));
+    router.post('/tavern/presets/params', route(async (req, user) => saveTavernPresetParams(user.ctx, req.body || {})));
+    router.get('/tavern/presets/detail', route(async (req, user) => readTavernPresetDetail(user.ctx, req.query.name)));
+    router.post('/tavern/presets/prompt', route(async (req, user) => updateTavernPresetPrompt(user.ctx, req.body?.preset, req.body || {})));
+    router.post('/tavern/presets/delete', route(async (req, user) => deleteTavernPreset(user.ctx, user.store.dir, req.body?.name)));
+
+    router.get('/tavern/lorebooks', route(async (req, user) => listTavernLorebooks(user.ctx)));
+    router.post('/tavern/lorebooks/toggle', route(async (req, user) => toggleTavernLorebook(user.ctx, req.body?.name, Boolean(req.body?.active))));
+    router.get('/tavern/lorebooks/detail', route(async (req, user) => readTavernLorebookDetail(user.ctx, req.query.name)));
+    router.post('/tavern/lorebooks/entry', route(async (req, user) => saveTavernLorebookEntry(user.ctx, req.body?.world, req.body || {})));
+    router.post('/tavern/lorebooks/entry-delete', route(async (req, user) => deleteTavernLorebookEntry(user.ctx, req.body?.world, req.body?.uid)));
+    router.post('/tavern/lorebooks/delete', route(async (req, user) => deleteTavernLorebook(user.ctx, user.store.dir, req.body?.name)));
+
+    router.get('/tavern/cards/detail', route(async (req, user) => readTavernCardDetail(user.ctx, String(req.query.avatar || ''))));
+    router.post('/tavern/cards/save', route(async (req, user) => saveTavernCardDetail(user.ctx, String(req.body?.avatar || ''), req.body || {})));
+    router.post('/tavern/cards/delete', route(async (req, user) => deleteTavernCard(user.ctx, user.store.dir, String(req.body?.avatar || ''))));
+
+    router.get('/tavern/extensions', route(async (req, user) => listTavernExtensions(user.ctx)));
+    router.post('/tavern/extensions/toggle', route(async (req, user) => toggleTavernExtension(user.ctx, req.body?.id, Boolean(req.body?.enabled))));
+    router.post('/tavern/extensions/delete', route(async (req, user) => deleteTavernExtension(user.ctx, user.store.dir, req.body?.id)));
+    router.get('/tavern/extensions/export', route(async (req, user, res) => {
+        const out = await packInstalledExtensionZip(user.ctx, String(req.query.id || ''));
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(out.fileName)}`);
+        res.end(out.data);
+    }));
+
+    router.get('/tavern/regex', route(async (req, user) => listTavernRegexes(user.ctx)));
+    router.post('/tavern/regex/save', route(async (req, user) => saveTavernRegex(user.ctx, req.body || {})));
+    router.post('/tavern/regex/delete', route(async (req, user) => deleteTavernRegex(user.ctx, req.body?.index ?? req.body?.id)));
+    router.post('/tavern/regex/import', route(async (req, user) => importTavernRegexFile(user.ctx, await rawBody(req, 2 * 1024 * 1024))));
+    router.get('/tavern/regex/export', route(async (req, user, res) => {
+        const list = globalRegex(await readStSettings(user.ctx));
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', 'attachment; filename="sillytavern-regex.json"');
+        res.end(Buffer.from(JSON.stringify(list, null, 4)));
+    }));
+
+    router.post('/convert', route(async (req, user) => {
+        const body = req.body || {};
+        const buf = Buffer.from(String(body.base64 || ''), 'base64');
+        const out = await convertForSillyTavern(user.ctx, {
+            name: String(body.name || 'file'),
+            data: buf,
+            action: String(body.action || 'inspect'),
+            targetFormat: String(body.targetFormat || ''),
+        });
+        if (out.data) {
+            return { fileName: out.fileName, mime: out.mime, base64: out.data.toString('base64') };
+        }
+        return out;
+    }));
 
     discoverUsers();
     timer = setInterval(() => { tick().catch(() => { }); }, 60000);

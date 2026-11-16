@@ -4,7 +4,7 @@
 import { diffWords } from './diff.js';
 import * as tools from './tools.js';
 
-const APP_VERSION = '0.4.29';
+const APP_VERSION = '0.4.30';
 const BASE = location.pathname.replace(/\/app\/.*$/, '').replace(/\/app$/, '');
 const $ = (sel) => document.querySelector(sel);
 
@@ -357,6 +357,7 @@ function currentRoute() {
     if (hash.startsWith('compress/')) return { name: 'compress', id: hash.slice(9) };
     if (hash.startsWith('card/')) return { name: 'card', id: hash.slice(5) };
     if (hash.startsWith('tools/')) return { name: 'tool', id: hash.slice(6) };
+    if (hash.startsWith('tavern/')) return { name: 'tavern', id: hash.slice(7) };
     return { name: ['feed', 'chats', 'history', 'settings', 'tools', 'tavern'].includes(hash) ? hash : 'feed' };
 }
 
@@ -365,18 +366,25 @@ function catalogRoute(route) {
     return route.name === 'tool' && String(route.id).startsWith('catalog');
 }
 
-/** Feed and chats live together on the «Оптимизация» tab, switched by a row on top. */
+/** Feed, chats, card health, history and muted findings live together on the «Оптимизация» tab. */
 function optimizationSwitch(active) {
     return h('div', { class: 'filters optimization-switch', role: 'group', 'aria-label': 'Оптимизация' },
-        [['feed', 'Лента'], ['chats', 'Чаты']].map(([key, label]) =>
-            h('a', { class: 'filter', href: `#${key}`, 'aria-current': active === key ? 'page' : null, 'aria-pressed': String(active === key) }, label)));
+        [
+            ['feed', 'Лента', '#feed'],
+            ['chats', 'Чаты', '#chats'],
+            ['cards', 'Здоровье карточек', '#tools/cards'],
+            ['history', 'История', '#history'],
+            ['muted', 'Скрытые замечания', '#tools/muted'],
+        ].map(([key, label, href]) =>
+            h('a', { class: 'filter', href, 'aria-current': active === key ? 'page' : null, 'aria-pressed': String(active === key) }, label)));
 }
 
 async function renderRoute() {
     const route = currentRoute();
     const sheet = $('#sheet');
-    const tabName = ['feed', 'chats', 'proposal', 'chat', 'compress'].includes(route.name) ? 'optimization'
-        : ['tool', 'card', 'history'].includes(route.name) ? 'tools' : route.name;
+    const isOpt = ['feed', 'chats', 'proposal', 'chat', 'compress', 'history', 'card'].includes(route.name)
+        || (route.name === 'tool' && ['cards', 'muted'].includes(route.id));
+    const tabName = isOpt ? 'optimization' : route.name === 'tool' ? 'tools' : route.name;
     document.body.classList.toggle('no-tabbar', tools.inApp() && catalogRoute(route));
     for (const tab of document.querySelectorAll('.tab')) {
         if (tab.dataset.tab === tabName) tab.setAttribute('aria-current', 'page');
@@ -394,14 +402,15 @@ async function renderRoute() {
     const freshView = oldView.cloneNode(false);
     oldView.replaceWith(freshView);
     document.body.style.overflow = '';
-    const toolTitles = { sync: 'Связь с ПК', spend: 'Расходы', cards: 'Здоровье карточек', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Скрытые замечания' };
-    const titles = { feed: 'Оптимизация', chats: 'Оптимизация', history: 'История', settings: 'Настройки', tools: 'Ещё', tavern: 'Таверна', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
+    const toolTitles = { convert: 'Конвертация', sync: 'Связь с ПК', spend: 'Расходы', cards: 'Оптимизация', backup: 'Резервная копия', import: 'Импорт по ссылке', catalog: 'Каталог', 'catalog-suggest': 'Предложить в каталог', 'catalog-author': 'Ведение каталога', incoming: 'Файл получен', muted: 'Оптимизация' };
+    const titles = { feed: 'Оптимизация', chats: 'Оптимизация', history: 'Оптимизация', settings: 'Настройки', tools: 'Ещё', tavern: 'Таверна', card: 'Карточка', tool: toolTitles[route.id] || (String(route.id || '').startsWith('catalog-edit/') ? 'Изменить запись' : 'Ещё') };
     $('#page-title').textContent = titles[route.name];
-    if (route.name === 'tavern') return renderTavern();
+    if (route.name === 'tavern') return tools.renderTavern(route.id);
     if (route.name === 'tools') return tools.renderTools();
     if (route.name === 'card') return tools.renderCardHealth(route.id);
     if (route.name === 'tool') {
         if (route.id === 'connection') { location.replace('#tools'); return; }
+        if (route.id === 'convert') return tools.renderConvert();
         if (route.id === 'spend') return tools.renderSpend();
         if (route.id === 'sync') return tools.renderSync();
         if (route.id === 'cards') return tools.renderCardsHealth();
@@ -418,14 +427,7 @@ async function renderRoute() {
     if (route.name === 'feed') return renderFeed();
     if (route.name === 'chats') return renderChats();
     if (route.name === 'history') return renderHistory();
-    return renderSettings();
-}
-
-/** «Таверна» in the settings' bottom bar: its contents are not decided yet. */
-function renderTavern() {
-    put($('#view'), h('div', { class: 'empty' },
-        h('h2', { text: 'Раздел в разработке' }),
-        h('p', { text: 'Здесь появятся настройки таверны' })));
+    return renderSettings(false);
 }
 
 // ---------- top bar ----------
@@ -902,12 +904,16 @@ async function loadChats() {
 async function renderChats() {
     const view = $('#view');
     const top = optimizationSwitch('chats');
-    if (!state.chats.length) put(view, top, h('p', { class: 'muted', text: 'Загружаю чаты' }));
-    try {
-        await loadChats();
-    } catch (error) {
-        put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
-        return;
+    if (!state.chats.length) {
+        put(view, top, h('p', { class: 'muted', text: 'Загружаю чаты' }));
+        try {
+            await loadChats();
+        } catch (error) {
+            put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить чаты' }), h('p', { text: error.message })));
+            return;
+        }
+    } else {
+        loadChats().then(() => { if (view.isConnected && currentRoute().name === 'chats') draw(); }).catch(() => {});
     }
     if (!state.chats.length) {
         put(view, top, h('div', { class: 'empty' }, h('h2', { text: 'Чатов пока нет' }), h('p', { text: 'Начните чат в SillyTavern, и он появится здесь' })));
@@ -1128,6 +1134,7 @@ function legendRow(color, label, value) {
 
 async function renderHistory() {
     const view = $('#view');
+    const top = optimizationSwitch('history');
     const tabs = h('div', { class: 'filters', role: 'group' },
         [['changes', 'Изменения'], ['backups', 'Резервные копии']].map(([key, label]) =>
             h('button', { class: 'filter', type: 'button', 'aria-pressed': String(state.historyTab === key), onclick: () => { state.historyTab = key; renderHistory(); } }, label)));
@@ -1135,16 +1142,16 @@ async function renderHistory() {
         if (state.historyTab === 'changes') await loadHistory();
         else state.backups = (await api('/backups')).items;
     } catch (error) {
-        put(view, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить' }), h('p', { text: error.message })));
+        put(view, top, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Не удалось загрузить' }), h('p', { text: error.message })));
         return;
     }
 
     if (state.historyTab === 'changes') {
         if (!state.history.length) {
-            put(view, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Изменений пока нет' }), h('p', { text: 'Здесь будут применённые и отклонённые предложения. Применённые можно откатить' })));
+            put(view, top, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Изменений пока нет' }), h('p', { text: 'Здесь будут применённые и отклонённые предложения. Применённые можно откатить' })));
             return;
         }
-        put(view, tabs, h('div', { class: 'rows' }, state.history.map(p =>
+        put(view, top, tabs, h('div', { class: 'rows' }, state.history.map(p =>
             h('a', { class: 'row', href: `#p/${encodeURIComponent(p.id)}` },
                 h('span', { class: 'row-main' },
                     h('span', { class: 'row-title', text: p.title }),
@@ -1155,10 +1162,10 @@ async function renderHistory() {
     }
 
     if (!state.backups.length) {
-        put(view, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Копий пока нет' }), h('p', { text: 'Перед каждым изменением файл копируется в data/<пользователь>/korrektor/backups' })));
+        put(view, top, tabs, h('div', { class: 'empty' }, h('h2', { text: 'Копий пока нет' }), h('p', { text: 'Перед каждым изменением файл копируется в data/<пользователь>/korrektor/backups' })));
         return;
     }
-    put(view, tabs,
+    put(view, top, tabs,
         h('p', { class: 'small muted', style: 'margin:0 0 12px', text: 'Хранятся последние 100 копий. Восстановление возвращает файлы целиком, текущее состояние при этом тоже сохраняется' }),
         h('div', { class: 'rows' }, state.backups.map(b =>
             h('div', { class: 'row' },
@@ -1458,15 +1465,9 @@ async function renderSettings(reload = true) {
                 recommendation,
                 tierBlock('scan', 'Дешёвая, для фоновой проверки'),
                 tierBlock('heavy', 'Сильная, для сложных правок'),
-                tierBlock('translate', 'Для перевода сообщений в чате (пусто — модель из «Какая модель для какой задачи»)'),
+                tierBlock('translate', 'Для перевода сообщений в чате'),
                 translateKeyBlock(),
                 translateGuideBlock(s))),
-
-        h('div', { class: 'section' },
-            h('h2', { class: 'section-title', text: 'Какая модель для какой задачи' }),
-            h('div', { class: 'rows' }, TASKS.map(([key, label]) => h('div', { class: 'field' },
-                h('div', { class: 'field-row' }, h('span', { class: 'label', text: label }),
-                    seg([['scan', 'Дешёвая'], ['heavy', 'Сильная']], s.tasks[key], (v) => save({ tasks: { [key]: v } }, true))))))),
 
         h('div', { class: 'section' },
             h('h2', { class: 'section-title', text: 'Проверка' }),
@@ -1515,9 +1516,14 @@ async function renderSettings(reload = true) {
                     h('span', { class: 'hint', text: 'Мемори-бук обычно подключён к чату как лорбук чата' })))),
 
         h('div', { class: 'section' },
-            h('h2', { class: 'section-title', text: 'Уведомления' }),
-            h('div', { class: 'rows' },
-                toggleField('Уведомление Android о находках', state.status?.termux ? 'Через Termux:API' : 'Нужны приложение Termux:API и пакет termux-api: pkg install termux-api', s.notify.termux, (v) => save({ notify: { termux: v } })))),
+            h('div', { class: 'card-actions' },
+                h('button', { class: 'btn secondary', type: 'button', text: 'Откат до заводских настроек', onclick: async () => {
+                    const ok = await confirmDialog({ title: 'Вернуть заводские настройки?', text: 'Настройки Тавернки, глоссарий, скрытые виды замечаний и статистика расходов вернутся к исходным значениям. Чаты и карточки SillyTavern не затрагиваются', ok: 'Сбросить всё', danger: true });
+                    if (!ok) return;
+                    state.settings = await api('/settings/reset', { method: 'POST' });
+                    toast('Настройки возвращены к заводским');
+                    renderSettings(false);
+                } }))),
 
         h('p', { class: 'small muted', style: 'margin:24px 0 0', text: `Приложение ${APP_VERSION} · плагин ${state.status?.version ?? '?'} · пользователь ${state.status?.user ?? ''}` }),
         state.status?.pluginDir ? h('p', { class: 'small muted mono', style: 'margin:4px 0 0;overflow-wrap:anywhere', text: `Плагин загружен из ${state.status.pluginDir}` }) : null,
@@ -1527,6 +1533,8 @@ async function renderSettings(reload = true) {
         if (!heading) continue;
         const title = heading.textContent;
         if (state.status?.optimizationPaused && ['Проверка', 'Что искать', 'Пороги', 'Резюме и факты'].includes(title)) { section.remove(); continue; }
+        // «Подключение» and «Модели» stay open directly without collapsible buttons.
+        if (['Подключение', 'Модели'].includes(title)) continue;
         const details = h('details', { class: 'settings-group', open: expandedSettings.has(title) }, h('summary', { text: title }));
         heading.remove();
         details.append(...section.childNodes);
@@ -1549,7 +1557,7 @@ function plural(n, one, few, many) {
 }
 
 async function boot() {
-    tools.setup({ h, put, $, api, toast, confirmDialog, fmt, when, plural, state, openSheet, renderCard, storageGet, storageSet, csrfToken, BASE, KIND });
+    tools.setup({ h, put, $, api, toast, confirmDialog, fmt, when, plural, state, openSheet, renderCard, storageGet, storageSet, csrfToken, BASE, KIND, optimizationSwitch });
     tools.applyTheme(storageGet('korrektor.theme'), storageGet('korrektor.accent'));
     // The Android app passes its look here, and links shared to the app.
     window.korrektorTheme = (theme, accent) => {
@@ -1582,7 +1590,8 @@ async function boot() {
         navigator.serviceWorker.register('sw.js').catch(() => { });
     }
     await refresh();
-    setInterval(() => { if (document.visibilityState === 'visible' && !state.job) refresh(false); }, 30000);
+    tools.checkCatalogNew();
+    setInterval(() => { if (document.visibilityState === 'visible' && !state.job) { refresh(false); tools.checkCatalogNew(); } }, 30000);
 }
 
 /** What the feed shows: the periodic refresh redraws it only when this changes. */

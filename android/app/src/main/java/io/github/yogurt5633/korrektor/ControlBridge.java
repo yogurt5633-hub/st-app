@@ -58,7 +58,10 @@ final class ControlBridge {
             s.put("theme", prefs.text(Prefs.THEME).isEmpty() ? "dark" : Palette.migrate(prefs.text(Prefs.THEME)));
             s.put("resolvedTheme", Palette.resolvedTheme(activity, prefs));
             s.put("accent", prefs.text(Prefs.ACCENT).isEmpty() ? "amber" : prefs.text(Prefs.ACCENT));
-            s.put("onboardingDone", prefs.number(Prefs.ONBOARDING) >= Prefs.ONBOARDING_VERSION);
+            boolean onboardingDone = prefs.number(Prefs.ONBOARDING) >= Prefs.ONBOARDING_VERSION;
+            s.put("onboardingDone", onboardingDone);
+            String ver = Updater.appVersionName(activity);
+            s.put("whatsNewPending", onboardingDone && !ver.equals(prefs.text("whatsNewSeen")));
             s.put("keepAlive", prefs.flag(Prefs.KEEP_ALIVE, true));
             s.put("appBatteryFree", activity.batteryFree(activity.getPackageName()));
             s.put("termuxBatteryFree", activity.batteryFree(Termux.PACKAGE));
@@ -256,6 +259,12 @@ final class ControlBridge {
     @JavascriptInterface
     public void finishOnboarding() {
         activity.runOnUiThread(activity::finishOnboarding);
+    }
+
+    @JavascriptInterface
+    public void dismissWhatsNew() {
+        activity.prefs.setText("whatsNewSeen", Updater.appVersionName(activity));
+        activity.runOnUiThread(activity::notifyHome);
     }
 
     /** Provider sites for the "Sites" tab: [{name, url}]. */

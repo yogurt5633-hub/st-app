@@ -94,6 +94,14 @@ final class FilesBridge {
         toast("Не удалось сохранить файл: " + message);
     }
 
+    @JavascriptInterface
+    public void catalogBadge(int count) {
+        if (activity instanceof MainActivity) {
+            MainActivity main = (MainActivity) activity;
+            main.runOnUiThread(() -> main.setCatalogBadge(count));
+        }
+    }
+
     private void write(String name, String mime, byte[] data) throws Exception {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContentResolver resolver = activity.getContentResolver();

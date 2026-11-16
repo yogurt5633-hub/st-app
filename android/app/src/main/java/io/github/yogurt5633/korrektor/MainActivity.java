@@ -111,6 +111,15 @@ public class MainActivity extends Activity {
     private boolean korrektorLoaded;
     /** Last screen opened on the «Настройки» tab, so returning from «Каталог» goes back to it. */
     private String settingsHash = "#feed";
+    private String currentKorrektorHash = "";
+    private long lastBarRefresh;
+    private final Runnable refreshBarTask = () -> {
+        lastBarRefresh = System.currentTimeMillis();
+        modelBar.refresh();
+    };
+    private int catalogNewCount;
+    private java.util.Set<String> latestCatalogIds = new java.util.LinkedHashSet<>();
+    private boolean catalogCheckRunning;
     /** The latest line SillyTavern printed while starting: shown on the home page. */
     String progress = "";
     private View updateBar;
@@ -178,14 +187,18 @@ public class MainActivity extends Activity {
 
         setContentView(root);
         applyPalette();
-        // Everyone sees the welcome screens once, also after an update: stay on the home tab for them.
-        if (prefs.number(Prefs.ONBOARDING) < Prefs.ONBOARDING_VERSION) homeChosen = true;
+        // Everyone sees the welcome screens once, and after an app update the "What's new" window on Home.
+        if (prefs.number(Prefs.ONBOARDING) < Prefs.ONBOARDING_VERSION
+                || !Updater.appVersionName(this).equals(prefs.text("whatsNewSeen"))) {
+            homeChosen = true;
+        }
         showTab(HOME);
         CheckJob.schedule(this);
         handleIntent(getIntent());
         checkServer(true);
         checkTermux();
         checkUpdates(false);
+        checkCatalogLive();
         // While the app is open, look for new versions every half hour.
         handler.postDelayed(new Runnable() {
             @Override
@@ -194,6 +207,14 @@ public class MainActivity extends Activity {
                 handler.postDelayed(this, 30 * 60_000);
             }
         }, 30 * 60_000);
+        // Live check for new catalog items every 30 seconds while the app is on screen.
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (visible) checkCatalogLive();
+                handler.postDelayed(this, 30_000);
+            }
+        }, 30_000);
     }
 
     // ---------- updates ----------
@@ -259,24 +280,15 @@ public class MainActivity extends Activity {
         long code = app.optLong("latestCode");
         if (prefs.number("announcedApp") == code) return;
         prefs.setNumber("announcedApp", code);
-        String notes = app.optString("notes", "Описание изменений пока не опубликовано");
-        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+        new android.app.AlertDialog.Builder(this)
                 .setTitle("Доступна версия " + app.optString("latest"))
-                .setMessage("Обновление приложения готово к установке")
+                .setMessage("Обновление приложения готово к установке. После установки откроется окно «Что нового» с обзором изменений")
                 .setPositiveButton("Обновить", (d, which) -> {
                     String error = Updater.downloadAndInstall(this, prefs, () -> toast("Скачиваю обновление"));
                     if (error != null) toast(error);
                 })
                 .setNegativeButton("Позже", (d, which) -> dismissUpdate())
-                .setNeutralButton("Что изменилось ▾", null)
-                .create();
-        dialog.setOnShowListener(d -> dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
-            boolean expanded = Boolean.TRUE.equals(v.getTag());
-            dialog.setMessage(expanded ? "Обновление приложения готово к установке" : notes);
-            dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setText(expanded ? "Что изменилось ▾" : "Свернуть ▴");
-            v.setTag(!expanded);
-        }));
-        dialog.show();
+                .show();
     }
 
     private void showUpdateBar() {
@@ -422,8 +434,10 @@ public class MainActivity extends Activity {
                 if (v != korrektor || url == null) return;
                 int idx = url.indexOf('#');
                 String hash = idx >= 0 ? url.substring(idx) : "#feed";
+                currentKorrektorHash = hash;
                 boolean catalog = hash.startsWith("#tools/catalog");
-                if (!catalog) settingsHash = hash;
+                if (catalog) markCatalogSeenNative();
+                else settingsHash = hash;
                 if (isPluginTab(current)) {
                     String wanted = catalog ? CATALOG : KORREKTOR;
                     if (!wanted.equals(current)) {
@@ -683,9 +697,13 @@ public class MainActivity extends Activity {
             tab = HOME;
         }
         current = tab;
+        if (CATALOG.equals(tab)) markCatalogSeenNative();
         paintTabs();
         tavernBox.setVisibility(TAVERN.equals(tab) ? View.VISIBLE : View.GONE);
-        if (TAVERN.equals(tab)) modelBar.refresh();
+        if (TAVERN.equals(tab) && System.currentTimeMillis() - lastBarRefresh > 5000) {
+            handler.removeCallbacks(refreshBarTask);
+            handler.postDelayed(refreshBarTask, 180);
+        }
         boolean plugin = isPluginTab(tab);
         if (plugin && loaded && !korrektorLoaded) loadKorrektor(CATALOG.equals(tab) ? "#tools/catalog" : settingsHash);
         korrektor.setVisibility(plugin ? View.VISIBLE : View.GONE);
@@ -1109,14 +1127,18 @@ public class MainActivity extends Activity {
     void openKorrektor(String hash) {
         homeChosen = false;
         boolean catalog = hash != null && hash.startsWith("#tools/catalog");
-        if (!catalog && hash != null && !hash.isEmpty()) settingsHash = hash;
+        if (catalog) markCatalogSeenNative();
+        else if (hash != null && !hash.isEmpty()) settingsHash = hash;
         String tab = catalog ? CATALOG : KORREKTOR;
         if (stUp && !korrektorLoaded) {
             // Not opened yet: load it straight on the wanted screen.
             loadKorrektor(hash);
         }
         showTab(tab);
-        if (isPluginTab(current)) korrektor.evaluateJavascript("location.hash=" + JSONObject.quote(hash), null);
+        if (isPluginTab(current) && hash != null && !hash.equals(currentKorrektorHash)) {
+            currentKorrektorHash = hash;
+            korrektor.evaluateJavascript("location.hash=" + JSONObject.quote(hash), null);
+        }
     }
 
     void refreshModelBar() {
@@ -1125,6 +1147,7 @@ public class MainActivity extends Activity {
 
     void finishOnboarding() {
         prefs.setNumber(Prefs.ONBOARDING, Prefs.ONBOARDING_VERSION);
+        prefs.setText("whatsNewSeen", Updater.appVersionName(this));
         homeChosen = false;
         if (stUp) showTab(TAVERN);
         else if (prefs.autoStart() && termuxReady == Boolean.TRUE && (!stDir.isEmpty() || !prefs.text(Prefs.START_CMD).isEmpty()) && !starting) {
@@ -1229,11 +1252,99 @@ public class MainActivity extends Activity {
     private void paintTabs() {
         for (Map.Entry<String, TextView> e : tabs.entrySet()) {
             boolean on = e.getKey().equals(current);
-            int color = on ? palette.text : palette.muted;
+            if (CATALOG.equals(e.getKey())) {
+                e.getValue().setText(catalogNewCount > 0 ? "Каталог · +" + catalogNewCount : "Каталог");
+            }
+            boolean highlight = on || (CATALOG.equals(e.getKey()) && catalogNewCount > 0);
+            int color = on ? palette.text : highlight ? palette.accent : palette.muted;
             e.getValue().setTextColor(color);
-            e.getValue().setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(on ? palette.accent : palette.muted));
-            e.getValue().setTypeface(Typeface.DEFAULT, on ? Typeface.BOLD : Typeface.NORMAL);
+            e.getValue().setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(highlight ? palette.accent : palette.muted));
+            e.getValue().setTypeface(Typeface.DEFAULT, highlight ? Typeface.BOLD : Typeface.NORMAL);
         }
+    }
+
+    void setCatalogBadge(int count) {
+        if (CATALOG.equals(current)) {
+            catalogNewCount = 0;
+        } else {
+            catalogNewCount = Math.max(0, count);
+        }
+        paintTabs();
+    }
+
+    private void markCatalogSeenNative() {
+        if (!latestCatalogIds.isEmpty()) {
+            java.util.Set<String> seen = readSeenCatalogNative();
+            seen.addAll(latestCatalogIds);
+            prefs.setText("seenCatalogIds", String.join("\n", seen));
+        }
+        if (catalogNewCount > 0) {
+            catalogNewCount = 0;
+            paintTabs();
+        }
+    }
+
+    private java.util.Set<String> readSeenCatalogNative() {
+        String raw = prefs.text("seenCatalogIds");
+        java.util.Set<String> set = new java.util.LinkedHashSet<>();
+        if (raw == null || raw.trim().isEmpty()) return set;
+        for (String line : raw.split("\n")) {
+            String s = line.trim();
+            if (!s.isEmpty()) set.add(s);
+        }
+        return set;
+    }
+
+    void checkCatalogLive() {
+        if (catalogCheckRunning) return;
+        catalogCheckRunning = true;
+        new Thread(() -> {
+            try {
+                Net.Reply r = Net.get("https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/catalog.json?t=" + (System.currentTimeMillis() / 30000), 10000, false);
+                if (!r.ok()) return;
+                org.json.JSONArray items = new JSONObject(r.body).optJSONArray("items");
+                if (items == null || items.length() == 0) return;
+                java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+                String newestName = "";
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject item = items.optJSONObject(i);
+                    if (item == null) continue;
+                    String id = item.optString("id", "").trim();
+                    if (!id.isEmpty()) {
+                        ids.add(id);
+                        if (newestName.isEmpty()) newestName = item.optString("name", "");
+                    }
+                }
+                if (ids.isEmpty()) return;
+                String finalNewest = newestName;
+                runOnUiThread(() -> {
+                    latestCatalogIds = ids;
+                    java.util.Set<String> seen = readSeenCatalogNative();
+                    if (seen.isEmpty()) {
+                        prefs.setText("seenCatalogIds", String.join("\n", ids));
+                        return;
+                    }
+                    int fresh = 0;
+                    for (String id : ids) {
+                        if (!seen.contains(id)) fresh++;
+                    }
+                    if (CATALOG.equals(current)) {
+                        markCatalogSeenNative();
+                        return;
+                    }
+                    int before = catalogNewCount;
+                    catalogNewCount = fresh;
+                    paintTabs();
+                    if (fresh > before && visible && !finalNewest.isEmpty()) {
+                        toast("Новое в каталоге: «" + finalNewest + "»");
+                    }
+                });
+            } catch (Exception ignored) {
+                // next poll will retry
+            } finally {
+                catalogCheckRunning = false;
+            }
+        }).start();
     }
 
     /** The Korrektor page draws itself in the same theme and accent. */
@@ -1572,6 +1683,7 @@ public class MainActivity extends Activity {
         notifyHome();
         if (!starting) checkServer(false);
         checkUpdates(false);
+        checkCatalogLive();
         if (termuxReady != Boolean.TRUE && !termuxChecking) checkTermux();
     }
 

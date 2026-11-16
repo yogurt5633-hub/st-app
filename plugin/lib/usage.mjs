@@ -174,3 +174,13 @@ export async function lastPromptOf(store, chatId) {
     const data = await readJson(usageFile(store), { days: {} });
     return data.lastPrompt?.[chatId] ?? null;
 }
+
+export async function resetUsage(store) {
+    return withLock(`${store.dir}:usage`, async () => {
+        const data = await readJson(usageFile(store), { days: {} });
+        const next = { days: {}, lastPrompt: {}, prices: data.prices || {} };
+        await writeJson(usageFile(store), next);
+        return { ok: true };
+    });
+}
+
