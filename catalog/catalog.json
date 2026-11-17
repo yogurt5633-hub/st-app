@@ -2,6 +2,20 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-spotify",
+            "type": "extension",
+            "name": "Spotify",
+            "author": "Cohee1207",
+            "description": "Добавляет в промпт сведения о текущем треке и инструменты модели для поиска музыки, управления воспроизведением, очередью и плейлистами.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-spotify.zip",
+            "added": "2026-11-17",
+            "hash": "b2cb4fda3ee686eadf855a3be6be950ccc50eaff0028862f04fd6bf5c482b121",
+            "size": 77413
+        },
+        {
             "id": "extension-ambient-weather-overlay",
             "type": "extension",
             "name": "Ambient Weather Overlay",
@@ -224,5 +238,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-17T00:58:44.325Z"
+    "updated": "2026-11-17T00:59:31.161Z"
 }
