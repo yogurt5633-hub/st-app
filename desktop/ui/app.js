@@ -71,7 +71,9 @@ function render(state) {
   currentState = state;
   applyTheme(state.theme, state.accent);
   $('status').textContent = state.message;
-  $('folder').textContent = state.folder || 'Папка ещё не выбрана';
+  $('folder').textContent = state.folder
+    ? `${state.folder}${state.installed && state.depsInstalled === false ? ' (зависимости node_modules ещё не установлены)' : ''}`
+    : 'Папка ещё не выбрана (при автоустановке создастся в папке пользователя SillyTavern)';
   if (state.version) $('version-label').textContent = `для Windows · ${state.version}`;
   if (document.activeElement !== $('url')) $('url').value = state.url;
 
@@ -102,8 +104,10 @@ function render(state) {
 
   const logsBox = $('logs-box');
   if (logsBox) {
+    if (state.busy || (state.logs && /ОШИБКА|critical error/i.test(state.logs))) logsOpen = true;
     logsBox.hidden = !logsOpen;
-    logsBox.textContent = state.logs || 'Журнал пока пуст.';
+    logsBox.textContent = state.logs || 'Журнал пока пуст. Нажмите «Установить SillyTavern» или «Запустить», чтобы увидеть подробный лог.';
+    if (logsOpen) logsBox.scrollTop = logsBox.scrollHeight;
   }
 
   const u = state.updates;
@@ -166,9 +170,21 @@ for (const [id, method] of [
   ['restart', 'restart'],
   ['stop', 'stop'],
   ['reload', 'reload'],
-]) $(id).onclick = () => act(() => api[method]());
+]) $(id).onclick = () => {
+  if (['install', 'install-tavern', 'update-tavern-btn', 'update-korrektor-btn', 'start', 'restart'].includes(id)) {
+    logsOpen = true;
+    if ($('logs-box')) $('logs-box').hidden = false;
+  }
+  act(() => api[method]());
+};
 
 $('logs-btn').onclick = () => { logsOpen = !logsOpen; render(currentState); };
+$('copy-logs-btn').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(currentState.logs || '');
+    $('status').textContent = 'Журнал скопирован в буфер обмена.';
+  } catch {}
+};
 for (const button of document.querySelectorAll('[data-tab]')) button.onclick = () => act(() => api.tab(button.dataset.tab));
 for (const button of document.querySelectorAll('[data-theme]')) {
   button.onclick = () => act(() => api.setTheme(button.dataset.theme, currentState.accent || 'amber'));

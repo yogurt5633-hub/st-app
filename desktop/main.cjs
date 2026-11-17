@@ -5,7 +5,7 @@ const {pathToFileURL} = require('node:url');
 const {spawn} = require('node:child_process');
 const {
   serverURL, pageURL, sameOrigin, localConfig, compareVersions,
-  installedPluginVersion, localAddresses, setLanListen,
+  installedPluginVersion, hasStDeps, localAddresses, setLanListen,
 } = require('./core.cjs');
 const {
   installKorrektorInto, ensureStDependencies, installOrUpdateSillyTavern,
@@ -44,25 +44,34 @@ const settingsFile = () => path.join(app.getPath('userData'), 'connection.json')
 const bundleRoot = () => app.isPackaged ? path.join(process.resourcesPath, 'bundle') : path.resolve(__dirname, '..');
 
 function addLog(line) {
-  const clean = String(line || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').trim();
+  const clean = String(line || '')
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|Bearer\s+[A-Za-z0-9._-]{12,})/gi, '[СКРЫТО]')
+    .trim();
   if (!clean) return;
   const stamp = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-  logLines.push(`${stamp} ${clean}`);
-  if (logLines.length > 40) logLines = logLines.slice(-40);
+  const entry = `${stamp} ${clean}`;
+  logLines.push(entry);
+  if (logLines.length > 300) logLines = logLines.slice(-300);
+  try {
+    fs.appendFileSync(path.join(app.getPath('userData'), 'tavernka-install.log'), entry + '\n', 'utf8');
+  } catch {}
 }
 
 function localStDetails() {
-  if (!prefs.folder) return {installed: false, pluginVersion: '', listen: false, lanUrls: []};
+  if (!prefs.folder) return {installed: false, depsInstalled: false, pluginVersion: '', listen: false, lanUrls: []};
   try {
     const cfg = localConfig(prefs.folder);
+    const depsOk = hasStDeps(prefs.folder);
     return {
       installed: true,
+      depsInstalled: depsOk,
       pluginVersion: installedPluginVersion(prefs.folder),
       listen: cfg.listen,
       lanUrls: localAddresses(cfg.port),
     };
   } catch {
-    return {installed: false, pluginVersion: '', listen: false, lanUrls: []};
+    return {installed: false, depsInstalled: false, pluginVersion: '', listen: false, lanUrls: []};
   }
 }
 
@@ -199,7 +208,11 @@ function handle(channel, fn) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame.url !== pathToFileURL(homeFile).href) throw new Error('Untrusted sender');
     try { const value = await fn(...args); return {ok: true, value, state: snapshot()}; }
-    catch (error) { announce(error.message); return {ok: false, error: error.message, state: snapshot()}; }
+    catch (error) {
+      addLog(`❌ ОШИБКА (${channel}): ${error.message}`);
+      announce(`Ошибка: ${error.message}`);
+      return {ok: false, error: error.message, state: snapshot()};
+    }
   });
 }
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -374,12 +387,12 @@ else {
     handle('install-tavern', async () => {
       if (child || busy) throw new Error('Сначала остановите Таверну.');
       if (!prefs.folder) {
-        prefs.folder = path.join(app.getPath('documents'), 'SillyTavern');
+        prefs.folder = path.join(app.getPath('home'), 'SillyTavern');
         save();
       }
       busy = true;
-      addLog(`Автоустановка SillyTavern в ${prefs.folder}`);
-      announce(`Устанавливаю SillyTavern в ${prefs.folder}…`);
+      addLog(`=== Начало установки SillyTavern в ${prefs.folder} ===`);
+      announce(`Устанавливаю SillyTavern в ${prefs.folder}… (см. журнал ниже)`);
       try {
         const cfg = await installOrUpdateSillyTavern({
           folder: prefs.folder,
@@ -389,7 +402,7 @@ else {
         });
         prefs.url = cfg.url;
         save();
-        addLog('SillyTavern и Корректор установлены');
+        addLog('=== SillyTavern, зависимости node_modules и Корректор успешно установлены! ===');
         announce('SillyTavern и Корректор установлены! Нажмите «Запустить».');
       } finally {
         busy = false;
@@ -453,7 +466,12 @@ else {
         const bundle = app.isPackaged ? path.join(process.resourcesPath, 'bundle') : path.resolve(__dirname, '..');
         await new Promise((resolve, reject) => {
           installer = runNode([path.join(bundle, 'scripts/install.mjs'), prefs.folder], prefs.folder);
-          installer.stdout.resume(); installer.stderr.resume();
+          const onChunk = chunk => {
+            for (const l of String(chunk).split(/\r?\n/).map(s => s.trim()).filter(Boolean)) addLog(l);
+            announce();
+          };
+          installer.stdout.on('data', onChunk);
+          installer.stderr.on('data', onChunk);
           installer.once('error', reject);
           installer.once('exit', code => code === 0 ? resolve() : reject(new Error(`Установка завершилась с кодом ${code}. Копия сохранена: ${backup}`)));
         });
@@ -463,12 +481,15 @@ else {
     async function startLocalTavern() {
       if (child || busy) throw new Error('Таверна уже запускается или работает.');
       const config = localConfig(prefs.folder);
-      if (!fs.existsSync(path.join(prefs.folder, 'node_modules'))) {
+      if (!hasStDeps(prefs.folder)) {
         busy = true;
+        addLog('Пакеты node_modules ещё не установлены — запускаю автоматическую установку зависимостей…');
+        announce('Докачиваю зависимости SillyTavern (npm install)…');
         try {
           await ensureStDependencies(prefs.folder, app.getPath('userData'), text => { addLog(text); announce(text); });
         } finally {
           busy = false;
+          announce();
         }
       }
       if (prefs.autoUpdate && updatesInfo?.korrektor?.available) {
@@ -485,13 +506,38 @@ else {
         }
       }
       prefs.url = config.url; save(); clearViews();
-      addLog(`Запуск SillyTavern (${config.url})`);
+      addLog(`=== Запуск SillyTavern (${config.url}) в ${prefs.folder} ===`);
       child = runNode([path.join(prefs.folder, 'server.js'), '--browserLaunchEnabled=false', '--autorun=false'], prefs.folder);
       const owned = child;
-      owned.stdout.resume(); owned.stderr.resume();
-      owned.once('error', error => { child = null; addLog(`Ошибка: ${error.message}`); announce(`Не удалось запустить: ${error.message}`); });
-      owned.once('exit', code => { if (child === owned) child = null; addLog(`SillyTavern остановлен (код ${code ?? 0})`); announce(`Таверна остановлена${code ? ` (код ${code})` : ''}.`); });
-      announce('Таверна запускается. Через несколько секунд откройте вкладку «Таверна».');
+      let hadErrorLine = '';
+      const onServerOutput = chunk => {
+        const lines = String(chunk).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        for (const line of lines) {
+          if (line.startsWith('Content file ')) continue;
+          addLog(`[ST] ${line.slice(0, 240)}`);
+          if (/Compiling frontend libraries/i.test(line)) {
+            announce('SillyTavern собирает интерфейс (первый запуск занимает 15–30 сек)…');
+          } else if (/SillyTavern is listening on|Launching\.\.\./i.test(line)) {
+            announce('Таверна запущена и готова! Откройте вкладку «Таверна».');
+          } else if (/critical error|Cannot find package|ERR_MODULE_NOT_FOUND|EADDRINUSE/i.test(line)) {
+            hadErrorLine = line;
+          }
+        }
+        announce();
+      };
+      owned.stdout.on('data', onServerOutput);
+      owned.stderr.on('data', onServerOutput);
+      owned.once('error', error => {
+        child = null;
+        addLog(`❌ Ошибка запуска процесса: ${error.message}`);
+        announce(`Не удалось запустить: ${error.message}`);
+      });
+      owned.once('exit', code => {
+        if (child === owned) child = null;
+        addLog(`SillyTavern остановлен (код ${code ?? 0})${hadErrorLine ? ` — ${hadErrorLine}` : ''}`);
+        announce(hadErrorLine ? `Таверна не запустилась: ${hadErrorLine} (подробности в «Журнале»)` : `Таверна остановлена${code ? ` (код ${code})` : ''}.`);
+      });
+      announce('Таверна запускается. Через несколько секунд откройте вкладку «Таверна» (ход запуска виден в «Журнале»).');
     }
     handle('start', startLocalTavern);
     handle('restart', async () => {

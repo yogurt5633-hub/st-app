@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
-const {compareVersions, installedPluginVersion, depsStamp, localConfig, extractZipBuffer} = require('./core.cjs');
+const {compareVersions, installedPluginVersion, depsStamp, hasStDeps, localConfig, extractZipBuffer} = require('./core.cjs');
 
 const RELEASES_URL = 'https://api.github.com/repos/yogurt5633-hub/st-app/releases/latest';
 const PLUGIN_PKG_URL = 'https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/plugin/package.json';
@@ -10,24 +10,40 @@ const ST_APP_ZIP_URL = 'https://codeload.github.com/yogurt5633-hub/st-app/zip/re
 const SILLYTAVERN_ZIP_URL = 'https://codeload.github.com/SillyTavern/SillyTavern/zip/refs/heads/release';
 const NODE_WIN_ZIP_URL = 'https://nodejs.org/dist/v22.14.0/node-v22.14.0-win-x64.zip';
 
-function runNodeScript(args, cwd, onLine) {
+function runNodeScript(args, cwd, onLine, execBinary = process.execPath) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, {
+    const isElectronBin = execBinary === process.execPath;
+    const binDir = path.dirname(execBinary);
+    const pathKey = Object.keys(process.env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    const env = {
+      ...process.env,
+      [pathKey]: `${binDir}${path.delimiter}${process.env[pathKey] || ''}`,
+      NODE_ENV: 'production',
+    };
+    if (isElectronBin) env.ELECTRON_RUN_AS_NODE = '1';
+    const tail = [];
+    const proc = spawn(execBinary, args, {
       cwd,
       windowsHide: true,
       shell: false,
-      env: {...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_ENV: 'production'},
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const handleChunk = chunk => {
-      if (!onLine) return;
       const lines = String(chunk).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-      if (lines.length) onLine(lines.at(-1));
+      for (const line of lines) {
+        tail.push(line);
+        if (tail.length > 10) tail.shift();
+        onLine?.(line);
+      }
     };
     proc.stdout.on('data', handleChunk);
     proc.stderr.on('data', handleChunk);
     proc.once('error', reject);
-    proc.once('exit', code => code === 0 ? resolve() : reject(new Error(`Команда завершилась с кодом ${code}`)));
+    proc.once('exit', code => {
+      if (code === 0) resolve();
+      else reject(new Error(`Код ${code}${tail.length ? `: ${tail.slice(-3).join(' | ')}` : ''}`));
+    });
   });
 }
 
@@ -84,64 +100,81 @@ async function installKorrektorInto(folder, bundleDir, {downloadFresh = false, o
   }
 }
 
-async function ensureNpmCli(userDataDir, onStatus) {
-  const candidates = [
-    path.join(userDataDir, 'node-runtime', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-    '/usr/lib/node_modules/npm/bin/npm-cli.js',
-    '/usr/local/lib/node_modules/npm/bin/npm-cli.js',
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+async function ensureNpmRuntime(userDataDir, onStatus) {
+  const runtimeDir = path.join(userDataDir, 'node-runtime');
+  const portableCli = path.join(runtimeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const portableNode = path.join(runtimeDir, process.platform === 'win32' ? 'node.exe' : 'bin/node');
+  if (fs.existsSync(portableCli)) {
+    return {nodeBin: fs.existsSync(portableNode) ? portableNode : process.execPath, npmCli: portableCli};
   }
   if (process.platform === 'win32') {
     const pf = process.env.ProgramFiles || 'C:\\Program Files';
+    const sysNode = path.join(pf, 'nodejs', 'node.exe');
     const sysNpm = path.join(pf, 'nodejs', 'node_modules', 'npm', 'bin', 'npm-cli.js');
-    if (fs.existsSync(sysNpm)) return sysNpm;
+    if (fs.existsSync(sysNode) && fs.existsSync(sysNpm)) {
+      return {nodeBin: sysNode, npmCli: sysNpm};
+    }
+  } else {
+    for (const c of [
+      path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      '/usr/lib/node_modules/npm/bin/npm-cli.js',
+      '/usr/local/lib/node_modules/npm/bin/npm-cli.js',
+    ]) {
+      if (fs.existsSync(c)) return {nodeBin: process.execPath, npmCli: c};
+    }
   }
-  onStatus?.('Скачиваю пакетный менеджер npm для установки зависимостей SillyTavern…');
-  const runtimeDir = path.join(userDataDir, 'node-runtime');
+  onStatus?.('[Шаг 3/4] Скачиваю портативный Node.js + npm (около 33 МБ) с nodejs.org…');
   const zipBuf = await fetchBuffer(NODE_WIN_ZIP_URL, 180000);
-  extractZipBuffer(zipBuf, runtimeDir, {stripTopDir: true});
-  const cli = path.join(runtimeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!fs.existsSync(cli)) throw new Error('Не удалось подготовить npm для установки зависимостей');
-  return cli;
+  onStatus?.(`[Шаг 3/4] Node.js скачан (${(zipBuf.length / 1048576).toFixed(1)} МБ), распаковываю…`);
+  const entries = extractZipBuffer(zipBuf, runtimeDir, {stripTopDir: true});
+  onStatus?.(`[Шаг 3/4] Распаковано записей Node.js: ${entries}`);
+  if (!fs.existsSync(portableCli)) throw new Error('Не удалось подготовить npm-cli.js для установки зависимостей');
+  return {nodeBin: fs.existsSync(portableNode) ? portableNode : process.execPath, npmCli: portableCli};
 }
 
 async function ensureStDependencies(folder, userDataDir, onStatus) {
   const stampFile = path.join(folder, '.tavernka-deps-stamp');
   const currentStamp = depsStamp(folder);
-  const hasModules = fs.existsSync(path.join(folder, 'node_modules', 'express')) ||
-    (fs.existsSync(path.join(folder, 'node_modules')) && fs.readdirSync(path.join(folder, 'node_modules')).length > 0);
-  if (hasModules && (!fs.existsSync(stampFile) || fs.readFileSync(stampFile, 'utf8').trim() === currentStamp)) {
+  if (hasStDeps(folder) && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8').trim() === currentStamp) {
+    onStatus?.('[Шаг 3/4] Зависимости node_modules уже установлены и актуальны.');
     return;
   }
-  const npmCli = await ensureNpmCli(userDataDir, onStatus);
-  onStatus?.('Устанавливаю зависимости SillyTavern (npm install). В первый раз это занимает 1–3 минуты…');
+  const {nodeBin, npmCli} = await ensureNpmRuntime(userDataDir, onStatus);
+  onStatus?.(`[Шаг 3/4] Запуск npm install (${nodeBin}) в ${folder}. В первый раз это занимает 1–3 минуты…`);
   await runNodeScript(
-    [npmCli, 'install', '--no-save', '--no-audit', '--no-fund', '--loglevel=error', '--no-progress', '--omit=dev', '--ignore-scripts'],
+    [npmCli, 'install', '--no-save', '--no-audit', '--no-fund', '--loglevel=http', '--omit=dev', '--ignore-scripts'],
     folder,
     onStatus,
+    nodeBin,
   );
+  if (!hasStDeps(folder)) {
+    throw new Error('После npm install в папке node_modules не найден пакет express. Проверьте доступ к интернету и антивирус.');
+  }
   fs.writeFileSync(stampFile, currentStamp, 'utf8');
+  onStatus?.('[Шаг 3/4] Все зависимости SillyTavern (node_modules) успешно установлены.');
 }
 
 async function installOrUpdateSillyTavern({folder, userDataDir, bundleDir, onStatus}) {
   fs.mkdirSync(folder, {recursive: true});
   const isUpdate = fs.existsSync(path.join(folder, 'server.js'));
-  onStatus?.(isUpdate ? 'Скачиваю обновление SillyTavern с GitHub…' : 'Скачиваю SillyTavern (ветка release) с GitHub…');
+  onStatus?.(`[Шаг 1/4] ${isUpdate ? 'Скачиваю обновление SillyTavern' : 'Скачиваю SillyTavern (ветка release)'} с GitHub в ${folder}…`);
   const zipBuf = await fetchBuffer(SILLYTAVERN_ZIP_URL, 180000);
-  onStatus?.('Распаковываю файлы SillyTavern (ваши чаты, настройки и плагины сохраняются)…');
-  extractZipBuffer(zipBuf, folder, {
+  onStatus?.(`[Шаг 2/4] Архив SillyTavern скачан (${(zipBuf.length / 1048576).toFixed(1)} МБ). Распаковываю файлы…`);
+  const count = extractZipBuffer(zipBuf, folder, {
     stripTopDir: true,
     preserveTop: ['data', 'config.yaml', 'secrets.json', 'plugins', '.tavernka-backups'],
   });
+  onStatus?.(`[Шаг 2/4] Распаковано записей архива: ${count}. Проверяю server.js и config.yaml…`);
+  if (!fs.existsSync(path.join(folder, 'server.js'))) {
+    throw new Error('После распаковки архива не найден server.js');
+  }
   const cfgPath = path.join(folder, 'config.yaml');
   const defCfg = path.join(folder, 'default', 'config.yaml');
   if (!fs.existsSync(cfgPath) && fs.existsSync(defCfg)) {
     fs.copyFileSync(defCfg, cfgPath);
   }
   await ensureStDependencies(folder, userDataDir, onStatus);
+  onStatus?.('[Шаг 4/4] Устанавливаю плагин и расширение Корректора…');
   await installKorrektorInto(folder, bundleDir, {downloadFresh: true, onStatus});
   return localConfig(folder);
 }

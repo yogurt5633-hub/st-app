@@ -74,6 +74,21 @@ function depsStamp(folder) {
   }
 }
 
+function hasStDeps(folder) {
+  try {
+    const pkgPath = path.join(folder, 'package.json');
+    if (!fs.existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (pkg?.dependencies?.express) {
+      return fs.existsSync(path.join(folder, 'node_modules', 'express', 'package.json')) &&
+        fs.existsSync(path.join(folder, 'node_modules', 'yaml', 'package.json'));
+    }
+    return fs.existsSync(path.join(folder, 'node_modules'));
+  } catch {
+    return false;
+  }
+}
+
 function localAddresses(port = 8000) {
   const out = [];
   const nets = os.networkInterfaces();
@@ -148,6 +163,7 @@ function extractZipBuffer(buffer, targetDir, {stripTopDir = true, preserveTop = 
     fs.mkdirSync(path.dirname(dest), {recursive: true});
     fs.writeFileSync(dest, data);
   }
+  return count;
 }
 
 module.exports = {
@@ -158,6 +174,7 @@ module.exports = {
   compareVersions,
   installedPluginVersion,
   depsStamp,
+  hasStDeps,
   localAddresses,
   setLanListen,
   extractZipBuffer,
