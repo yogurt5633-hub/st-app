@@ -2,6 +2,121 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-screen-time-stats",
+            "type": "extension",
+            "name": "Screen Time Stats",
+            "author": "maanfhun",
+            "description": "Показывает, сколько времени вы проводите в чатах SillyTavern: текущий таймер, итоги за 7 дней, среднее за день и рейтинг персонажей по времени и числу сообщений бота. Подсчёт останавливается при скрытой странице или бездействии.\n\nМожно задать дневную цель и время до паузы, отключить анимации и скрыть имена персонажей перед скриншотом. Открывается из меню расширений → «Время в чате».",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-screen-time-stats.zip",
+            "added": "2026-11-17",
+            "hash": "fb6799b5bbd413e5cb519f198d027864c73ec446f33486c737f01bc6648dff8b",
+            "size": 20645
+        },
+        {
+            "id": "extension-message-reactions-memory",
+            "type": "extension",
+            "name": "Message Reactions & Memory",
+            "author": "janyaAhri",
+            "description": "Сохраняет любимые реплики персонажей в личную коллекцию. Под сообщением появляются сердечко, кнопка заметки и вход в коллекцию. Можно добавить свой заголовок и комментарий, просматривать избранное и заметки, менять заголовки и переходить к сообщению.\n\nЭто личный альбом пользователя: сохранённые записи не добавляются в промпт автоматически и не становятся памятью Claude или DeepSeek. Дополнительные",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-message-reactions-memory.zip",
+            "added": "2026-11-17",
+            "hash": "fc02b14de6f01bbb1b1c9cc476a1a52ce7a71596a74b0e0e8ac2405e94191ce9",
+            "size": 7260
+        },
+        {
+            "id": "extension-immersive-gen-audio",
+            "type": "extension",
+            "name": "Immersive Gen Audio",
+            "author": "SICout9010",
+            "description": "Создаёт звуковые эффекты, зацикленную атмосферу и озвучку диалогов по последнему сообщению. Модель ST анализирует сцену, а ElevenLabs генерирует звук. Есть кнопка у сообщения, ручная и автоматическая генерация, регулировка громкости, повтор и остановка.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-immersive-gen-audio.zip",
+            "added": "2026-11-17",
+            "hash": "d11be3a913bb2a95ecec51d32fa49d415722368a1a5d0f647f36f3179872695a",
+            "size": 60180
+        },
+        {
+            "id": "extension-another-universe",
+            "type": "extension",
+            "name": "Another Universe",
+            "author": "POPUKO",
+            "description": "«А если бы мы встретились в другой вселенной?» Расширение берёт персонажей и недавний контекст чата, а затем создаёт альтернативную историю: другой мир, вариант встречи и настроение. Можно описать собственные варианты, выбрать длину, сохранять истории в галерее и избранном, экспортировать текст в карточку PNG или JSON.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-another-universe.zip",
+            "added": "2026-11-17",
+            "hash": "8af7a1a3ae9a9ef49a3af6c39c2f69dc4eda269b89e7116ae3b61530c1288fd3",
+            "size": 343651
+        },
+        {
+            "id": "extension-error-companion",
+            "type": "extension",
+            "name": "Error Companion",
+            "author": "Kitima",
+            "description": "Персонаж-компаньон объясняет ошибки SillyTavern и API: перегрузку сервера, квоты, неверный ключ, слишком длинный контекст, пустой ответ и другие проблемы. Показывает короткую реплику, понятное объяснение и варианты действий; исходный текст ошибки можно раскрыть и скопировать. Для объяснений не вызывает ИИ и не расходует токены.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-error-companion.zip",
+            "added": "2026-11-17",
+            "hash": "7bbd9e7669e56b89fcda4f546b7173fea198e6b6cda404d068f825a81ea4fd7f",
+            "size": 2680592
+        },
+        {
+            "id": "extension-spotify",
+            "type": "extension",
+            "name": "Spotify",
+            "author": "Cohee1207",
+            "description": "Добавляет в промпт сведения о текущем треке и инструменты модели для поиска музыки, управления воспроизведением, очередью и плейлистами.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-spotify.zip",
+            "added": "2026-11-17",
+            "hash": "b2cb4fda3ee686eadf855a3be6be950ccc50eaff0028862f04fd6bf5c482b121",
+            "size": 77413
+        },
+        {
+            "id": "extension-ambient-weather-overlay",
+            "type": "extension",
+            "name": "Ambient Weather Overlay",
+            "author": "xo.nara",
+            "description": "Дождь, снег, гроза, ветер и освещение поверх чата SillyTavern. Погоду можно выбирать вручную или менять по специальным тегам в сообщениях модели. Есть лёгкий режим, скорость частиц, общая громкость и отдельные звуки для разных погодных условий. Аудиофайлы добавляются прямыми ссылками.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-ambient-weather-overlay.zip",
+            "added": "2026-11-17",
+            "hash": "424fefcad10e9549be6b034dc519923f0913c92c1bb30944435d99ea736597a7",
+            "size": 28126
+        },
+        {
+            "id": "extension-ellipsis-cleaner",
+            "type": "extension",
+            "name": "Ellipsis Cleaner",
+            "author": "Zealllll",
+            "description": "Убирает ... и … из сообщений, поддерживает собственный список лишних символов и фраз. Есть автоматическая очистка после генерации, обработка отдельного сообщения, проверка без изменений и отмена последней очистки.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-ellipsis-cleaner.zip",
+            "added": "2026-11-17",
+            "hash": "ac7146c5176f896b1b7a21eb08aa2a5f964ca3b0e813432dea34403974db4833",
+            "size": 18812,
+            "images": [
+                "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/images/extension-ellipsis-cleaner-1794877078426-1.webp"
+            ]
+        },
+        {
             "id": "extension-proverka-lora-lore-lens",
             "type": "extension",
             "name": "Проверка лора (Lore Lens)",
@@ -193,5 +308,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-16T22:26:01.902Z"
+    "updated": "2026-11-17T01:03:00.540Z"
 }
