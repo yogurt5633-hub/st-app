@@ -2,6 +2,20 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-screen-time-stats",
+            "type": "extension",
+            "name": "Screen Time Stats",
+            "author": "maanfhun",
+            "description": "Показывает, сколько времени вы проводите в чатах SillyTavern: текущий таймер, итоги за 7 дней, среднее за день и рейтинг персонажей по времени и числу сообщений бота. Подсчёт останавливается при скрытой странице или бездействии.\n\nМожно задать дневную цель и время до паузы, отключить анимации и скрыть имена персонажей перед скриншотом. Открывается из меню расширений → «Время в чате».",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-screen-time-stats.zip",
+            "added": "2026-11-17",
+            "hash": "fb6799b5bbd413e5cb519f198d027864c73ec446f33486c737f01bc6648dff8b",
+            "size": 20645
+        },
+        {
             "id": "extension-message-reactions-memory",
             "type": "extension",
             "name": "Message Reactions & Memory",
@@ -294,5 +308,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-17T01:01:58.074Z"
+    "updated": "2026-11-17T01:03:00.540Z"
 }
