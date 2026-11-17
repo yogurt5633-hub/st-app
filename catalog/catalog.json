@@ -2,6 +2,20 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-error-companion",
+            "type": "extension",
+            "name": "Error Companion",
+            "author": "Kitima",
+            "description": "Персонаж-компаньон объясняет ошибки SillyTavern и API: перегрузку сервера, квоты, неверный ключ, слишком длинный контекст, пустой ответ и другие проблемы. Показывает короткую реплику, понятное объяснение и варианты действий; исходный текст ошибки можно раскрыть и скопировать. Для объяснений не вызывает ИИ и не расходует токены.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-error-companion.zip",
+            "added": "2026-11-17",
+            "hash": "7bbd9e7669e56b89fcda4f546b7173fea198e6b6cda404d068f825a81ea4fd7f",
+            "size": 2680592
+        },
+        {
             "id": "extension-spotify",
             "type": "extension",
             "name": "Spotify",
@@ -238,5 +252,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-17T00:59:31.161Z"
+    "updated": "2026-11-17T01:00:05.417Z"
 }
