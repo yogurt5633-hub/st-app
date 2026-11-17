@@ -2,6 +2,20 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-message-reactions-memory",
+            "type": "extension",
+            "name": "Message Reactions & Memory",
+            "author": "janyaAhri",
+            "description": "Сохраняет любимые реплики персонажей в личную коллекцию. Под сообщением появляются сердечко, кнопка заметки и вход в коллекцию. Можно добавить свой заголовок и комментарий, просматривать избранное и заметки, менять заголовки и переходить к сообщению.\n\nЭто личный альбом пользователя: сохранённые записи не добавляются в промпт автоматически и не становятся памятью Claude или DeepSeek. Дополнительные",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-message-reactions-memory.zip",
+            "added": "2026-11-17",
+            "hash": "fc02b14de6f01bbb1b1c9cc476a1a52ce7a71596a74b0e0e8ac2405e94191ce9",
+            "size": 7260
+        },
+        {
             "id": "extension-immersive-gen-audio",
             "type": "extension",
             "name": "Immersive Gen Audio",
@@ -280,5 +294,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-17T01:01:19.670Z"
+    "updated": "2026-11-17T01:01:58.074Z"
 }
