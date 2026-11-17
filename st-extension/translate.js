@@ -1656,11 +1656,16 @@ export async function openKeySheet() {
         checkBtn.textContent = tavernMode ? 'Сохранить' : 'Проверить и сохранить';
         model.placeholder = tavernMode ? 'пусто — модель из SillyTavern (или выберите из списка)' : 'например google/gemini-2.5-flash или claude-haiku-5-5';
         if (tavernMode) {
+            const st = sillyTavernParts();
+            if (st.models?.length) fillModels(st.models);
             pluginJson('/api/plugins/korrektor/settings').then(s => {
                 if (provider.value === 'tavern' && s?.models) model.value = s.models.translate || '';
             }).catch(() => {});
             pluginJson('/api/plugins/korrektor/models').then(r => {
-                if (provider.value === 'tavern') fillModels(r?.items);
+                if (provider.value === 'tavern') {
+                    const merged = [...new Set([...(st.models || []), ...(r?.items || [])])];
+                    fillModels(merged);
+                }
             }).catch(() => {});
         } else if (cfg.hasKey) {
             pluginJson(`${KEY_API}/models`).then(r => {
@@ -1689,7 +1694,6 @@ export async function openKeySheet() {
                     Object.assign(cfg, out);
                     keyState = out;
                 }
-                modelState = { ...modelState, model: model.value.trim() };
                 status.textContent = model.value.trim()
                     ? `Сохранено: переводит подключение SillyTavern (${model.value.trim()})`
                     : 'Сохранено: переводит текущая модель SillyTavern';
