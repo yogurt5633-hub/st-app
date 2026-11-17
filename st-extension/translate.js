@@ -1421,17 +1421,33 @@ export async function setModel(source, model) {
     return modelChoice;
 }
 
+const FALLBACK_SOURCE_MODELS = {
+    vertexai: [
+        'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite',
+        'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash',
+        'claude-sonnet-4-5@20250929', 'claude-haiku-4-5@20251001', 'claude-opus-4-5@20251101',
+    ],
+    makersuite: [
+        'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite',
+        'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash',
+    ],
+};
+
 /** The tavern's Chat Completion source and the models it lists (the same list as in its own menu). */
 function tavernModels() {
     const $ = window.jQuery;
-    if (!$ || $('#main_api').val() !== 'openai') return { source: '', models: [] };
-    const source = $('#chat_completion_source').val();
+    const mainApi = ($ ? $('#main_api').val() : document.getElementById('main_api')?.value) || 'openai';
+    if (mainApi !== 'openai') return { source: '', model: '', models: [] };
+    const source = ($ ? $('#chat_completion_source').val() : document.getElementById('chat_completion_source')?.value) || '';
     const map = { makersuite: 'model_google_select', vertexai: 'model_vertexai_select', custom: 'model_custom_select' };
     const select = document.getElementById(map[source] || `model_${source}_select`);
-    const models = select ? [...select.options].map(o => o.value).filter(Boolean) : [];
+    const fromSelect = select ? [...select.options].map(o => o.value).filter(Boolean) : [];
+    const fallback = FALLBACK_SOURCE_MODELS[source] || [];
+    const models = [...new Set([...fromSelect, ...fallback])];
     const custom = source === 'custom' ? document.getElementById('custom_model_id')?.value : '';
     if (custom && !models.includes(custom)) models.unshift(custom);
-    return { source, models: models.slice(0, 1500) };
+    const currentModel = (source === 'custom' && custom) ? custom : (select?.value || '');
+    return { source, model: currentModel, models: models.slice(0, 1500) };
 }
 
 // ---------- one message ----------
@@ -1641,25 +1657,76 @@ export async function openKeySheet() {
     const keyRow = el('div', {}, el('div', { class: 'kg-label', text: 'Ключ' }), key);
     const listId = 'korrektor-key-models';
     const datalist = el('datalist', { id: listId });
-    const model = el('input', { class: 'text_pole', list: listId, value: isTavern ? '' : (cfg.model || ''), placeholder: 'загружаю модели…', autocapitalize: 'off', spellcheck: 'false' });
-    const fillModels = (list) => datalist.replaceChildren(...(list || []).slice(0, 1500).map(m => el('option', { value: m })));
+    const modelSelect = el('select', { class: 'text_pole', 'aria-label': 'Выбрать модель из списка' });
+    const model = el('input', { class: 'text_pole', list: listId, value: isTavern ? (modelChoice.model || '') : (cfg.model || ''), placeholder: 'или введите ID модели вручную', autocapitalize: 'off', spellcheck: 'false' });
+    let knownModels = [];
+    const syncSelectFromInput = () => {
+        const v = model.value.trim();
+        if (!v) modelSelect.value = '';
+        else if (knownModels.includes(v)) modelSelect.value = v;
+        else if (modelSelect.querySelector('option[value="__custom__"]')) modelSelect.value = '__custom__';
+    };
+    const fillModels = (list) => {
+        const st = tavernModels();
+        const tavernMode = provider.value === 'tavern';
+        const cur = model.value.trim();
+        knownModels = [...new Set([...(cur ? [cur] : []), ...(list || [])].filter(Boolean))].slice(0, 1500);
+        datalist.replaceChildren(...knownModels.map(m => el('option', { value: m })));
+        const defaultLabel = tavernMode
+            ? `Как сейчас в чате SillyTavern (${st.model || 'по умолчанию'})`
+            : 'Выберите модель из списка…';
+        modelSelect.replaceChildren(
+            el('option', { value: '', text: defaultLabel }),
+            ...knownModels.map(m => el('option', { value: m, text: m })),
+            el('option', { value: '__custom__', text: 'Указать название модели вручную ниже…' }),
+        );
+        syncSelectFromInput();
+    };
+    modelSelect.addEventListener('change', () => {
+        if (modelSelect.value === '__custom__') {
+            model.focus();
+            return;
+        }
+        model.value = modelSelect.value;
+    });
+    model.addEventListener('input', syncSelectFromInput);
     const onBox = el('input', { type: 'checkbox', checked: cfg.on !== false });
     const onRow = el('div', { class: 'kg-checks' }, el('label', { class: 'checkbox_label' }, onBox, el('span', { text: 'Переводить этим ключом (выключите — будет переводить подключение таверны)' })));
-    const status = el('div', { class: 'kg-progress', text: cfg.checked?.message || '' });
-    const checkBtn = el('button', { type: 'button', class: 'menu_button kg-main', text: isTavern ? 'Сохранить' : 'Проверить и сохранить' });
+    const status = el('div', { class: 'kg-progress', text: isTavern ? '' : (cfg.checked?.message || '') });
+    const checkBtn = el('button', { type: 'button', class: 'menu_button kg-main', text: 'Проверить и сохранить' });
+    const removeBtn = el('button', {
+        type: 'button', class: 'menu_button', text: 'Убрать ключ', onclick: async () => {
+            try {
+                keyState = await pluginJson(KEY_API, { method: 'POST', body: JSON.stringify({ clear: true }) });
+                status.textContent = 'Ключ удалён: переводит подключение таверны';
+                key.placeholder = 'вставьте ключ';
+                cfg.hasKey = false;
+                tlog('info', 'свой ключ удалён');
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        },
+    });
     const syncMode = () => {
         const tavernMode = provider.value === 'tavern';
         customRow.hidden = tavernMode || provider.value !== 'custom';
         keyRow.hidden = tavernMode;
         onRow.hidden = tavernMode;
         removeBtn.hidden = tavernMode || !cfg.hasKey;
-        checkBtn.textContent = tavernMode ? 'Сохранить' : 'Проверить и сохранить';
-        model.placeholder = tavernMode ? 'пусто — модель из SillyTavern (или выберите из списка)' : 'например google/gemini-2.5-flash или claude-haiku-5-5';
+        checkBtn.textContent = 'Проверить и сохранить';
+        model.placeholder = tavernMode ? 'или введите название модели вручную (пусто = как в чате)' : 'например google/gemini-2.5-flash или claude-haiku-5-5';
         if (tavernMode) {
-            const st = sillyTavernParts();
-            if (st.models?.length) fillModels(st.models);
+            const st = tavernModels();
+            if (modelChoice.model && !model.value) model.value = modelChoice.model;
+            fillModels(st.models);
+            status.textContent = st.source
+                ? `Подключение SillyTavern (${st.source}). Выберите модель в списке выше и нажмите «Проверить и сохранить»`
+                : 'Выберите модель из списка выше и нажмите «Проверить и сохранить»';
             pluginJson('/api/plugins/korrektor/settings').then(s => {
-                if (provider.value === 'tavern' && s?.models) model.value = s.models.translate || '';
+                if (provider.value === 'tavern' && s?.models) {
+                    model.value = s.models.translate || '';
+                    fillModels(knownModels);
+                }
             }).catch(() => {});
             pluginJson('/api/plugins/korrektor/models').then(r => {
                 if (provider.value === 'tavern') {
@@ -1667,10 +1734,14 @@ export async function openKeySheet() {
                     fillModels(merged);
                 }
             }).catch(() => {});
-        } else if (cfg.hasKey) {
-            pluginJson(`${KEY_API}/models`).then(r => {
-                if (provider.value !== 'tavern') fillModels(r?.models);
-            }).catch(() => {});
+        } else {
+            status.textContent = cfg.checked?.message || '';
+            fillModels([]);
+            if (cfg.hasKey) {
+                pluginJson(`${KEY_API}/models`).then(r => {
+                    if (provider.value !== 'tavern') fillModels(r?.models);
+                }).catch(() => {});
+            }
         }
     };
     provider.addEventListener('change', syncMode);
@@ -1686,20 +1757,27 @@ export async function openKeySheet() {
     checkBtn.addEventListener('click', async () => {
         if (provider.value === 'tavern') {
             checkBtn.disabled = true;
-            status.textContent = 'Сохраняю выбор модели…';
+            const chosen = model.value.trim();
+            const st = tavernModels();
+            status.textContent = 'Сохраняю и проверяю перевод через подключение SillyTavern…';
             try {
-                await pluginJson(SETTINGS_API, { method: 'POST', body: JSON.stringify({ models: { translateSource: '', translate: model.value.trim() } }) });
+                await setModel(chosen ? st.source : '', chosen);
                 if (cfg.hasKey && cfg.on) {
                     const out = await pluginJson(KEY_API, { method: 'POST', body: JSON.stringify({ on: false }) });
                     Object.assign(cfg, out);
                     keyState = out;
                 }
-                status.textContent = model.value.trim()
-                    ? `Сохранено: переводит подключение SillyTavern (${model.value.trim()})`
-                    : 'Сохранено: переводит текущая модель SillyTavern';
-                tlog('info', `перевод через подключение SillyTavern: ${model.value.trim() || 'модель по умолчанию'}`);
+                const started = Date.now();
+                const testOut = await pluginJson(MODEL_API, {
+                    method: 'POST',
+                    body: JSON.stringify({ text: 'The rain fell softly on the quiet street.', lang: 'ru' }),
+                });
+                const sec = ((Date.now() - started) / 1000).toFixed(1);
+                status.textContent = `Работает (${testOut.model || chosen || st.model || 'модель таверны'}, ${sec} с): «${(testOut.text || '').trim().slice(0, 90)}»`;
+                tlog('info', `перевод через подключение SillyTavern (${testOut.model || chosen || 'по умолчанию'}): работает`);
             } catch (error) {
-                status.textContent = error.message;
+                status.textContent = `${error.message}. Выберите другую модель в выпадающем списке выше (например, gemini-2.5-flash) и нажмите «Проверить и сохранить»`;
+                tlog('warn', `проверка перевода через таверну: ${error.message}`);
             } finally {
                 checkBtn.disabled = false;
             }
@@ -1727,26 +1805,13 @@ export async function openKeySheet() {
             checkBtn.disabled = false;
         }
     });
-    const removeBtn = el('button', {
-        type: 'button', class: 'menu_button', text: 'Убрать ключ', onclick: async () => {
-            try {
-                keyState = await pluginJson(KEY_API, { method: 'POST', body: JSON.stringify({ clear: true }) });
-                status.textContent = 'Ключ удалён: переводит подключение таверны';
-                key.placeholder = 'вставьте ключ';
-                cfg.hasKey = false;
-                tlog('info', 'свой ключ удалён');
-            } catch (error) {
-                status.textContent = error.message;
-            }
-        },
-    });
     const backBtn = el('button', { type: 'button', class: 'menu_button', text: 'Назад', onclick: () => openTranslate() });
     syncMode();
     const body = el('div', { class: 'kg-translate' },
         el('div', { class: 'kg-label', text: 'Чей ключ / подключение' }), provider,
         customRow,
         keyRow,
-        el('div', { class: 'kg-label', text: 'Модель для перевода' }), model, datalist,
+        el('div', { class: 'kg-label', text: 'Модель для перевода (выберите из списка или впишите ниже)' }), modelSelect, model, datalist,
         onRow,
         el('div', { class: 'kg-actions' }, checkBtn, removeBtn, backBtn),
         status,

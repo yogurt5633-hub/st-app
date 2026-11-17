@@ -1208,7 +1208,7 @@ function seg(options, value, onchange) {
         h('button', { type: 'button', 'aria-pressed': String(value === v), onclick: () => onchange(v) }, label)));
 }
 
-async function fillModels(source, datalist) {
+async function fillModels(source, datalist, selectEl = null, currentVal = '') {
     if (!state.modelLists[source]) {
         try {
             state.modelLists[source] = (await api(`/models?source=${encodeURIComponent(source)}`)).items;
@@ -1216,7 +1216,16 @@ async function fillModels(source, datalist) {
             state.modelLists[source] = [];
         }
     }
-    put(datalist, ...state.modelLists[source].map(id => h('option', { value: id })));
+    const list = state.modelLists[source] || [];
+    put(datalist, ...list.map(id => h('option', { value: id })));
+    if (selectEl) {
+        const all = [...new Set([...(currentVal ? [currentVal] : []), ...list])];
+        put(selectEl,
+            h('option', { value: '', text: 'По умолчанию (из SillyTavern)' }),
+            ...all.map(id => h('option', { value: id, text: id })),
+            h('option', { value: '__custom__', text: 'Указать название вручную…' }));
+        selectEl.value = currentVal && all.includes(currentVal) ? currentVal : '';
+    }
 }
 
 let saveTimer = null;
@@ -1267,8 +1276,25 @@ function translateKeyBlock() {
         const key = h('input', { class: 'input mono', type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', style: 'flex:1;min-width:0', 'aria-label': 'Ключ', placeholder: cfg.hasKey ? `сохранён ${cfg.keyHint} — вставьте новый, чтобы заменить` : 'вставьте ключ' });
         const listId = 'models-translate-key';
         const datalist = h('datalist', { id: listId });
+        const modelSelect = h('select', { class: 'select', 'aria-label': 'Выбрать модель из списка', style: 'flex:1;min-width:0' },
+            h('option', { value: '', text: 'Выберите модель из списка…' }));
         const model = h('input', { class: 'input mono', list: listId, value: cfg.model || '', placeholder: 'модель, например google/gemini-2.5-flash', style: 'flex:1;min-width:0', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Модель' });
-        const fill = (list) => datalist.replaceChildren(...(list || []).slice(0, 1500).map(m => h('option', { value: m })));
+        const fill = (list) => {
+            const items = [...new Set([...(model.value.trim() ? [model.value.trim()] : []), ...(list || [])])].slice(0, 1500);
+            datalist.replaceChildren(...items.map(m => h('option', { value: m })));
+            put(modelSelect,
+                h('option', { value: '', text: 'Выберите модель из списка…' }),
+                ...items.map(m => h('option', { value: m, text: m })),
+                h('option', { value: '__custom__', text: 'Указать название вручную ниже…' }));
+            modelSelect.value = model.value.trim() && items.includes(model.value.trim()) ? model.value.trim() : '';
+        };
+        modelSelect.addEventListener('change', () => {
+            if (modelSelect.value === '__custom__') {
+                model.focus();
+                return;
+            }
+            model.value = modelSelect.value;
+        });
         if (cfg.hasKey) api('/translate/key/models').then(r => fill(r.models)).catch(() => { });
         let on = cfg.on !== false;
         const status = h('span', { class: 'hint', text: cfg.checked?.message || (cfg.hasKey ? '' : 'Не задан: переводит подключение таверны') });
@@ -1313,6 +1339,7 @@ function translateKeyBlock() {
             h('div', { class: 'field-row' }, provider),
             customRow,
             h('div', { class: 'field-row' }, key),
+            h('div', { class: 'field-row' }, modelSelect),
             h('div', { class: 'field-row' }, model, datalist),
             h('div', { class: 'field-row', style: 'justify-content:flex-start;gap:8px' }, checkBtn, removeBtn),
             status,
@@ -1379,13 +1406,23 @@ async function renderSettings(reload = true) {
         source.addEventListener('change', () => save({ models: { [sourceKey]: source.value, [tier]: '' } }, true));
 
         const listId = `models-${tier}`;
+        const modelSelect = h('select', { class: 'select', 'aria-label': 'Выбрать модель из списка', style: 'flex:1;min-width:0' },
+            h('option', { value: '', text: 'По умолчанию (из SillyTavern)' }));
         const model = h('input', {
             class: 'input mono', list: listId, value: s.models[tier] ?? '', style: 'flex:1;min-width:0',
-            placeholder: resolved[tier]?.model || 'модель', 'aria-label': 'ID модели', autocapitalize: 'off', spellcheck: 'false',
+            placeholder: resolved[tier]?.model || 'или введите ID модели вручную', 'aria-label': 'ID модели', autocapitalize: 'off', spellcheck: 'false',
+        });
+        modelSelect.addEventListener('change', () => {
+            if (modelSelect.value === '__custom__') {
+                model.focus();
+                return;
+            }
+            model.value = modelSelect.value;
+            save({ models: { [tier]: model.value.trim() } }, true);
         });
         model.addEventListener('change', () => save({ models: { [tier]: model.value.trim() } }, true));
         const datalist = h('datalist', { id: listId });
-        if (effectiveSource) fillModels(effectiveSource, datalist);
+        if (effectiveSource) fillModels(effectiveSource, datalist, modelSelect, s.models[tier] ?? '');
 
         const efforts = [['auto', 'Рассуждение: как у модели'], ['low', 'Рассуждение: низкое'], ['medium', 'Рассуждение: среднее'], ['high', 'Рассуждение: высокое']];
         // Translation: as little thinking as the model allows, so it is quick ('low' was the old default).
@@ -1403,6 +1440,7 @@ async function renderSettings(reload = true) {
         return h('div', { class: 'field' },
             h('span', { class: 'label', text: title }),
             h('div', { class: 'field-row' }, source),
+            h('div', { class: 'field-row' }, modelSelect),
             h('div', { class: 'field-row' }, model, datalist),
             h('div', { class: 'field-row' }, effort),
             h('div', { class: 'field-row' }, h('span', { class: 'hint', text: 'Лимит ответа, токенов' }), max),

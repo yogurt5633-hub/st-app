@@ -19,6 +19,30 @@ export const RECOMMENDED = {
     claude: { scan: 'claude-haiku-5-5', heavy: 'claude-opus-5-5' },
 };
 export const CLAUDE_MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-opus-5'];
+export const VERTEX_MODELS = [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'claude-sonnet-4-5@20250929',
+    'claude-haiku-4-5@20251001',
+    'claude-opus-4-5@20251101',
+    'claude-3-7-sonnet@20250219',
+    'claude-3-5-sonnet-v2@20241022',
+    'claude-3-5-haiku@20241022',
+];
+export const GOOGLE_MODELS = [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+];
 
 const OPENAI_FAMILY = ['openai', 'azure_openai', 'openrouter'];
 // OpenAI reasoning models take max_completion_tokens and reasoning_effort (same rule as SillyTavern's client).
@@ -546,16 +570,21 @@ export class LlmClient {
     }
 
     async listModels(source) {
-        if (source === 'claude') return CLAUDE_MODELS;
-        if (!this.available || !source) return [];
-        const res = await postToSillyTavern(this.auth, STATUS_PATH, { chat_completion_source: source, ...connectionBody(this.stSettings, source) });
-        let data = null;
+        const current = chatModelFor(this.stSettings, source);
+        const fallback = source === 'claude' ? CLAUDE_MODELS
+            : source === 'vertexai' ? VERTEX_MODELS
+                : source === 'makersuite' ? GOOGLE_MODELS : [];
+        if (source === 'claude') return [...new Set([...(current ? [current] : []), ...CLAUDE_MODELS])];
+        if (!this.available || !source) return [...new Set([...(current ? [current] : []), ...fallback])];
+        let remote = [];
         try {
-            data = JSON.parse(res.text);
+            const res = await postToSillyTavern(this.auth, STATUS_PATH, { chat_completion_source: source, ...connectionBody(this.stSettings, source) });
+            const data = JSON.parse(res.text);
+            const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.data?.data) ? data.data.data : Array.isArray(data) ? data : [];
+            remote = list.map(m => (typeof m === 'string' ? m : m?.id)).filter(Boolean);
         } catch {
-            return [];
+            remote = [];
         }
-        const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.data?.data) ? data.data.data : Array.isArray(data) ? data : [];
-        return [...new Set(list.map(m => (typeof m === 'string' ? m : m?.id)).filter(Boolean))].slice(0, 1000);
+        return [...new Set([...(current ? [current] : []), ...remote, ...fallback])].slice(0, 1000);
     }
 }
