@@ -2,6 +2,20 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-ambient-weather-overlay",
+            "type": "extension",
+            "name": "Ambient Weather Overlay",
+            "author": "xo.nara",
+            "description": "Дождь, снег, гроза, ветер и освещение поверх чата SillyTavern. Погоду можно выбирать вручную или менять по специальным тегам в сообщениях модели. Есть лёгкий режим, скорость частиц, общая громкость и отдельные звуки для разных погодных условий. Аудиофайлы добавляются прямыми ссылками.",
+            "tags": [],
+            "language": "th",
+            "translated": true,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-ambient-weather-overlay.zip",
+            "added": "2026-11-17",
+            "hash": "424fefcad10e9549be6b034dc519923f0913c92c1bb30944435d99ea736597a7",
+            "size": 28126
+        },
+        {
             "id": "extension-ellipsis-cleaner",
             "type": "extension",
             "name": "Ellipsis Cleaner",
@@ -210,5 +224,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-17T00:57:59.682Z"
+    "updated": "2026-11-17T00:58:44.325Z"
 }
