@@ -2,6 +2,20 @@
     "about": "Каталог приложения Корректор: пресеты, лорбуки и карточки от авторов сообщества. Формат описан в catalog/README.md",
     "items": [
         {
+            "id": "extension-another-universe",
+            "type": "extension",
+            "name": "Another Universe",
+            "author": "POPUKO",
+            "description": "«А если бы мы встретились в другой вселенной?» Расширение берёт персонажей и недавний контекст чата, а затем создаёт альтернативную историю: другой мир, вариант встречи и настроение. Можно описать собственные варианты, выбрать длину, сохранять истории в галерее и избранном, экспортировать текст в карточку PNG или JSON.",
+            "tags": [],
+            "language": "",
+            "translated": null,
+            "url": "https://raw.githubusercontent.com/yogurt5633-hub/st-app/main/catalog/files/extensions/extension-another-universe.zip",
+            "added": "2026-11-17",
+            "hash": "8af7a1a3ae9a9ef49a3af6c39c2f69dc4eda269b89e7116ae3b61530c1288fd3",
+            "size": 343651
+        },
+        {
             "id": "extension-error-companion",
             "type": "extension",
             "name": "Error Companion",
@@ -252,5 +266,5 @@
         }
     ],
     "submit": "https://t.me/correct0r?direct",
-    "updated": "2026-11-17T01:00:05.417Z"
+    "updated": "2026-11-17T01:00:33.152Z"
 }
