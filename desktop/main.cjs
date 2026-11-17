@@ -210,7 +210,7 @@ function handle(channel, fn) {
     try { const value = await fn(...args); return {ok: true, value, state: snapshot()}; }
     catch (error) {
       addLog(`❌ ОШИБКА (${channel}): ${error.message}`);
-      announce(`Ошибка: ${error.message}`);
+      announce(error.message);
       return {ok: false, error: error.message, state: snapshot()};
     }
   });

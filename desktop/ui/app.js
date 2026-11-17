@@ -104,7 +104,6 @@ function render(state) {
 
   const logsBox = $('logs-box');
   if (logsBox) {
-    if (state.busy || (state.logs && /ОШИБКА|critical error/i.test(state.logs))) logsOpen = true;
     logsBox.hidden = !logsOpen;
     logsBox.textContent = state.logs || 'Журнал пока пуст. Нажмите «Установить SillyTavern» или «Запустить», чтобы увидеть подробный лог.';
     if (logsOpen) logsBox.scrollTop = logsBox.scrollHeight;
@@ -171,7 +170,7 @@ for (const [id, method] of [
   ['stop', 'stop'],
   ['reload', 'reload'],
 ]) $(id).onclick = () => {
-  if (['install', 'install-tavern', 'update-tavern-btn', 'update-korrektor-btn', 'start', 'restart'].includes(id)) {
+  if (['install-tavern', 'update-tavern-btn', 'update-korrektor-btn', 'restart'].includes(id)) {
     logsOpen = true;
     if ($('logs-box')) $('logs-box').hidden = false;
   }
