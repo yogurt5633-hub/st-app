@@ -8,43 +8,105 @@
     <button data-tab="tavern">Таверна</button>
     <button data-tab="catalog" id="catalog-tab">Каталог</button>
     <button data-tab="korrektor">Настройки</button>
+    <button data-tab="sites" id="sites-tab">Сайты</button>
     <button id="whats-new-btn" type="button" class="reload">Что нового</button>
     <button id="reload" type="button">Обновить страницу</button>
   </nav>
 </header>
 <main>
   <h1>Ваши истории, в одном окне</h1>
-  <p class="intro">Запустите Таверну на этом компьютере или подключитесь к уже работающей.</p>
+  <p class="intro">Установите Таверну в один клик, запустите уже установленную или подключитесь по адресу.</p>
+  <div id="dashboard-tiles" class="tiles" hidden></div>
+  <details id="companion-box" class="companion">
+    <summary aria-label="Тавернка: подсказки и реакции">
+      <img src="mascot.png" class="mascot" width="72" height="72" alt="">
+      <div>
+        <div class="companion-title">Тавернка рядом</div>
+        <div class="hint" style="margin:0">Нажми — подскажу</div>
+      </div>
+    </summary>
+    <div class="companion-body">
+      <p id="companion-msg"></p>
+      <div class="actions">
+        <button id="companion-act" type="button" class="primary"></button>
+        <button id="companion-next" type="button">Ещё совет</button>
+        <button id="companion-pet" type="button">Погладить</button>
+      </div>
+    </div>
+  </details>
   <p id="status" role="status" aria-live="polite"></p>
   <div class="columns">
     <section>
       <h2>На этом компьютере</h2>
-      <p>Нужна установленная SillyTavern. Выберите её папку — ту, где находится <code>server.js</code>.</p>
+      <p>Если SillyTavern ещё нет — нажмите «Установить SillyTavern», и приложение само скачает её, поставит зависимости и плагин Корректора. Если она уже есть — выберите её папку.</p>
       <p id="folder">Папка ещё не выбрана</p>
-      <button id="choose" type="button">Выбрать папку</button>
-      <ol>
-        <li>Остановите Таверну, если она открыта отдельно.</li>
-        <li>Установите Корректор. Существующие файлы сохранятся в резервную копию.</li>
-        <li>Запустите Таверну и откройте её вкладку сверху.</li>
-      </ol>
-      <div class="actions">
+      <div class="actions" style="margin-bottom:12px">
+        <button id="install-tavern" type="button" class="primary">Установить SillyTavern</button>
+        <button id="choose" type="button">Выбрать папку</button>
         <button id="install" type="button">Установить Корректор</button>
-        <button id="start" type="button" class="primary">Запустить</button>
-        <button id="stop" type="button">Остановить</button>
       </div>
+      <div class="actions">
+        <button id="start" type="button" class="primary">Запустить</button>
+        <button id="restart" type="button">Перезапустить</button>
+        <button id="stop" type="button">Остановить</button>
+        <button id="logs-btn" type="button">Журнал</button>
+      </div>
+      <pre id="logs-box" class="logs" hidden></pre>
       <p class="hint">При закрытии приложения запущенная им Таверна тоже остановится.</p>
+      <details open>
+        <summary>Обновления и автозапуск</summary>
+        <div class="update-box">
+          <div class="update-row">
+            <div>
+              <strong>Приложение Тавернка</strong>
+              <div id="app-update-meta" class="hint" style="margin:2px 0 0">Проверка…</div>
+            </div>
+            <button id="update-app-btn" type="button" class="primary" hidden>Скачать и обновить</button>
+          </div>
+          <div class="update-row">
+            <div>
+              <strong>Корректор в SillyTavern</strong>
+              <div id="plugin-update-meta" class="hint" style="margin:2px 0 0">Проверка…</div>
+            </div>
+            <button id="update-korrektor-btn" type="button">Обновить Корректор</button>
+          </div>
+          <div class="update-row">
+            <div>
+              <strong>SillyTavern</strong>
+              <div class="hint" style="margin:2px 0 0">Обновить сервер с сохранением чатов</div>
+            </div>
+            <button id="update-tavern-btn" type="button">Обновить SillyTavern</button>
+          </div>
+          <div class="actions" style="margin-top:8px">
+            <button id="check-updates-btn" type="button">Проверить обновления</button>
+          </div>
+          <label class="check-line"><input id="auto-start-toggle" type="checkbox"> <span>Запускать SillyTavern при открытии</span></label>
+          <label class="check-line"><input id="auto-update-toggle" type="checkbox" checked> <span>Обновлять Корректор при запуске</span></label>
+        </div>
+      </details>
     </section>
     <section>
-      <h2>По адресу</h2>
+      <h2>По адресу и с телефона</h2>
       <p>Для сервера на другом компьютере или уже запущенной Таверны.</p>
       <form id="connection">
         <label for="url">Адрес SillyTavern</label>
         <input id="url" type="url" required placeholder="http://192.168.1.10:8000" autocomplete="url">
         <button class="primary" type="submit">Подключиться</button>
       </form>
+      <details open>
+        <summary>Подключение с телефона (Android и iPhone)</summary>
+        <label class="check-line"><input id="lan-listen-toggle" type="checkbox"> <span>Разрешить доступ к этой Таверне с телефона в домашней сети (listen: true)</span></label>
+        <p id="lan-urls" class="hint">Когда Таверна запущена и доступ включён, впишите адрес этого ПК в приложении на телефоне.</p>
+      </details>
+      <details>
+        <summary>Сайты провайдеров ИИ</summary>
+        <p class="hint">Страницы ключей и баланса провайдеров прямо внутри окна Тавернки.</p>
+        <div id="sites-list" class="actions"></div>
+        <label class="check-line" style="margin-top:10px"><input id="show-sites-toggle" type="checkbox" checked> <span>Показывать вкладку «Сайты» в верхней панели</span></label>
+      </details>
       <details>
         <summary>Оформление</summary>
-        <p class="hint">Тема и цвет акцента применяются к окну Тавернки и ко вкладкам «Каталог» и «Настройки».</p>
+        <label class="check-line" style="margin-bottom:10px"><input id="companion-toggle" type="checkbox" checked> <span>Маскот-помощник на главной</span></label>
         <div class="actions" id="theme-picker" role="group" aria-label="Тема">
           <button type="button" data-theme="dark">Тёмная</button>
           <button type="button" data-theme="light">Светлая</button>
@@ -60,11 +122,6 @@
           <button type="button" data-accent="sky">Небо</button>
           <button type="button" data-accent="lavender">Лаванда</button>
         </div>
-      </details>
-      <details>
-        <summary>Подключение с iPhone и Android</summary>
-        <p>Компьютер должен оставаться включённым. В приложении на телефоне укажите сетевой адрес этого ПК, а не <code>127.0.0.1</code>.</p>
-        <p>В <code>config.yaml</code> SillyTavern включите <code>listen: true</code> и добавьте IP телефона в <code>whitelist</code>. Перезапустите сервер. Для доступа извне используйте защищённый сервер или частную сеть (Tailscale).</p>
       </details>
     </section>
   </div>
