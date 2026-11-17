@@ -1626,25 +1626,49 @@ export async function openKeySheet() {
         toastr.warning('Обновите Корректор: эта версия плагина не умеет свой ключ для перевода', 'Корректор');
         return;
     }
+    const isTavern = !cfg.on || !cfg.hasKey;
     const provider = el('select', { class: 'text_pole' },
-        cfg.providers.map(p => el('option', { value: p.id, selected: p.id === (cfg.provider || 'openrouter'), text: p.label })));
+        el('option', { value: 'tavern', selected: isTavern, text: 'Как в SillyTavern (текущее подключение)' }),
+        cfg.providers.map(p => el('option', { value: p.id, selected: !isTavern && p.id === (cfg.provider || 'openrouter'), text: p.label })));
     const url = el('input', { class: 'text_pole', type: 'url', placeholder: 'https://адрес-сервера/v1', value: cfg.provider === 'custom' ? cfg.url || '' : '', autocapitalize: 'off', spellcheck: 'false' });
     const kind = el('select', { class: 'text_pole' },
         [['openai', 'Формат OpenAI (chat/completions)'], ['anthropic', 'Формат Anthropic (messages)']].map(([v, t]) => el('option', { value: v, selected: v === cfg.kind, text: t })));
     const customRow = el('div', {}, el('div', { class: 'kg-label', text: 'Адрес сервера и формат' }), url, kind);
-    const showCustom = () => { customRow.hidden = provider.value !== 'custom'; };
-    provider.addEventListener('change', showCustom);
-    showCustom();
     const key = el('input', {
         class: 'text_pole', type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false',
         placeholder: cfg.hasKey ? `сохранён ${cfg.keyHint} — вставьте новый, чтобы заменить` : 'вставьте ключ',
     });
+    const keyRow = el('div', {}, el('div', { class: 'kg-label', text: 'Ключ' }), key);
     const listId = 'korrektor-key-models';
     const datalist = el('datalist', { id: listId });
-    const model = el('input', { class: 'text_pole', list: listId, value: cfg.model || '', placeholder: 'например google/gemini-2.5-flash или claude-haiku-5-5', autocapitalize: 'off', spellcheck: 'false' });
+    const model = el('input', { class: 'text_pole', list: listId, value: isTavern ? '' : (cfg.model || ''), placeholder: 'загружаю модели…', autocapitalize: 'off', spellcheck: 'false' });
     const fillModels = (list) => datalist.replaceChildren(...(list || []).slice(0, 1500).map(m => el('option', { value: m })));
     const onBox = el('input', { type: 'checkbox', checked: cfg.on !== false });
+    const onRow = el('div', { class: 'kg-checks' }, el('label', { class: 'checkbox_label' }, onBox, el('span', { text: 'Переводить этим ключом (выключите — будет переводить подключение таверны)' })));
     const status = el('div', { class: 'kg-progress', text: cfg.checked?.message || '' });
+    const checkBtn = el('button', { type: 'button', class: 'menu_button kg-main', text: isTavern ? 'Сохранить' : 'Проверить и сохранить' });
+    const syncMode = () => {
+        const tavernMode = provider.value === 'tavern';
+        customRow.hidden = tavernMode || provider.value !== 'custom';
+        keyRow.hidden = tavernMode;
+        onRow.hidden = tavernMode;
+        removeBtn.hidden = tavernMode || !cfg.hasKey;
+        checkBtn.textContent = tavernMode ? 'Сохранить' : 'Проверить и сохранить';
+        model.placeholder = tavernMode ? 'пусто — модель из SillyTavern (или выберите из списка)' : 'например google/gemini-2.5-flash или claude-haiku-5-5';
+        if (tavernMode) {
+            pluginJson('/api/plugins/korrektor/settings').then(s => {
+                if (provider.value === 'tavern' && s?.models) model.value = s.models.translate || '';
+            }).catch(() => {});
+            pluginJson('/api/plugins/korrektor/models').then(r => {
+                if (provider.value === 'tavern') fillModels(r?.items);
+            }).catch(() => {});
+        } else if (cfg.hasKey) {
+            pluginJson(`${KEY_API}/models`).then(r => {
+                if (provider.value !== 'tavern') fillModels(r?.models);
+            }).catch(() => {});
+        }
+    };
+    provider.addEventListener('change', syncMode);
     const save = async (check) => {
         const body = { provider: provider.value, model: model.value.trim(), on: onBox.checked, check };
         if (provider.value === 'custom') {
@@ -1654,8 +1678,29 @@ export async function openKeySheet() {
         if (key.value.trim()) body.key = key.value.trim();
         return pluginJson(KEY_API, { method: 'POST', body: JSON.stringify(body) });
     };
-    const checkBtn = el('button', { type: 'button', class: 'menu_button kg-main', text: 'Проверить и сохранить' });
     checkBtn.addEventListener('click', async () => {
+        if (provider.value === 'tavern') {
+            checkBtn.disabled = true;
+            status.textContent = 'Сохраняю выбор модели…';
+            try {
+                await pluginJson(SETTINGS_API, { method: 'POST', body: JSON.stringify({ models: { translateSource: '', translate: model.value.trim() } }) });
+                if (cfg.hasKey && cfg.on) {
+                    const out = await pluginJson(KEY_API, { method: 'POST', body: JSON.stringify({ on: false }) });
+                    Object.assign(cfg, out);
+                    keyState = out;
+                }
+                modelState = { ...modelState, model: model.value.trim() };
+                status.textContent = model.value.trim()
+                    ? `Сохранено: переводит подключение SillyTavern (${model.value.trim()})`
+                    : 'Сохранено: переводит текущая модель SillyTavern';
+                tlog('info', `перевод через подключение SillyTavern: ${model.value.trim() || 'модель по умолчанию'}`);
+            } catch (error) {
+                status.textContent = error.message;
+            } finally {
+                checkBtn.disabled = false;
+            }
+            return;
+        }
         if (!cfg.hasKey && !key.value.trim()) {
             status.textContent = 'Сначала вставьте ключ';
             return;
@@ -1692,16 +1737,13 @@ export async function openKeySheet() {
         },
     });
     const backBtn = el('button', { type: 'button', class: 'menu_button', text: 'Назад', onclick: () => openTranslate() });
-    if (cfg.hasKey) {
-        // Fill the model list in the background: the key is there already.
-        pluginJson(`${KEY_API}/models`).then(r => fillModels(r.models)).catch(() => { });
-    }
+    syncMode();
     const body = el('div', { class: 'kg-translate' },
-        el('div', { class: 'kg-label', text: 'Чей ключ' }), provider,
+        el('div', { class: 'kg-label', text: 'Чей ключ / подключение' }), provider,
         customRow,
-        el('div', { class: 'kg-label', text: 'Ключ' }), key,
+        keyRow,
         el('div', { class: 'kg-label', text: 'Модель для перевода' }), model, datalist,
-        el('div', { class: 'kg-checks' }, el('label', { class: 'checkbox_label' }, onBox, el('span', { text: 'Переводить этим ключом (выключите — будет переводить подключение таверны)' }))),
+        onRow,
         el('div', { class: 'kg-actions' }, checkBtn, removeBtn, backBtn),
         status,
         el('p', { class: 'kg-hint', text: 'Ключ нужен, чтобы перевод не тратил ключ, которым пишет таверна, или чтобы переводила другая, быстрая модель. Он хранится только в этой таверне (папка Корректора), не попадает в резервные копии и синхронизацию и обратно не показывается — видны только последние 4 знака. Запросы перевода идут с ним напрямую к выбранному сервису. Для перевода подходят быстрые модели: Gemini Flash, Claude Haiku, GPT mini, DeepSeek.' }));
